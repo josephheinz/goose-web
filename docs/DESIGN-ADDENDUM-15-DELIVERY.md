@@ -384,3 +384,37 @@ Code style: why-comments only. No comment restates code or names this document. 
 4. **`@asset` in components.** I chose not in v1, to avoid colliding with Addendum 12's rewrite of `component.goose`.
 5. **`gweb export` URL shape.** I chose `about.html`. The other choice is `about/index.html`, which some hosts need. A `--dirs` flag could come later.
 6. **Hub limits.** 10,000 connections, 64 KB messages, 1 MB output buffer, 30 s ping. Change them if your use cases differ.
+
+## Build log
+
+Builders were Sonnet at medium effort. Steps N1 to W7 were written before a Goose compiler was installed. A later pass then compiled them and fixed what failed. All suites below were run with Goose v2026.4, with goose-web pointed at the goose-net `arch/delivery` worktree (`GWEB_NET`).
+
+| Step | Repo | Commits | Result |
+|---|---|---|---|
+| Design | goose-web | 0548108 | |
+| N1 chunked, 101, `accepts`, `detach` | goose-net | b42e99a, 4859996 | 4859996 fixes a test that wrote chunks for HEAD |
+| N2 hub core (C) | goose-net | 9d48d12 | `hub_core_test` 245/245 |
+| N3 `net::Hub`, `websocket_accept`, `ws_echo` | goose-net | 38c86d0 | `test_net` 217/217 (main had 142) |
+| W1 hashed URLs, `@asset` | goose-web | 5496df9 | |
+| W2 gzip, CSS minify | goose-web | 0fd9f44 | `gzip_test` 25/25, `gweb test-css` ok |
+| W3 `@image`, `ctx.meta`, `@meta()` | goose-web | 225946a | `meta_test` 11/11 |
+| W4 sitemap, robots | goose-web | 1753a93 | `sitemap.sh` 19/19 |
+| W5 REVALIDATE cache, `gweb export` | goose-web | c73410c | `cache.sh` 35/35, `cache_test` 32/32 |
+| W6 streaming, hub, WebSockets | goose-web | e815449, 72fea17 | `push.sh` 15/15 |
+| W7 docs | goose-web | 6aab355 | Caddy and nginx configs not validated: neither tool is installed |
+| Compile fixes | goose-web | 79e6923, 52a220d, 4fe9173, 84b57d9, 736524a | see below |
+
+Other suites after the fixes: components 46/46, templates 65/65, fragments 84/84, catchall 50/50, cookie_test 59/59, csrf_test 52/52, catchall_test 62/62, and owner_test passes.
+
+`release_check.sh` fails as shipped because it publishes goose-net `main`, which has no `hub.goose`. In a scratch lab with the goose-net delivery branch, it passes in full. Merge goose-net first.
+
+Review notes and deviations from the design:
+- **Streams.** `web::end` takes `(ctx, s)`. `run_worker` keeps a streamed connection only after `end`, so a handler that forgets `end` cannot leave an unterminated body on a kept connection (72fea17, my fix).
+- **HTTP/1.0 streams.** The goose-net chunk functions take `chunked: bool`, and goose-web passes `http::supports_chunked(req)`. On HTTP/1.0, `subscribe` answers 400.
+- **`Sitemap`.** It is a `root struct` filled by `web::sitemap_init(req, s)`, because Goose cannot return a root struct.
+- **The user's sitemap file** compiles as namespace `smap`.
+- **Hub supervision.** A `hub_supervisor` restarts the hub thread after a panic, the same way workers are restarted.
+- **CSS minify.** A space before `:` is kept, because `a :hover` and `a:hover` are different selectors.
+- **Catch-all suite.** `catchall.sh` builds with `--no-minify`, because it compares served CSS to the source bytes.
+- **Message wording.** Some error texts the design left open were chosen by builders: `@meta() takes no arguments`, the malformed `REVALIDATE` and `SITEMAP` messages, and the skipped-dynamic-page line in export.
+- **Merge conflicts.** `gen_main`, `gen_page_fn`, `Ctx`, `Config` and `run_worker` were edited here and will conflict with Addenda 13, 16 and 17. `component.goose` changed in `compile`'s parameter list, the `component()` line, the JS import, and a new `js_hash8`. That will conflict with Addendum 12.
