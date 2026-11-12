@@ -213,21 +213,34 @@ sequenceDiagram
 
 ### 4.4 `morph`, the shared core
 
-`morph` walks the old and the new child lists side by side:
+`morph` makes the children of one parent match the new children:
 
-- A node of another type or tag is replaced.
-- A text node gets its new text.
-- An element gets its attributes synced, and then `morph` recurses into it.
+- An element with `gw-key` is keyed. Its key is its tag name plus the `gw-key`
+  value; `id` is not a key, and an empty `gw-key` means no key.
+- Old keyed children that the new list does not want, or that repeat a key, are
+  removed first. The others are put in a map by key.
+- Each new keyed child takes the old child with its key, wherever it is. If that
+  child is not at the cursor it is moved before the cursor, except when the
+  cursor is a keyed child right before it: then the cursor steps over it, which
+  makes a swap or a move to the end one move. A moved node that held focus is
+  refocused, because `insertBefore` blurs it.
+- Each new unkeyed child takes the next unkeyed old child at or after the
+  cursor, skipping keyed ones. A keyed child never takes an unkeyed child's slot.
+- A new child with no match is inserted before the cursor, and old children left
+  after the cursor are removed.
+- A match of another node name is replaced, a text node gets its new text, and
+  an element gets its attributes synced and `morph` recurses into it.
 - A form control gets its `value` and `checked` synced last. The focused
   control keeps what the user is typing, unless the state behind it changed.
-- Extra new nodes are appended, and extra old nodes are removed.
+- A duplicate key among the new children reports one `gw:error`; the first gets
+  the old element and the later ones are built new.
 
-There are no keys. When a node is inserted before others, every later sibling
-is compared with the wrong partner, so it is rebuilt, and a focused input among
-those siblings loses focus. The rule for authors (DESIGN-ADDENDUM-4, follow-up 1):
-an element that comes and goes must be the last child of its parent, or always
-be rendered and left empty. The fragments demo puts its error message in a
-trailing `<span>` inside the input's own `<p>` for this reason.
+The rule for authors: give `gw-key`, unique among its siblings, to every item
+of a list that can be reordered or lose an item other than the last, and to an
+element that comes and goes in front of other siblings. An unkeyed element that
+comes and goes must be the last child of its parent. The fragments demo puts
+its error message in a trailing `<span>` inside the input's own `<p>` for this
+reason.
 
 ## 5. `gweb dev`
 
@@ -262,13 +275,13 @@ readable `gwi.js`.
 | `cli/component.goose` | The `.gshtml` compiler: Goose subset parser, type checker, JS emitter. |
 | `client/gwi.js` | The browser runtime. `client/build.sh` minifies it to `gwi.min.js`. |
 | `test/components.sh`, `templates.sh`, `fragments.sh` | The test suites. |
+| `test/morph.sh` | The jsdom suite for `morph`; it installs jsdom into a cache on its first run. |
 
 ## 7. Limits to know
 
 - Components: no component inside a component, no enums or `match`, no f64, and
   integers above 2^53 lose precision in the browser.
-- `morph` has no keys, so inserting a node early in a list rebuilds the nodes
-  after it.
+- A moved keyed element is reinserted, which reloads an iframe inside it.
 - Literal braces outside `<script>` and `<style>` need `&#123;` and `&#125;`.
   A literal `@name(` needs `&#64;`.
 - Fragments v1: one swap mode (replace the children of `#NAME`), and no

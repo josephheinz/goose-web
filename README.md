@@ -226,10 +226,11 @@ page.
   (it needs `load` beside it). Return `load`'s props with what the form changed. A POST without the
   header renders the whole page with status 200; for post-redirect-get call `web::redirect(ctx, "/x", 303)`.
   A POST with `Sec-Fetch-Site: cross-site` gets 403; other methods get 405.
-- The morph matches sibling nodes by position; it has no keys. An element that comes and goes must
-  be the last child of its parent, or always be rendered and left empty (or `hidden`) when unused.
-  Otherwise every later sibling is rebuilt, and a focused input among them loses focus. This rule
-  applies to components too.
+- The morph matches keyed elements by `gw-key` and other nodes by position. Give `gw-key`, unique
+  among its siblings, to every item of a list that can be reordered or lose an item other than the
+  last (`<li gw-key="{t.id}">`), and to an element that comes and goes in front of other siblings.
+  An unkeyed element that comes and goes must be the last child of its parent. This rule applies to
+  components too.
 - `import web.form;` gives `web::form(req, "name", out)` (URL-decoded, appended to `out`) and
   `web::form_int(req, "id")`. Several intents on one page are told apart by button names:
   `<button name="remove" value="3">`.
@@ -297,13 +298,14 @@ under `gweb build` and `gweb start`. The runtime is `client/gwi.js` in dev and
 compact, and compares the state and the render byte for byte. Needs `node`.
 goose-web's own suite is `test/components.sh` (parity components in
 `test/components/*.gshtml`, one `Fail*.gshtml` per error message, and a check that
-`client/gwi.min.js` is current).
+`client/gwi.min.js` is current). `test/morph.sh` runs the DOM morph under jsdom (it installs jsdom
+into `~/.cache/goose-web-test` on its first run).
 
 **Maintainers.** After editing `client/gwi.js`, run `client/build.sh` (esbuild
 0.28.2 through `npx`, or `ESBUILD=/path/to/esbuild`); it writes
 `client/gwi.min.js` with the source's FNV-1a hash in its banner.
 
-**Limits (v1).** No keys in the DOM morph, so removing a list item reuses the
-nodes after it. Integers above 2^53 lose precision in the browser. Component
+**Limits (v1).** A moved keyed element is reinserted, which reloads an iframe
+inside it. Integers above 2^53 lose precision in the browser. Component
 state lives in the page only. Handlers get no event data.
 
