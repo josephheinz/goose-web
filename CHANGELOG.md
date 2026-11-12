@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.0 (unreleased)
+
+- Operations: `/__gweb/health` and `/__gweb/ready`; graceful shutdown on SIGTERM and SIGINT (`--drain-ms`, `--drain-delay-ms`); SIGUSR2 and systemd socket activation restart without dropping a request (`net.lifecycle` in goose-net).
+- Logs: `--log-format json`, `--log-level`, request ids, and `web::info`, `web::log` and friends.
+- Metrics (`--metrics`, Prometheus text at `/__gweb/metrics`) and OpenTelemetry tracing (OTLP/HTTP JSON, `traceparent`).
+- Background jobs and schedules: `app/jobs.goose`, `jobs::enqueue`, `jobs::every`, `jobs::cron`, `--no-schedule`.
+- Linux and Docker: a Dockerfile and `.dockerignore` for new apps, systemd units in `deploy/`, `test/linux.sh`, and `docs/DEPLOY.md`. Windows is supported through WSL2 and Docker only.
+- Behaviour change: `/__gweb/` is reserved; an `app/__gweb` folder is a build error.
+
 ## v0.2.1
 
 - Fix: `gweb test` no longer deletes `.gooseweb/`; it generates into `.gooseweb.test/`. Add `.gooseweb.test/` to `.gitignore`.

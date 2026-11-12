@@ -1,7 +1,12 @@
+#ifdef __linux__
+#define _DEFAULT_SOURCE  /* getentropy under -std=c11 on glibc and musl */
+#endif
 #include <stdint.h>
 #include <unistd.h>
 #ifdef __APPLE__
 #include <sys/sysctl.h>
+#endif
+#if defined(__APPLE__) || defined(__linux__)
 #include <sys/random.h>
 #endif
 

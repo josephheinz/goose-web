@@ -1,0 +1,16 @@
+# Optional. With this unit systemd owns the listening socket, so `systemctl restart gweb-app`
+# refuses no connection: clients wait in the kernel backlog while the server starts again.
+# Skip it if you use `systemctl reload` (below) or have a proxy that retries.
+#
+#   systemctl enable --now gweb-app.socket
+#
+# Keep ListenStream equal to PORT in gweb-app.service.
+[Unit]
+Description=gweb-app socket
+
+[Socket]
+ListenStream=3000
+Backlog=1024
+
+[Install]
+WantedBy=sockets.target

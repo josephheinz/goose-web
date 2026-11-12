@@ -185,6 +185,36 @@ goose build -o gweb cli/gweb.goose
 - Pages render on every request into one buffer; static files go out from
   the binary's data with `writev`, without a copy.
 
+## Operations
+
+Full guide: [docs/DEPLOY.md](docs/DEPLOY.md). Design: [DESIGN-ADDENDUM-16-OPERATIONS.md](docs/DESIGN-ADDENDUM-16-OPERATIONS.md).
+
+- **Health.** `/__gweb/health` (liveness) and `/__gweb/ready` (503 once a stop begins). `server --probe` exits 0 or 1 for a Docker `HEALTHCHECK`.
+- **Graceful stop.** SIGTERM or SIGINT stops accepting, finishes requests for up to `--drain-ms` (10 s), runs `state::shutdown` if defined, and exits 0. `--drain-delay-ms` keeps accepting first, so a load balancer can stop routing. A second signal exits at once.
+- **Restarts.** SIGUSR2 starts the new binary on the same socket and drains the old one (systemd `reload`). A systemd socket unit or a rolling update also loses no request. Migrations must keep the previous release working.
+- **Logs.** stdout. `--log-format json` for JSON lines, `--log-level`, `--log` for the access log (with `X-Request-Id`). In code: `web::info(ctx, "msg")`, or `web::log`, `web::field`, `web::emit`.
+- **Metrics.** `--metrics` serves Prometheus text at `/__gweb/metrics`; block it at the proxy. `web::count(name, n)` and `web::gauge(name, v)` add your own.
+- **Tracing.** Set `OTEL_EXPORTER_OTLP_ENDPOINT` (plain `http://`, a local collector). W3C `traceparent` in, OTLP/HTTP JSON out; `web::span(ctx, "name")` adds spans.
+- **Jobs.** An in-memory queue and a scheduler, in `app/jobs.goose`:
+
+```goose
+enum Job { Welcome { user: i64 }, Cleanup }
+
+fn run(job: const Job&, ctx: web::Ctx&) -> bool {              // false: retried with backoff, 5 attempts
+    match job {
+        Welcome w => { return send_welcome(w.user); },
+        Cleanup => { return true; },
+    }
+}
+
+fn schedule(s: web::Schedules&) {                              // optional
+    jobs::every(s, "cleanup", 5 * 60 * 1000, Job.Cleanup);
+    jobs::cron(s, "digest", "0 8 * * 1", Job.Cleanup);         // Mondays 08:00, local time (TZ)
+}
+```
+
+  Enqueue from a handler with `jobs::enqueue(ctx, jobs::Job.Welcome { user: id })`. Queued jobs are lost on a restart; for durable work use an outbox table (see the guide).
+
 ## SQLite
 
 Apps can read SQLite through the sibling package
