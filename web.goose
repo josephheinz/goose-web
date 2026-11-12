@@ -28,11 +28,26 @@ struct Ctx {
     location: u8[..1024],
     title: u8[..256],
     set_cookies: u8[..2048],  // pending Set-Cookie lines; run_worker moves them to res
-    status: i64 = 0           // a page's status override; 0 = none (set_status, unprocessable)
+    status: i64 = 0,          // a page's status override; 0 = none (set_status, unprocessable)
+    spool: u8[..256] = "",    // the spool file of an Event.Spooled request; "" otherwise. run_worker deletes it after the reply
+    uploads: Upload[..8] = [],        // the files multipart_begin wrote; run_worker deletes the unsaved ones after the reply
+    upload_dir: u8[..256] = ""        // where multipart_begin puts them (Config.upload_dir); set by run_worker
+}
+
+// A file of a multipart post (web::upload). Lives here because Ctx holds it.
+struct Upload {
+    field: u8[..64],
+    filename: u8[..128],       // as the client sent it, control bytes removed; never a path to trust
+    content_type: u8[..96],    // as the client sent it
+    size: i64,
+    path: u8[..256]            // the temp file; "" when no file was sent
 }
 
 struct Config { port: i64, host: u8[..64], workers: i64, log: bool, idle_ms: i64, max_body: i64,
-                dev_id: i64 }   // 0 = off
+                dev_id: i64,        // 0 = off
+                max_upload: i64,    // multipart bodies may be this large (--max-upload)
+                spool_over: i64,    // a multipart body over this many bytes is spooled to a file
+                upload_dir: u8[..256] }   // spool and upload files (--upload-dir); one server per dir
 
 fn no_params() -> Params { Params { n: 0, names: [""; 8], values: [""; 8] } }
 
@@ -311,7 +326,14 @@ fn plain_not_found(res: http::Response&) {
     http::text(res, http::Status.NotFound, "404 not found\n");
 }
 
+// The request's Content-Length: 0 when absent, -1 when malformed. Pages with MAX_UPLOAD compare it before reading the body.
+fn content_length(req: const http::Request&) -> i64 { return http::content_length(req.head); }
+
 // ---------------------------------------------------------------- config
+
+extern fn c_up_mkdir(path: const u8[:]) -> i32 = "gweb_up_mkdir";
+extern fn c_up_sweep(dir: const u8[:]) -> i64 = "gweb_up_sweep";
+extern fn c_up_unlink(path: const u8[:]) -> i32 = "gweb_up_unlink";
 
 extern fn c_performance_cores() -> i64 = "gweb_performance_cores";
 
@@ -324,10 +346,11 @@ fn default_workers() -> i64 {
 
 fn default_config() -> Config {
     Config { port: 3000, host: "0.0.0.0", workers: default_workers(), log: false,
-             idle_ms: 5000, max_body: 1048576, dev_id: 0 }
+             idle_ms: 5000, max_body: 1048576, dev_id: 0,
+             max_upload: 33554432, spool_over: 65536, upload_dir: ".gooseweb.uploads" }
 }
 
-// Reads --port N, --host H, --workers N, --log, --idle-ms N, --max-body N,
+// Reads --port N, --host H, --workers N, --log, --idle-ms N, --max-body N, --max-upload N, --upload-dir D,
 // and the PORT and WEB_WORKERS environment variables (flags win).
 fn config_from_args() -> Config {
     var cfg = default_config();
@@ -348,11 +371,13 @@ fn config_from_args() -> Config {
             if flag == "--workers" && ok && n > 0 { cfg.workers = n; i += 2; continue; }
             if flag == "--idle-ms" && ok { cfg.idle_ms = n; i += 2; continue; }
             if flag == "--max-body" && ok { cfg.max_body = n; i += 2; continue; }
+            if flag == "--max-upload" && ok && n > 0 { cfg.max_upload = n; i += 2; continue; }
             if flag == "--dev-id" && ok { cfg.dev_id = n; i += 2; continue; }
+            if flag == "--upload-dir" && v.len > 0 && v.len <= 256 { cfg.upload_dir.clear(); cfg.upload_dir.append(v); i += 2; continue; }
             if flag == "--host" { cfg.host.clear(); cfg.host.append(v[..min(v.len, 64)]); i += 2; continue; }
         }
         print("unknown or incomplete flag: ", flag);
-        print("flags: --port N --host H --workers N --log --idle-ms N --max-body N (--dev-id N: gweb dev only)");
+        print("flags: --port N --host H --workers N --log --idle-ms N --max-body N --max-upload N --upload-dir D (--dev-id N: gweb dev only)");
         exit(2);
     }
     return cfg;
@@ -364,13 +389,31 @@ fn config_from_args() -> Config {
 fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) {
     // One worker takes every waiting connection per pass; several take one each, so a burst spreads.
     let lp = net::connection_loop(server, cfg.idle_ms, cfg.max_body, if cfg.workers == 1 { 0 } else { 1 });
+    // Uploads: make the directory, let slot 0 delete files an earlier run left (names gnet-* and gw-*), then opt in.
+    // Without a usable directory a multipart body stays in memory, up to --max-body.
+    if cfg.upload_dir.len > 0 && c_up_mkdir(cfg.upload_dir) != 0 {
+        if slot == 0 { c_up_sweep(cfg.upload_dir); }
+        if !lp.set_uploads(cfg.max_upload, cfg.spool_over, cfg.upload_dir) {
+            print("warning: cannot use upload dir ", cfg.upload_dir, "; uploads are limited to --max-body");
+        }
+    } else {
+        print("warning: cannot create upload dir ", cfg.upload_dir, "; uploads are limited to --max-body");
+    }
     var raw: u8[>..] = [];
     loop {
         raw.clear();
         let conn, ev = lp.next(raw);
         var res = http::new_response();
         match ev {
-            Request => {
+            Request, Spooled => {
+                var ctx = new_ctx(slot, owner_fd);
+                ctx.upload_dir.append(cfg.upload_dir);
+                var spool_ok = true;
+                if ev == net::Event.Spooled {
+                    var sp: u8[>..] = [];
+                    lp.spool_path(sp);
+                    if sp.len > ctx.spool.cap { c_up_unlink(sp); spool_ok = false; } else { ctx.spool.append(sp); }
+                }
                 let req, parsed = http::parse_request(raw);
                 var keep = false;
                 var static_index = -1;
@@ -380,7 +423,9 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                         keep = http::wants_keep_alive(req);
                         let p = req.path;
                         let get_like = req.method == http::Method.Get || req.method == http::Method.Head;
-                        if cfg.dev_id != 0 && p == "/__gweb/id" {
+                        if !spool_ok {
+                            http::json_error(res, http::Status.InternalServerError, http::reason(http::Status.InternalServerError));
+                        } else if cfg.dev_id != 0 && p == "/__gweb/id" {
                             dev_status(res, cfg.dev_id);
                             dev_request = true;
                         } else if get_like && p.len > 1 && p[p.len - 1] == '/' {
@@ -390,7 +435,6 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                             res.status = http::Status.PermanentRedirect;
                             http::set_header(res, "Location", to);
                         } else {
-                            var ctx = new_ctx(slot, owner_fd);
                             static_index = D(req, ctx, res);
                             if !apply_cookies(ctx, res) { static_index = -1; }
                             if !ctx.fragment { dev_inject(res, cfg.dev_id); }
@@ -407,12 +451,18 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                 };
                 if cfg.log && !dev_request { print("[", slot, "] ", req.method_text, " ", req.target, " -> ", res.status); }
                 if !sent || !keep { lp.close_connection(conn); }
+                // The reply is out: delete the spool file and every upload not saved (a saved one is gone, so its unlink fails harmlessly).
+                if ctx.spool.len > 0 { c_up_unlink(ctx.spool); }
+                for i in ctx.uploads.len {
+                    if ctx.uploads[i].path.len > 0 { c_up_unlink(ctx.uploads[i].path); }
+                }
             },
             Failed => {},
             _ => {
                 let status = match ev {
                     TooLarge => http::Status.PayloadTooLarge,
                     HeadTooLarge => http::Status.HeaderFieldsTooLarge,
+                    SpoolFailed => http::Status.InternalServerError,
                     Unsupported => http::Status.NotImplemented,
                     _ => http::Status.BadRequest,
                 };
