@@ -1,0 +1,14 @@
+<script goose>
+// A chain of three computeds declared out of order, and one that calls a function that only reads.
+@prop const base: i64;
+@state var n: i64 = 2;
+@computed let c3: i64 = c2 + twice_n();
+@computed let c1: i64 = n * 3 + base;
+@computed let c2: i64 = c1 + 1;
+fn twice_n() -> i64 { n * 2 }
+fn bump(by: i64) { n += by; }
+fn test_chain() { bump(3); bump(4); }
+fn test_none() { }
+</script>
+<p>{c1} {c2} {c3}</p>
+<button on:click="bump(5)">+5</button>

@@ -1,0 +1,27 @@
+<script goose>
+// Every kind of part (Addendum 12 section 3.2): text, attribute, block, raw and a top-level {#let}; strings with & < > " ' and UTF-8.
+struct Item { id: i64, name: u8[..24], done: bool }
+@prop const title: u8[:];
+@state var draft: u8[..24] = "";
+@state var n: i64 = 0;
+@state var on: bool = false;
+@state var note: u8[..60] = "é <&> \" ' ✓";
+@state var html: u8[..60] = "<b>bold</b> &amp; é";
+@state var items: Item[>..<] = [];
+fn bump() { n += 1; }
+fn flip() { on = !on; }
+fn add() { items.push(Item { id: n, name: draft, done: false }); n += 1; }
+fn drop(i: i64) { items.remove_at(i); }
+fn toggle(i: i64) { items[i].done = !items[i].done; }
+fn shout() { note = "<&>\"'"; html = "<i>x</i>"; }
+fn test_parts() { draft = "x<y"; add(); add(); flip(); }
+fn test_escapes() { shout(); draft = "a&b\"c'd"; add(); bump(); }
+fn test_remove() { draft = "é✓"; add(); add(); add(); drop(1); toggle(0); flip(); }
+</script>
+<h1 title="{title}" class="{if on { "hot" } else { "cold" }}">{title}: {n}</h1>
+<input bind:value="draft" placeholder="é & ' &quot;"> <button on:click="add">add</button><button on:click="flip">{on}</button>
+{#let big = n * 10}
+<p data-big="{big}">{big} and {note}</p>
+{#if on}<em>on, big is {big}</em>{#else}<em>off</em>{/if}
+<ul>{#for t, i in items}<li gw-key="{t.id}" class="{if t.done { "done" } else { "" }}"><button on:click="toggle(i)">{t.name}</button> <button on:click="drop(i)">x</button></li>{/for}</ul>
+<div>{#raw html}</div><button on:click="shout()">shout</button>

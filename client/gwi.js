@@ -26,15 +26,7 @@ export const imod = (a, b) => {
 // Optional modules (lifecycle, child components, transitions, effects) fill this; see Addendum 12 section 5.
 export const hooks = {};
 
-export function component(name, def) {
-  defs[name] = def;
-  // A legacy def (render + handlers) runs through the same path: phase 1 renders, phase 2 morphs.
-  if (def.render && !def.u) {
-    def.u = (s) => { const h = def.render(s); return (p, r, f) => morph(r, tpl(h), f); };
-    def.h = {};
-    for (const n in def.handlers) def.h[n] = (s, c, ...a) => def.handlers[n](s, ...a);
-  }
-}
+export function component(name, def) { defs[name] = def; }
 
 const cn = (n) => n.dataset.component;
 

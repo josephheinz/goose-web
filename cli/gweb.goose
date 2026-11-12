@@ -2208,6 +2208,7 @@ function firstDiff(a, b) {
   }
   return null;
 }
+const STUB = { m() {}, f() {}, e() {} };
 let failed = 0, run = 0;
 for (const mode of ["pretty", "compact"]) {
   globalThis.__gw = {};
@@ -2218,9 +2219,17 @@ for (const mode of ["pretty", "compact"]) {
     const label = `${c.component} ${c.test} (${mode})`;
     let s, html;
     try {
-      s = def.zero();
-      if (c.test !== "zero") def.tests[c.test](s);
-      html = def.render(s);
+      if (def.i) {
+        // A reactive component: the state from zero props, the test, then the computeds again (no DOM, no watches).
+        s = def.i();
+        if (c.test !== "zero") def.t[c.test](s, STUB);
+        def.u(s, -1 >>> 1);
+        html = def.r(s);
+      } else {
+        s = def.zero();
+        if (c.test !== "zero") def.tests[c.test](s);
+        html = def.render(s);
+      }
     } catch (err) {
       failed++;
       console.log(`FAIL ${label}: the JavaScript threw ${err}`);

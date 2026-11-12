@@ -29,8 +29,7 @@ bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 mkdir -p "$WORK/ok/app" "$WORK/ok/components"
 echo '<p>components suite</p>' > "$WORK/ok/app/page.html"
 for f in "$HERE"/components/*.gshtml; do
-  # R[A-Z]*: reactive components (Addendum 12). Step 5 removes this exclusion when their parity is written.
-  case "$(basename "$f")" in Fail*|Warn*|R[A-Z]*) ;; *) cp "$f" "$WORK/ok/components/" ;; esac
+  case "$(basename "$f")" in Fail*|Warn*) ;; *) cp "$f" "$WORK/ok/components/" ;; esac
 done
 if out=$("$GWEB" -C "$WORK/ok" test 2>&1); then ok; echo "$out"; else bad "gweb test"; echo "$out"; fi
 

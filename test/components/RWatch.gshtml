@@ -1,0 +1,11 @@
+<script goose>
+// A watch that writes another state variable. gweb test runs no watches, on either side.
+@state var a: i64 = 0;
+@state var tenfold: i64 = 0;
+@state var big: bool = false;
+@watch { tenfold = a * 10; }
+@watch { big = a > 2; }
+fn inc() { a += 1; }
+fn test_watch() { inc(); inc(); inc(); }
+</script>
+<p>{a} {tenfold} {big}</p><button on:click="inc">+</button>

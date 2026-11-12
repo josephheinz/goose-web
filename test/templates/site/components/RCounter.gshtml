@@ -1,5 +1,5 @@
 <script goose>
-// Reactive component, Addendum 12 section 1. Parity for it starts in step 5; test/components.sh skips R*.gshtml until then.
+// Reactive component, Addendum 12 section 1: text parts, a computed, a handler.
 @prop const start: i64;
 @prop const label: u8[:];
 @prop const step: i64 = 1;

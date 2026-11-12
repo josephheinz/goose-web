@@ -11,7 +11,7 @@ Object.assign(globalThis, { document, CustomEvent: window.CustomEvent, dispatchE
 console.error = () => {};
 const src = fs.readFileSync(new URL("../client/gwi.js", import.meta.url), "utf8");
 const G = await import("data:text/javascript;base64," + Buffer.from(src).toString("base64"));
-const { component: C, esc: e, T, A, B, state } = G;
+const { component: C, esc: e, T, A, B, state, swap } = G;
 
 let errors = [];
 window.addEventListener("gw:error", (ev) => errors.push(ev.detail));
@@ -248,10 +248,12 @@ test("6b a throwing watch reports and keeps the DOM result", () => {
   synced(root, def);
 });
 
-test("7 legacy def (render + handlers) updates through swap", () => {
+test("7 legacy def (render, u, h as the compiler emits them) updates through swap", () => {
   const def = {
     r: (s) => `<p>${s.n}</p><button data-on-click="inc" data-args="[2]">+</button>`,
     render: (s) => def.r(s),
+    u: (s) => { const m = def.render(s); return (p, r, f) => swap(r, m, f); },
+    h: { inc: (s, c, ...a) => def.handlers.inc(s, ...a) },
     handlers: { inc(s, k) { s.n += k; } },
   };
   const root = mount(def, { n: 0 });
