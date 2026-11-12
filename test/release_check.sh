@@ -89,15 +89,26 @@ testing_test() {
   "$WORK/testing/testing_test"
 }
 
+i18n_test() {
+  mkdir "$WORK/i18n"
+  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+      -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
+      "$HERE/i18n_test.goose" > "$WORK/i18n/i18n_test.goose"
+  "$GOOSE" build -o "$WORK/i18n/i18n_test" "$WORK/i18n/i18n_test.goose"
+  "$WORK/i18n/i18n_test"
+}
+
 step cookie_test cookie_test
 step csrf_test csrf_test
 step catchall_test catchall_test
 step testing_test testing_test
+step i18n_test i18n_test
 step components sh "$HERE/components.sh"
 step templates sh "$HERE/templates.sh"
 step fragments env PORT="${PORT:-3991}" sh "$HERE/fragments.sh"
 step catchall env PORT="${PORT:-3994}" sh "$HERE/catchall.sh"
 step routes sh "$HERE/routes.sh"
+step i18n env PORT="${PORT:-3996}" sh "$HERE/i18n.sh"
 
 gweb_new() {
   mkdir "$WORK/lone"

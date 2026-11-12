@@ -3,6 +3,7 @@
 ## v0.3.0 (unreleased)
 
 - Route tests: `web.testing` and `tests/*.goose`, run by `gweb test` against the real dispatcher with no socket.
+- i18n: `locales/<tag>.txt` catalogs compile to a typed `t::` module; the locale comes from the `locale` cookie or `Accept-Language`.
 
 ## v0.2.1
 

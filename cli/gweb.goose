@@ -10,6 +10,7 @@
 import std;
 import os;
 import component;
+import i18n;
 import tscan;
 import pins;
 
@@ -71,6 +72,9 @@ var component_names: u8[..64][>..<];
 var component_lines: i64[>..<];
 var component_errors = 0;              // translator errors of this gen; the build still runs goose
 var uses_fragments = false;
+var has_locales = false;              // locales/ exists: .gooseweb/t.goose is generated
+var locale_notes: u8[>..];             // the 'lacks' lines, printed after a successful build
+var locale_count = 0;
 var targets: Target[>..<];
 var tpl_script = false;
 var last_errors: u8[>..];
@@ -478,6 +482,7 @@ fn add_default_imports(imports: u8[>..]&) {
         format(imp, "import ", n, ";");
         if find(imports, imp) < 0 { imports.append(imp); imports.push(' '); }
     }
+    if has_locales && find(imports, "import t;") < 0 { imports.append("import t; "); }
 }
 
 // ---------------------------------------------------------------- templates
@@ -1159,6 +1164,37 @@ fn seg_count(rel: const u8[:]) -> i64 {
     return n;
 }
 
+// Writes .gooseweb/t.goose from locales/; errors stop the build.
+fn gen_locales() {
+    has_locales = true;
+    var names: u8[>..] = [];
+    if !list_dir("locales", names) { err("locales", 0, "cannot read"); return; }
+    var def: u8[>..] = [];
+    let has_def = read_file("locales/default", def);
+    i18n::start(def, has_def);
+    for f in split(names, '\n') {
+        if f.len == 0 || f[0] == '.' || !ends_with(f, ".txt") { continue; }
+        var p: u8[>..] = [];
+        format(p, "locales/", f);
+        var src: u8[>..] = [];
+        if !read(p, src) { continue; }
+        i18n::add_file(f, src);
+    }
+    var g: u8[>..] = [];
+    var e: u8[>..] = [];
+    if !i18n::compile(g, e, locale_notes) {
+        write_stderr(e);
+        note_errors(e);
+        for c in e { if c == '\n' { errors += 1; } }
+        if e.len == 0 { errors += 1; }
+        return;
+    }
+    locale_count = i18n::count();
+    var dst: u8[>..] = [];
+    format(dst, gen_root, "/t.goose");
+    write(dst, g);
+}
+
 fn gen_dispatch(m: u8[>..]&) {
     format(m, "fn dispatch", SIG, " -> i64 {\n");
     if statics.len > 0 {
@@ -1166,6 +1202,10 @@ fn gen_dispatch(m: u8[>..]&) {
         m.append("        let i, hit = static_file(req, res);\n");
         m.append("        if hit { return i; }\n");
         m.append("    }\n");
+    }
+    if has_locales {
+        m.append("    ctx.locale = web::pick_locale(req, t::TAGS);\n");
+        if locale_count >= 2 { m.append("    http::set_header(res, \"Vary\", \"Accept-Language, Cookie\");\n"); }
     }
     m.append("    var seg: const u8[:][16] = [\"\"; 16];\n");
     m.append("    var starts: i64[16] = [0; 16];\n");
@@ -1279,6 +1319,7 @@ fn gen_main_body(m: u8[>..]&, test: bool) {
     m.append("import net from \""); lit(m, pkg_source(1)); m.append("\";\n");
     if uses_sqlite { m.append("import sqlite from \""); lit(m, pkg_source(2)); m.append("\";\n"); }
     m.append("import net.http;\nimport web.template;\nimport web.static;\nimport web.owner;\nimport web.form;\nimport web.csrf;\n");
+    if has_locales { m.append("import web.i18n;\nimport t;\n"); }
     if test { m.append("import web.testing;\nimport site;\n"); }
     for d in dirs {
         if d.route { format(m, "import ", d.route_ns, ";\n"); }
@@ -1535,6 +1576,9 @@ fn gen_components(dev: bool) {
 }
 
 fn gen(dev: bool, root: const u8[:]) -> bool {
+    has_locales = false;
+    locale_notes.clear();
+    locale_count = 0;
     scan();
     if errors > 0 { return false; }
     gen_root.clear();
@@ -1547,6 +1591,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     uses_fragments = false;
     targets.clear();
     gen_components(dev);
+    if is_dir("locales") { gen_locales(); }
     if is_dir("lib") { scan_lib_for_sqlite(); }
     if is_dir("lib") {
         var lib_link: u8[>..] = [];
@@ -1764,6 +1809,7 @@ fn build(debug: bool, dev: bool) -> bool {
     format(msg, "gweb: built .gooseweb/server: ", routes, " routes, ", pages, " pages, ", statics.len, " static files (",
            ((clock() - t0) * 10.0) as i64 as f64 / 10.0, " s)\n");
     write_stdout(msg);
+    write_stdout(locale_notes);
     return true;
 }
 
@@ -2151,7 +2197,7 @@ fn server_cmd(extra: u8[:][:], dev: bool) -> u8[>..] {
 fn stamp() -> i64 {
     var count = 0;
     var newest = 0;
-    for dir in ["app", "lib", "public", "components"] { newest = max(newest, c_tree_stamp(dir, count)); }
+    for dir in ["app", "lib", "public", "components", "locales"] { newest = max(newest, c_tree_stamp(dir, count)); }
     return newest * 31 + count;
 }
 
@@ -2299,7 +2345,7 @@ usage: gweb [-C dir] <command>
   gen               write .gooseweb/ only
   build [--debug]   gen, then goose build to .gooseweb/server
   start [flags]     build, then run the server (flags go to it: --port N --workers N --log ...)
-  dev [flags]       build, run on port 60053 (unless --port), and rebuild on every change under app/, lib/, public/, components/
+  dev [flags]       build, run on port 60053 (unless --port), and rebuild on every change under app/, lib/, public/, components/, locales/
   routes            print the route table
   version           print the version and the package sources a build declares
   test              component test_* functions as Goose and as JavaScript (they must match), then tests/*.goose route tests

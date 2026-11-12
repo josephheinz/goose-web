@@ -54,6 +54,7 @@ goose-architect agent.
 | `lib/**.goose` | Your modules: `import lib.catalog;` (write their `namespace`) |
 | `public/**` | Static files, embedded in the binary, with ETags |
 | `tests/*.goose` | Route tests run by `gweb test` (see Route tests) |
+| `locales/default`, `locales/<tag>.txt` | Message catalogs, compiled to the `t::` module (see i18n) |
 
 A folder named `[id]` is a dynamic segment; `[...slug]` and `[[...slug]]` are
 catch-alls (see below). Folders starting with `_` are ignored. App files get their
@@ -371,6 +372,63 @@ Rules for authors:
 - Point the app's database at a test file through its environment variable.
 - A test that aborts ends the run; the `== <test>` line before it names the test.
 - Tests are not part of the server: `gweb build` ignores `tests/`.
+
+## i18n
+
+`locales/default` holds the default locale's tag (`en`). `locales/<tag>.txt` holds one catalog per locale; `<tag>` is
+like `en`, `de` or `pt-BR`. `gweb` compiles them to `.gooseweb/t.goose`, and pages and layouts can call `t::` (a route, middleware or `lib/` file writes `import t;`).
+
+```
+# locales/en.txt
+greeting = Hello, {name}!
+cart_items[one] = {count} item in your cart
+cart_items[other] = {count} items in your cart
+stock = Only {n:int} left
+```
+
+- One `key = text` per line; `#` starts a comment line. A key is `[a-z][a-z0-9_]*`, not a Goose keyword, and not
+  `tag`, `find` or `TAGS`. Escapes: `\n`, `\{`, `\}`, `\\`.
+- `{name}` is a text argument and `{name:int}` an `i64`. Write the type in the default locale, on the argument's first
+  use; other locales write `{name}` and may leave an argument out, but not add one.
+- `key[one]`, `key[other]` and so on (`zero one two few many other`) are plural forms. The default must give
+  `[other]`. The selector is the `i64` argument `count`, which comes first.
+- A key a locale lacks uses the default's text; a missing plural form uses that locale's `[other]`, then the
+  default's. The build prints `gweb: locales/de.txt lacks 1 key (falls back to en): a`. Bad syntax, duplicates, keys or
+  arguments the default lacks, type clashes, a bad tag, a plural without `[other]` and a missing `locales/default`
+  are build errors at `locales/<file>:LINE`.
+
+Generated, per key, a pair of functions (`t::greeting(ctx, name)`, and `t::greeting(loc, name)` for code without a `Ctx`),
+plus `t::TAGS`, `t::tag(ctx)` and `t::find(tag)` (case-insensitive, `-> i64, bool`):
+
+```html
+<html lang="{t::tag(ctx)}">
+<p>{t::cart_items(ctx, p.n)}</p>
+```
+
+`{expr}` escapes, so messages are plain text.
+
+The locale is `ctx.locale`, set before routing: the `locale` cookie (exact tag), then `Accept-Language` by q-value
+(`de-AT` takes `de`, `en` takes `en-GB`), then the default. With two or more locales, responses carry
+`Vary: Accept-Language, Cookie`.
+
+For `/de/products`, use an `app/[lang]/` folder with a middleware that picks the locale:
+
+```goose
+// app/[lang]/middleware.goose
+import std;
+import net.http;
+import web;
+import t;
+
+fn before(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) -> bool {
+    let i, ok = t::find(web::param(ctx, "lang"));
+    if ok { ctx.locale = i; } else { web::not_found(ctx); return false; }
+    return true;
+}
+```
+
+Not in v1: translations inside `.gshtml` components (pass translated text in as data), number, date and currency
+formatting, HTML inside messages, and decimal plural operands.
 
 ## Example
 
