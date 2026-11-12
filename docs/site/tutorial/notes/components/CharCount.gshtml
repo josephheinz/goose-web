@@ -1,0 +1,6 @@
+<script goose>
+struct State { text: u8[..200] }
+fn test_typed(s: State&) { s.text = "hello"; }
+</script>
+<input name="text" maxlength="200" placeholder="A note" bind:value="text">
+<small>{s.text.len} / 200</small>

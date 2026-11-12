@@ -4,6 +4,8 @@ A Next.js-like web framework for [Goose](https://aardappel.github.io/goose/), on
 [goose-net](https://github.com/josephheinz/goose-net). Folders under `app/` are routes. `gweb` turns the
 project into one native binary that serves on every core.
 
+Short guides are in [docs/site/](docs/site/).
+
 ## Install
 
 ```
@@ -165,6 +167,8 @@ gweb export [-o DIR]         build, then write the site as static files to DIR (
 gweb dev [flags]             build, run with --log on 2 workers and port 60053 (unless --port), rebuild on change
 gweb routes                  the route table (GET,POST and a frag line for each fragment)
 gweb test                    component parity (test_* as Goose and JavaScript), then tests/*.goose route tests (writes .gooseweb.test/; leaves .gooseweb/ alone)
+gweb check                   goose check on a copy of the site; errors name .gshtml and page.html lines
+gweb lsp                     language server for .gshtml and templates (needs node)
 gweb version                 the gweb version and the package sources it declares
 ```
 
@@ -175,6 +179,12 @@ the binary, or newer, stops with "rebuild gweb". Build `gweb` with:
 ```
 goose build -o gweb cli/gweb.goose
 ```
+
+## Packages
+
+A package is a folder with `gweb.package`, and components, routes, public
+files and `lib/` code. List one in `gweb.packages`: a path, or `owner/repo@tag`,
+with `at /prefix` to mount its routes. See [docs/site/packages.md](docs/site/packages.md).
 
 ## How it runs
 

@@ -1,0 +1,5 @@
+<script goose>
+struct State { n: i64 }
+fn test_basic(s: State&) { s.n = 1; }
+</script>
+<span class="badge">badge {s.n}</span>

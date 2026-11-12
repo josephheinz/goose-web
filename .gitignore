@@ -6,6 +6,8 @@ test/*
 .gooseweb.dev/
 .gooseweb.test/
 .env*.local
+.gooseweb.lsp/
+.gooseweb.check/
 *.o
 *.dSYM/
 *.db-journal
