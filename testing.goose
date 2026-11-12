@@ -147,7 +147,9 @@ fn expect_header(t: Tester&, res: const http::Response&, name: const u8[:], valu
 }
 
 // The first header with this name (case-insensitive); has is false when absent.
+// Content-Type lives in res.content_type, not res.headers.
 fn header_of(res: const http::Response&, name: const u8[:]) -> const u8[:], bool {
+    if http::eq_nocase(name, "content-type") { return res.content_type, res.content_type.len > 0; }
     let v, has = http::find_header(res.headers, name);
     return v, has;
 }

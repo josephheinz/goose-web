@@ -1279,7 +1279,7 @@ fn gen_main_body(m: u8[>..]&, test: bool) {
     m.append("import net from \""); lit(m, pkg_source(1)); m.append("\";\n");
     if uses_sqlite { m.append("import sqlite from \""); lit(m, pkg_source(2)); m.append("\";\n"); }
     m.append("import net.http;\nimport web.template;\nimport web.static;\nimport web.owner;\nimport web.form;\nimport web.csrf;\n");
-    if test { m.append("import web.testing;\n"); }
+    if test { m.append("import web.testing;\nimport site;\n"); }
     for d in dirs {
         if d.route { format(m, "import ", d.route_ns, ";\n"); }
         if d.page_html { format(m, "import ", d.page_ns, "_html;\n"); if d.page_goose { format(m, "import ", d.page_ns, ";\n"); } }
@@ -1817,6 +1817,10 @@ fn route_tests() -> bool {
     var main_file: u8[>..] = [];
     format(main_file, TEST_DIR, "/routes_main.goose");
     write(main_file, gen_test_main());
+    // The site:: helpers are defined from routes_main.goose, as state::ask is; this file gives them a namespace to live in.
+    var site_file: u8[>..] = [];
+    format(site_file, TEST_DIR, "/site.goose");
+    write(site_file, "namespace site;\nimport std;\n");
     var map_file: u8[>..] = [];
     format(map_file, TEST_DIR, "/map.txt");
     write(map_file, map_text);
