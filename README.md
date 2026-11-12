@@ -192,6 +192,38 @@ Pages that set cookies carry no `Cache-Control`; behind a shared cache, set
 `Cache-Control: no-store` in `after` middleware. Signed sessions are not in v1.
 The demo is `../examples/shop/app/cookies` (`/cookies`).
 
+## CSRF
+
+Every page `fn POST` and every `route.goose` that defines `POST`, `PUT`, `PATCH` or `DELETE`
+checks a CSRF token before `before` middleware runs. The token is 32 random hex digits in an
+HttpOnly cookie, `gw_csrf`, and a form sends the same value back in a hidden `_csrf` field
+(a script sends it in an `X-CSRF-Token` header). It is a double-submit cookie with no server
+secret, one token for the browser session.
+
+```html
+<form method="post" action="/x">@web::csrf_field(ctx) ... </form>
+<meta name="csrf-token" content="{web::csrf_token(ctx)}">   <!-- a script sends it as X-CSRF-Token -->
+```
+
+- `gweb` starts the token (cookie and `Cache-Control: no-store`) for a page whose `page.html`,
+  `page.goose` or wrapping `layout.html` mentions `web::csrf_`. A field written by a `lib/` partial is
+  not seen by that scan; call `web::csrf_begin(req, ctx, res)` from `before` middleware, which does
+  nothing when the token is already started. Pages that use no token send no cookie and no header.
+- A gw-target form sends its hidden field with the fragment POST, so fragments need no extra code.
+  Put the field inside the fragment so it comes back in every reply.
+- When `X-CSRF-Token` is present only the header is read; otherwise the `_csrf` field of a
+  urlencoded body. `_csrf` is a reserved form field name.
+- A bad token gets `403` with `CSRF token missing or wrong; reload the page and try again`.
+  A request whose `Sec-Fetch-Site` is anything but `same-origin` or `none` (so `cross-site` and
+  `same-site`) gets `403 cross-site request refused`. Browsers send that header only over HTTPS and
+  to `localhost`, so on plain HTTP the token is the check that counts.
+- A route turns both checks off with `const CSRF = false;` on a line of its own, for APIs called by
+  clients that are not browsers, webhooks, and cross-site browser callbacks (an OIDC `form_post`, a
+  3-D Secure return). A route that opts out must not trust cookies for authority. Pages have no opt-out.
+- Behind a proxy that sends `X-Forwarded-Proto: https` the cookie is `__Host-gw_csrf` with `Secure`,
+  and a plain `gw_csrf` cookie is ignored.
+- The token does not rotate at login, and it needs no `WEB_SECRET`.
+
 ## Fragments
 
 A link or form marked `gw-target="NAME"` fetches its normal URL, and the server
@@ -225,7 +257,7 @@ page.
 - A `page.goose` may define `fn POST(req, ctx) -> Props`, which runs in place of `load` for POST
   (it needs `load` beside it). Return `load`'s props with what the form changed. A POST without the
   header renders the whole page with status 200; for post-redirect-get call `web::redirect(ctx, "/x", 303)`.
-  A POST with `Sec-Fetch-Site: cross-site` gets 403; other methods get 405.
+  A POST must carry the CSRF token (see CSRF); other methods get 405.
 - The morph matches keyed elements by `gw-key` and other nodes by position. Give `gw-key`, unique
   among its siblings, to every item of a list that can be reordered or lose an item other than the
   last (`<li gw-key="{t.id}">`), and to an element that comes and goes in front of other siblings.

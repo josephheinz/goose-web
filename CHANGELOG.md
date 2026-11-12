@@ -2,6 +2,7 @@
 
 ## v0.2.0
 
+- Breaking: CSRF tokens are on by default. Every page `fn POST` and every `route.goose` `POST`, `PUT`, `PATCH` or `DELETE` answers 403 until its forms add `@web::csrf_field(ctx)`, or the route declares `const CSRF = false;`. `Sec-Fetch-Site: same-site` is refused as well as `cross-site`, and `web::cross_site` is removed.
 - Keyed morph: `gw-key` keeps element identity and focus when list items move, appear or disappear.
 
 ## v0.1.1
