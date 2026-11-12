@@ -38,7 +38,7 @@ struct FnDef { name: u8[..64], tok: i64, line: i64, first: i64, n: i64, ret: Ty,
                js: u8[..72], handler: bool, test: bool,
                event: bool,       // reactive: `@event fn name(params);`, no body
                r: i64, w: i64,    // reactive: the bits it reads and writes, through calls
-               is_async: bool }   // reactive: awaits, or calls one that does (false until step 6)
+               is_async: bool }   // reactive: awaits, or calls one that does
 
 struct Var { name: u8[..64], ty: Ty, js: u8[..72] }
 
@@ -121,6 +121,7 @@ let E_FINIT = 9;     // tok: a
 let E_UN = 10;
 let E_BIN = 11;
 let E_IF = 12;       // if a { b } else { c }
+let E_AWAIT = 13;    // await a: a is the call; c: 1 when it stands where check_await allows it
 let S_LET = 20;      // tok: name, a: init, b: 1 with a type (ty), c: 1 for var
 let S_ASSIGN = 21;   // a tok b
 let S_INCDEC = 22;
@@ -145,6 +146,8 @@ let B_PUSH = -7;
 let B_REMOVE_AT = -8;
 let B_CLEAR = -9;
 let B_APPEND = -10;
+let B_HTTP_GET = -11;   // http::get(u): tv is its stub, ref2 its decoder (reactive, awaited)
+let B_HTTP_POST = -12;  // http::post(u, v)
 
 struct Node {
     k: i64, tok: i64, line: i64,
@@ -277,6 +280,18 @@ var n_flow = 0;                // statements other than text pieces written so f
 var mk_after = 0;              // the source offset after the `}` of the expression being compiled
 var var_r: i64[>..<];          // the bits a {#let} variable reads, by variable
 var ev_types: u8[>..];         // the on: event types used, space separated
+
+// A typed fetch (Addendum 12 section 7.3): the Goose stub of one http::get or http::post, its reply and value types.
+struct Stub { post: bool, reply: Ty, val: Ty }
+var stubs: Stub[>..<];
+var decs: Ty[>..<];            // the reply decoders of the JavaScript module (roots first, then the structs they reach)
+var dec_bits = 0;              // the scalar checks the decoders use: 1 int, 2 bool, 4 string, 8 object, 16 array
+var http_urls_buf: u8[>..];    // `METHOD\tLINE\turl\n` for each string-literal url, for gweb's route check
+var http_use = 0;              // 1: http::get is used, 2: http::post
+var await_ctx: u8[..96];       // the place an await may not stand in (markup, a computed), or empty
+var rw_noasync: u8[..96];      // the same for calls of async functions; empty where they are allowed
+var rw_async = false;          // the walker met an await or a call of an async function
+var rw_awaited = -1;           // the call node of the await being walked
 
 // ---------------------------------------------------------------- errors
 
@@ -688,6 +703,15 @@ recursive fn parse_binary(level: i64, ns: bool) -> i64 {
 }
 
 recursive fn parse_unary(ns: bool) -> i64 {
+    if reactive && is("await") {
+        let n = new_node(E_AWAIT, pos);
+        pos += 1;
+        let a = parse_unary(ns);
+        if perr { return -1; }
+        nodes[n].a = a;
+        nodes[n].t1 = nodes[a].t1;
+        return n;
+    }
     if is("!") || is("-") {
         let op = pos;
         pos += 1;
@@ -1685,6 +1709,12 @@ recursive fn check_expr(n: i64) {
         let tk = nodes[n].tok;
         if nodes[n].d >= 0 {
             if tok_is(tk, "web") && tok_is(nodes[n].d, "has") { nodes[n].ref = B_HAS; }
+            else if reactive && is_http(n) {
+                var m: u8[>..] = [];
+                format(m, "http::", tok_name(nodes[n].d), " needs await");
+                report(line, m);
+                return;
+            }
             else {
                 var q: u8[..160] = "";
                 q.append(tok_name(tk));
@@ -1764,6 +1794,16 @@ recursive fn check_expr(n: i64) {
         nodes[n].ty = ty(if lv == 3 { T_BOOL } else { T_INT });
         return;
     }
+    if k == E_AWAIT {
+        if await_ctx.len > 0 {
+            var m: u8[>..] = [];
+            format(m, await_ctx, " cannot await");
+            report(line, m);
+        } else {
+            report(line, "await only goes at the start of a statement, after x =, or after let x: T =");
+        }
+        return;
+    }
     if k == E_IF {
         let c = nodes[n].a;
         let a = nodes[n].b;
@@ -1826,8 +1866,138 @@ fn check_for_head(n: i64) {
     }
 }
 
+// http::get or http::post.
+fn is_http(c: i64) -> bool {
+    return nodes[c].d >= 0 && tok_is(nodes[c].tok, "http") && (tok_is(nodes[c].d, "get") || tok_is(nodes[c].d, "post"));
+}
+
+// A type a reply decodes into: i64, bool, u8[..N], a struct, or an array of struct.
+fn reply_ok(t: const Ty&) -> bool {
+    if t.t == T_INT || t.t == T_BOOL { return true; }
+    if t.t == T_STR { return t.cap > 0; }
+    if t.t == T_STRUCT { return find_struct(t.name) >= 0; }
+    if t.t == T_ARRAY { return t.cap != RO && find_struct(t.name) >= 0; }
+    return false;
+}
+
+fn same_reply(a: const Ty&, b: const Ty&) -> bool {
+    return same_ty(a, b) && (a.t != T_STR || a.cap == b.cap);
+}
+
+// The stub of one kind of http call: gw_get_K or gw_post_K in the Goose tail.
+fn stub_of(post: bool, reply: const Ty&, val: const Ty&) -> i64 {
+    for st, i in stubs {
+        if st.post == post && same_reply(st.reply, reply) && same_ty(st.val, val) { return i; }
+    }
+    stubs.push(Stub { post: post, reply: reply, val: val });
+    return stubs.len - 1;
+}
+
+// The decoder of a reply type in the JavaScript module.
+fn dec_of(t: const Ty&) -> i64 {
+    for d, i in decs { if same_reply(d, t) { return i; } }
+    decs.push(t);
+    return decs.len - 1;
+}
+
+// aw is an `await`: want is the type the result goes into (T_VOID: nowhere). Sets the types of aw and of its call.
+// The call is http::get(u), http::post(u, v) or a call of an async function.
+fn check_await(aw: i64, want: const Ty&) {
+    let line = nodes[aw].line;
+    let c = nodes[aw].a;
+    if nodes[c].k != E_CALL {
+        report(line, "await goes before http::get(u), http::post(u, v) or a call of an async function");
+        return;
+    }
+    if !is_http(c) {
+        check_expr(c);
+        if nodes[c].ty.t == T_ERR { return; }
+        if nodes[c].ref < 0 {
+            report(line, "await goes before http::get(u), http::post(u, v) or a call of an async function");
+            return;
+        }
+        if want.t != T_VOID && nodes[c].ty.t == T_VOID { cannot_type(line); return; }
+        nodes[aw].ty = nodes[c].ty;
+        nodes[aw].c = 1;
+        return;
+    }
+    let post = tok_is(nodes[c].d, "post");
+    nodes[c].ref = if post { B_HTTP_POST } else { B_HTTP_GET };
+    var a = nodes[c].a;
+    var bad = false;
+    while a >= 0 {
+        check_expr(a);
+        if nodes[a].ty.t == T_ERR { bad = true; }
+        a = nodes[a].next;
+    }
+    if bad { return; }
+    var what: u8[>..] = [];
+    format(what, "http::", tok_name(nodes[c].d));
+    let na = args_count(c);
+    if na != (if post { 2 } else { 1 }) {
+        var m: u8[>..] = [];
+        if post { format(m, what, " takes a url and a value: http::post(u, v)"); } else { format(m, what, " takes a url: http::get(u)"); }
+        report(line, m);
+        return;
+    }
+    if arg_t(c, 0) != T_STR {
+        var m: u8[>..] = [];
+        format(m, what, " needs a string url");
+        report(line, m);
+        return;
+    }
+    var val = ty(T_VOID);
+    if post {
+        val = nodes[arg_at(c, 1)].ty;
+        if val.t == T_VOID || val.t == T_ERR {
+            report(line, "http::post sends an i64, bool, string, struct or array of struct");
+            return;
+        }
+    }
+    if want.t == T_ERR { return; }
+    if want.t == T_VOID && !post {
+        report(line, "http::get needs a place for its reply: x = await http::get(u);");
+        return;
+    }
+    if want.t != T_VOID && !reply_ok(want) {
+        var m: u8[>..] = [];
+        format(m, "await ", what, " decodes into i64, bool, u8[..N], a struct or S[>..<]");
+        report(line, m);
+        return;
+    }
+    nodes[c].ty = want;
+    nodes[aw].ty = want;
+    nodes[aw].c = 1;
+    nodes[c].tv = stub_of(post, want, val);
+    if want.t != T_VOID { nodes[c].ref2 = dec_of(want); }
+    http_use = http_use | (if post { 2 } else { 1 });
+    let u = arg_at(c, 0);
+    if nodes[u].k == E_STR {
+        let lit = text[toks[nodes[u].tok].s + 1..toks[nodes[u].tok].e - 1];
+        if find(lit, "\\") < 0 { format(http_urls_buf, if post { "POST" } else { "GET" }, "\t", line, "\t", lit, "\n"); }
+    }
+}
+
 fn check_let(n: i64) {
     let a = nodes[n].a;
+    if nodes[a].k == E_AWAIT {
+        var t = ty(T_ERR);
+        if nodes[n].b == 1 { t = nodes[n].ty; }
+        let c = nodes[a].a;
+        if nodes[n].b != 1 && nodes[c].k == E_CALL && is_http(c) {
+            var m: u8[>..] = [];
+            format(m, "let ", tok_name(nodes[n].tok), " needs a type: await http::", tok_name(nodes[c].d), "(...) decodes into it");
+            report(nodes[n].line, m);
+            nodes[n].ref = declare(nodes[n].tok, t);
+            return;
+        }
+        var wt = ty(T_STRUCT);
+        if nodes[n].b == 1 { wt = t; }
+        check_await(a, wt);
+        if nodes[n].b != 1 { t = nodes[a].ty; nodes[n].ty = t; }
+        nodes[n].ref = declare(nodes[n].tok, t);
+        return;
+    }
     check_expr(a);
     var t = nodes[a].ty;
     if t.t == T_VOID { cannot_type(nodes[n].line); t = ty(T_ERR); }
@@ -1853,6 +2023,12 @@ recursive fn check_stmt(n: i64) {
         let a = nodes[n].a;
         let b = nodes[n].b;
         check_expr(a);
+        if nodes[b].k == E_AWAIT {
+            if !is_lvalue(a) { cannot_type(line); return; }
+            if !tok_is(nodes[n].tok, "=") { report(line, "await goes after = only"); return; }
+            check_await(b, nodes[a].ty);
+            return;
+        }
         check_expr(b);
         if !is_lvalue(a) { cannot_type(line); return; }
         let ta = nodes[a].ty.t;
@@ -1900,7 +2076,9 @@ recursive fn check_stmt(n: i64) {
         return;
     }
     if k == S_EXPR {
-        check_expr(nodes[n].a);
+        let e = nodes[n].a;
+        if nodes[e].k == E_AWAIT { let none = ty(T_VOID); check_await(e, none); return; }
+        check_expr(e);
         return;
     }
 }
@@ -1979,9 +2157,33 @@ recursive fn rw_expr(n: i64) {
         while f >= 0 { rw_expr(nodes[f].a); f = nodes[f].next; }
         return;
     }
+    if k == E_AWAIT {
+        rw_async = true;
+        if rw_rep && rw_noasync.len > 0 && nodes[n].c == 1 {
+            var m: u8[>..] = [];
+            format(m, rw_noasync, " cannot await");
+            report(line, m);
+        }
+        rw_awaited = nodes[n].a;
+        rw_expr(nodes[n].a);
+        return;
+    }
     if k != E_CALL { return; }
     let r = nodes[n].ref;
     var a = nodes[n].a;
+    if r >= 0 && fns[r].is_async {
+        rw_async = true;
+        if rw_rep {
+            var m: u8[>..] = [];
+            if rw_noasync.len > 0 { format(m, rw_noasync, " cannot call '", fns[r].name, "', which is async"); }
+            else if rw_awaited != n { format(m, "'", fns[r].name, "' is async: write await ", fns[r].name, "()"); }
+            if m.len > 0 { report(line, m); }
+        }
+    } else if r >= 0 && rw_awaited == n && rw_rep {
+        var m: u8[>..] = [];
+        format(m, "'", fns[r].name, "' is not async: remove await");
+        report(line, m);
+    }
     if r >= 0 {
         rw_r = rw_r | fns[r].r;
         rw_w = rw_w | fns[r].w;
@@ -2049,6 +2251,7 @@ recursive fn rw_block(n: i64) {
 fn rw_fixpoint() {
     rw_rep = false;
     rw_ctx = 0;
+    rw_noasync.clear();
     var changed = true;
     while changed {
         changed = false;
@@ -2056,10 +2259,12 @@ fn rw_fixpoint() {
             if fns[i].body < 0 { continue; }
             rw_r = 0;
             rw_w = 0;
+            rw_async = false;
             rw_block(fns[i].body);
-            if rw_r != fns[i].r || rw_w != fns[i].w {
+            if rw_r != fns[i].r || rw_w != fns[i].w || rw_async != fns[i].is_async {
                 fns[i].r = rw_r;
                 fns[i].w = rw_w;
+                fns[i].is_async = rw_async;
                 changed = true;
             }
         }
@@ -2123,7 +2328,10 @@ fn check_reactive() {
         let init = rdecls[i].init;
         if init < 0 { continue; }
         begin_fn();
+        await_ctx.clear();
+        format(await_ctx, rmark(rdecls[i].kind), " ", rdecls[i].name);
         check_expr(init);
+        await_ctx.clear();
         let got = nodes[init].ty;
         let want = rdecls[i].ty;
         if got.t == T_ERR || want.t == T_ERR { continue; }
@@ -2145,12 +2353,21 @@ fn check_reactive() {
         rw_ctx = 0;
         rw_r = 0;
         rw_w = 0;
+        rw_async = false;
+        rw_noasync.clear();
         rw_block(fns[i].body);
+        if fns[i].test && fns[i].is_async {
+            var m: u8[>..] = [];
+            format(m, "'", fns[i].name, "' is async; a test runs without a network");
+            report(fns[i].line, m);
+        }
     }
     for i in rblocks.len {
         rw_ctx = 0;
         rw_r = 0;
         rw_w = 0;
+        rw_noasync.clear();
+        rw_noasync.append(if rblocks[i].kind == RB_WATCH { "@watch" } else if rblocks[i].kind == RB_MOUNT { "@mount" } else if rblocks[i].kind == RB_UNMOUNT { "@unmount" } else { "@every" });
         rw_block(rblocks[i].body);
         rblocks[i].r = rw_r;
         rblocks[i].w = rw_w;
@@ -2161,6 +2378,8 @@ fn check_reactive() {
         rw_ctx = if rdecls[i].kind == R_STATE { 2 } else { 1 };
         rw_ctx_name.clear();
         rw_ctx_name.append(rdecls[i].name);
+        rw_noasync.clear();
+        format(rw_noasync, rmark(rdecls[i].kind), " ", rdecls[i].name);
         rw_r = 0;
         rw_w = 0;
         rw_expr(init);
@@ -2178,6 +2397,7 @@ fn check_reactive() {
         }
     }
     rw_rep = false;
+    rw_noasync.clear();
     order_computeds();
 }
 
@@ -2188,7 +2408,10 @@ fn rw_mark(n: i64, line: i64, kind: i64) {
     rw_ctx = 3;
     rw_r = 0;
     rw_w = 0;
+    rw_noasync.clear();
+    rw_noasync.append("markup");
     rw_expr(n);
+    rw_noasync.clear();
     rw_rep = false;
     rmarks.push(RMk { kind: kind, line: line, r: rw_r, w: rw_w });
     mk_r = mk_r | rw_r;
@@ -2220,6 +2443,31 @@ fn check_rmodel() {
 // ---------------------------------------------------------------- Goose rewrites (Addendum 12, section 3.1)
 
 fn takes_state(fi: i64) -> bool { (fns[fi].r | fns[fi].w) != 0 }
+
+// The JavaScript of a reactive function: (s, c, ...) when it writes or awaits, (s, ...) when it only reads, (...) else.
+fn js_takes_s(fi: i64) -> bool { return takes_state(fi) || fns[fi].is_async; }
+fn js_takes_c(fi: i64) -> bool { return fns[fi].w != 0 || fns[fi].is_async; }
+
+// The name of the typed-fetch imports and of reply decoder k, in the output's style.
+fn http_name(post: bool) -> u8[..16] {
+    var r: u8[..16] = "";
+    r.append(if compact { if post { "$p" } else { "$g" } } else { if post { "gw_post" } else { "gw_get" } });
+    return r;
+}
+
+fn dec_name(k: i64) -> u8[..16] {
+    var r: u8[..16] = "";
+    format(r, if compact { "$" } else { "gw_d" }, k);
+    return r;
+}
+
+// One scalar check of a decoder: i int, b bool, s string, o object, a array.
+fn dec_check(c: u8) -> u8[..16] {
+    var r: u8[..16] = "";
+    r.append(if compact { "$" } else { "gw_" });
+    r.push(c);
+    return r;
+}
 
 fn add_edit(at: i64, len: i64, repl: const u8[:]) {
     var e = Edit { at: at, len: len, text: "" };
@@ -2296,8 +2544,19 @@ recursive fn rec_expr(n: i64) {
         while f >= 0 { rec_expr(nodes[f].a); f = nodes[f].next; }
         return;
     }
+    if k == E_AWAIT {
+        // The Goose side runs nothing asynchronously: the await is dropped.
+        edit_range(toks[nodes[n].tok].s, toks[nodes[n].tok].e, "");
+        rec_expr(nodes[n].a);
+        return;
+    }
     if k != E_CALL { return; }
     let r = nodes[n].ref;
+    if r == B_HTTP_GET || r == B_HTTP_POST {
+        var nm: u8[>..] = [];
+        format(nm, if r == B_HTTP_GET { "gw_get_" } else { "gw_post_" }, nodes[n].tv);
+        edit_range(toks[nodes[n].tok].s, toks[nodes[n].d].e, nm);
+    }
     if r >= 0 && takes_state(r) {
         add_edit(toks[nodes[n].tok + 1].e, 0, if nodes[n].a >= 0 { "gw_p, gw_s, " } else { "gw_p, gw_s" });
     }
@@ -2475,6 +2734,11 @@ recursive fn emit_expr(n: i64, top: bool) {
         return;
     }
     if k == E_CALL { emit_call(n, top); return; }
+    if k == E_AWAIT {
+        w("await ");
+        emit_expr(nodes[n].a, false);
+        return;
+    }
     if k == E_SLIT {
         w("{");
         var f = nodes[n].a;
@@ -2553,13 +2817,22 @@ recursive fn emit_call(n: i64, top: bool) {
         w("(");
         // A reactive function gets the state, and the change handle when it writes.
         var lead = false;
-        if reactive && takes_state(r) {
+        if reactive && js_takes_s(r) {
             w(s_js);
             lead = true;
-            if fns[r].w != 0 { wo(", "); w(c_js); }
+            if js_takes_c(r) { wo(", "); w(c_js); }
         }
         if lead && nodes[n].a >= 0 { wo(", "); }
         emit_args(n);
+        w(")");
+        return;
+    }
+    if r == B_HTTP_GET || r == B_HTTP_POST {
+        w(http_name(r == B_HTTP_POST));
+        w("(");
+        emit_expr(arg_at(n, 0), true);
+        if r == B_HTTP_POST { wo(", "); emit_expr(arg_at(n, 1), true); }
+        if nodes[n].ref2 >= 0 { wo(", "); w(dec_name(nodes[n].ref2)); }
         w(")");
         return;
     }
@@ -2593,6 +2866,8 @@ recursive fn emit_call(n: i64, top: bool) {
 // Node n's value, stored into a slot of type target: structs are copied,
 // and a string going into u8[..N] is checked against N.
 recursive fn emit_val(n: i64, target: Ty) {
+    // A decoded reply is fresh and fits; an async function's result is a scalar.
+    if nodes[n].k == E_AWAIT { emit_expr(n, true); return; }
     let nt = nodes[n].ty;
     if nt.t == T_STRUCT && nodes[n].k != E_SLIT {
         if is_deep(nt.name) {
@@ -2719,6 +2994,7 @@ recursive fn call_marks(n: i64) -> i64 {
         while f >= 0 { m = m | call_marks(nodes[f].a); f = nodes[f].next; }
         return m;
     }
+    if k == E_AWAIT { return call_marks(nodes[n].a); }
     if k != E_CALL { return 0; }
     let r = nodes[n].ref;
     var a = nodes[n].a;
@@ -2763,11 +3039,23 @@ fn emit_mark(mask: i64) {
     w(");");
 }
 
+// The await a statement starts with (let x: T = await ..., x = await ..., await ...), or -1.
+fn await_of(n: i64) -> i64 {
+    let k = nodes[n].k;
+    var e = -1;
+    if k == S_LET || k == S_EXPR { e = nodes[n].a; }
+    else if k == S_ASSIGN { e = nodes[n].b; }
+    if e >= 0 && nodes[e].k == E_AWAIT { return e; }
+    return -1;
+}
+
 recursive fn emit_stmt(n: i64) {
     nl();
     if reactive {
         let pm = pre_marks(n);
         if pm != 0 { emit_mark(pm); nl(); }
+        // Show what the handler has written so far before it waits.
+        if await_of(n) >= 0 { w(c_js); w(".f();"); nl(); }
     }
     emit_stmt_body(n);
     if reactive {
@@ -2932,14 +3220,15 @@ fn emit_line_note(line: i64) {
 fn emit_js_fn(i: i64) {
     let f = fns[i];
     emit_line_note(f.line);
+    if reactive && f.is_async { w("async "); }
     w("function ");
     w(f.js);
     w("(");
     var first = true;
-    if reactive && takes_state(i) {
+    if reactive && js_takes_s(i) {
         w(s_js);
         first = false;
-        if f.w != 0 { wo(", "); w(c_js); }
+        if js_takes_c(i) { wo(", "); w(c_js); }
     }
     for p in f.first..f.first + f.n {
         if !first { wo(", "); }
@@ -3006,7 +3295,7 @@ fn emit_table(which: i64) {
         if !compact { w(" "); }
         first = false;
         js.append(f.name);
-        let wrap = which == 0 && (!reactive || f.w == 0);
+        let wrap = which == 0 && (!reactive || !js_takes_c(i));
         if wrap {
             wo(": ");
             w("(");
@@ -3020,7 +3309,7 @@ fn emit_table(which: i64) {
             wo(" => ");
             w(f.js);
             w("(");
-            if !reactive || takes_state(i) {
+            if !reactive || js_takes_s(i) {
                 w(s_js);
                 w(",");
                 if !compact { w(" "); }
@@ -3098,6 +3387,116 @@ fn emit_zero_val(t: Ty) {
         let si = find_struct(t.name);
         if si >= 0 { zero_obj(si, 0); } else { w("{}"); }
     } else { w("0"); }
+}
+
+// The decoders of the typed fetches (section 7.3): dK(value, path) returns a fresh checked value or throws the
+// path of the first mismatch, which gwh.js turns into `bad reply from URL at PATH`. Structs are rebuilt field
+// by field, so extra keys are dropped; a string is checked against its capacity in bytes.
+fn dec_field(f: Field) {
+    // The check of v.<f>, its path p + ".f".
+    var path: u8[>..] = [];
+    format(path, "p + \".", f.name, "\"");
+    if f.kind == Kind.Int || f.kind == Kind.Bool {
+        dec_bits = dec_bits | (if f.kind == Kind.Int { 1 } else { 2 });
+        w(dec_check(if f.kind == Kind.Int { 'i' } else { 'b' }));
+        w("(v.");
+        w(f.name);
+        wo(", ");
+        wo(path);
+        w(")");
+    } else if f.kind == Kind.Str {
+        dec_bits = dec_bits | 4;
+        w(dec_check('s'));
+        w("(v.");
+        w(f.name);
+        wo(", ");
+        wo(path);
+        wo(", ");
+        format(js, f.cap);
+        w(")");
+    } else {
+        var t = ty(if f.kind == Kind.Struct { T_STRUCT } else { T_ARRAY });
+        t.name = f.struct_name;
+        w(dec_name(dec_of(t)));
+        w("(v.");
+        w(f.name);
+        wo(", ");
+        wo(path);
+        w(")");
+    }
+}
+
+fn emit_decoders() {
+    if decs.len == 0 { return; }
+    dec_bits = 0;
+    var k = 0;
+    while k < decs.len {
+        let t = decs[k];
+        if !compact { w("\n"); }
+        w("function ");
+        w(dec_name(k));
+        wo("(v, p) {");
+        ind = 1;
+        nl();
+        if t.t == T_INT { dec_bits = dec_bits | 1; w("return "); w(dec_check('i')); wo("(v, p);"); }
+        else if t.t == T_BOOL { dec_bits = dec_bits | 2; w("return "); w(dec_check('b')); wo("(v, p);"); }
+        else if t.t == T_STR { dec_bits = dec_bits | 4; w("return "); w(dec_check('s')); wo("(v, p, "); format(js, t.cap); w(");"); }
+        else if t.t == T_STRUCT {
+            dec_bits = dec_bits | 8;
+            w(dec_check('o'));
+            wo("(v, p);");
+            nl();
+            w("return {");
+            let si = find_struct(t.name);
+            for q in structs[si].n {
+                if q > 0 { w(","); }
+                if !compact { w(" "); }
+                let f = fields[structs[si].first + q];
+                w(f.name);
+                wo(": ");
+                dec_field(f);
+            }
+            if !compact && structs[si].n > 0 { w(" "); }
+            w("};");
+        } else {
+            dec_bits = dec_bits | 16;
+            var et = ty(T_STRUCT);
+            et.name = t.name;
+            w("return ");
+            w(dec_check('a'));
+            wo("(v, p).map((x, i) => ");
+            w(dec_name(dec_of(et)));
+            wo("(x, p + \"[\" + i + \"]\"));");
+        }
+        ind = 0;
+        nl();
+        close_brace();
+        if !compact { w("\n"); }
+        k += 1;
+    }
+    for c in "ibsoa" {
+        let bit = if c == 'i' { 1 } else if c == 'b' { 2 } else if c == 's' { 4 } else if c == 'o' { 8 } else { 16 };
+        if (dec_bits & bit) == 0 { continue; }
+        w("function ");
+        w(dec_check(c));
+        wo(if c == 's' { "(v, p, n) {" } else { "(v, p) {" });
+        ind = 1;
+        nl();
+        if c == 'i' { wo("if (!Number.isSafeInteger(v)) throw p; "); w("return v;"); }
+        else if c == 'b' { wo("if (typeof v != \"boolean\") throw p; "); w("return v;"); }
+        else if c == 's' {
+            wo("if (typeof v != \"string\" || ");
+            helper(H_BLEN);
+            wo("(v) > n) throw p; ");
+            w("return v;");
+        }
+        else if c == 'o' { wo("if (!v || typeof v != \"object\" || Array.isArray(v)) throw p;"); }
+        else { wo("if (!Array.isArray(v)) throw p; "); w("return v;"); }
+        ind = 0;
+        nl();
+        close_brace();
+        if !compact { w("\n"); }
+    }
 }
 
 var vbase = 0;
@@ -3370,6 +3769,26 @@ fn emit_reactive_call(watch: bool) {
     }
     if !compact && rdecls.len > 0 { w(" "); }
     w("}");
+    // x: the names each async handler writes, which a failure restores.
+    var anyx = false;
+    for f in fns { if f.handler && f.is_async && f.body >= 0 { anyx = true; } }
+    if anyx {
+        wo(", ");
+        w("x");
+        wo(": {");
+        var firstx = true;
+        for f in fns {
+            if !f.handler || !f.is_async || f.body < 0 { continue; }
+            if !firstx { w(","); }
+            if !compact { w(" "); }
+            firstx = false;
+            js.append(f.name);
+            wo(": ");
+            format(js, f.w);
+        }
+        if !compact { w(" "); }
+        w("}");
+    }
     var pm = 0;
     for d in rdecls { if d.kind == R_PROP { pm = pm | d.mask; } }
     wo(", ");
@@ -4463,6 +4882,48 @@ fn json_field(out: u8[>..]&, d: RDecl, owner: const u8[:], first: bool) {
     }
 }
 
+// A type as the Goose stubs write it.
+fn stub_ty(t: const Ty&) -> u8[>..] {
+    var r: u8[>..] = [];
+    if t.t == T_INT { r.append("i64"); }
+    else if t.t == T_BOOL { r.append("bool"); }
+    else if t.t == T_STR { format(r, "u8[..", t.cap, "]"); }
+    else if t.t == T_STRUCT { r.append(t.name); }
+    else { format(r, t.name, "[>..<]"); }
+    return r;
+}
+
+// What the stub returns: the type's zero.
+fn stub_zero(t: const Ty&) -> u8[>..] {
+    var r: u8[>..] = [];
+    if t.t == T_INT { r.append("0"); }
+    else if t.t == T_BOOL { r.append("false"); }
+    else if t.t == T_STR { r.append("\"\""); }
+    else if t.t == T_STRUCT { format(r, t.name, " { .. }"); }
+    else { r.append("[]"); }
+    return r;
+}
+
+// gw_get_K(url) -> T and gw_post_K(url, value) [-> T]: the Goose side of http::get and http::post. A handler never
+// runs on the server, so the stubs only give the Goose compiler the types.
+fn emit_stubs(out: u8[>..]&) {
+    for st, i in stubs {
+        format(out, "fn gw_", if st.post { "post" } else { "get" }, "_", i, "(gw_u: const u8[:]");
+        if st.post {
+            out.append(", gw_v: ");
+            let v = st.val;
+            if v.t == T_STR { out.append("const u8[:]"); }
+            else if v.t == T_STRUCT { format(out, "const ", v.name, "&"); }
+            else if v.t == T_ARRAY { format(out, "const ", v.name, "[:]"); }
+            else { out.append(stub_ty(v)); }
+        }
+        out.push(')');
+        if st.reply.t == T_VOID { out.append(" {}\n"); continue; }
+        let rt = stub_ty(st.reply);
+        format(out, " -> ", rt, " { var gw_r: ", rt, " = ", stub_zero(st.reply), "; return gw_r; }\n");
+    }
+}
+
 fn emit_reactive_tail(name: const u8[:], out: u8[>..]&) {
     out.append("struct Props {");
     var first = true;
@@ -4482,6 +4943,7 @@ fn emit_reactive_tail(name: const u8[:], out: u8[>..]&) {
         }
     }
     out.append(if first { "}\n" } else { " }\n" });
+    emit_stubs(out);
     out.append("fn gw_init(gw_p: const Props&) -> State { var gw_s = State { .. }; ");
     for d in rdecls {
         if d.kind == R_STATE && has_init_fn(d) { format(out, "gw_s.", d.name, " = gw_i_", d.name, "(gw_p, gw_s); "); }
@@ -4646,6 +5108,16 @@ fn props_of() -> u8[>..] {
 
 fn is_reactive() -> bool { return reactive; }
 
+// The string-literal urls of the http calls compile() last read: `METHOD\tLINE\turl\n` each.
+fn http_urls() -> u8[>..] {
+    var r: u8[>..] = [];
+    r.append(http_urls_buf);
+    return r;
+}
+
+// 1 when the module uses http::get, 2 http::post (and so imports gwh.js).
+fn http_used() -> i64 { return http_use; }
+
 // For each test of test_names, in its order: 1 when it is called test(gw_p, gw_s), 0 when with no arguments.
 fn test_args() -> u8[>..] {
     var r: u8[>..] = [];
@@ -4711,6 +5183,15 @@ fn reset() {
     mk_after = 0;
     var_r.clear();
     ev_types.clear();
+    stubs.clear();
+    decs.clear();
+    dec_bits = 0;
+    http_urls_buf.clear();
+    http_use = 0;
+    await_ctx.clear();
+    rw_noasync.clear();
+    rw_async = false;
+    rw_awaited = -1;
 }
 
 // Errors go to errs as `path:LINE: error: MSG` lines; false when there were any.
@@ -4777,12 +5258,16 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
         }
     }
     if !reactive || nerr == 0 { for i in fns.len { if fns[i].body >= 0 { emit_js_fn(i); } } }
+    await_ctx.clear();
+    await_ctx.append("markup");
     compile_markup(close + 1, close + 1, goose_out);
+    await_ctx.clear();
     if close + 1 >= nlines { goose_out.append("}\n"); }
     if !reactive {
         emit_zero();
         emit_component_call();
     } else if nerr == 0 {
+        emit_decoders();
         emit_reactive_update();
         let has_watch = emit_reactive_watch();
         emit_reactive_init();
@@ -4809,12 +5294,26 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
             format(js_out, HELPERS[h], " as ", helper_js[h]);
         }
         js_out.append("}from\"./gwi.js\";");
+        if (http_use & 3) != 0 {
+            js_out.append("import{");
+            if (http_use & 1) != 0 { js_out.append("get as $g"); }
+            if (http_use & 3) == 3 { js_out.push(','); }
+            if (http_use & 2) != 0 { js_out.append("post as $p"); }
+            js_out.append("}from\"./gwh.js\";");
+        }
     } else {
         js_out.append("// Generated by gweb from ");
         js_out.append(path);
         js_out.append(". Do not edit.\nimport { component, esc, at, set, rm, blen, cap, idiv, imod, ");
         js_out.append(if reactive { "T, A, B" } else { "swap" });
         js_out.append(" } from \"./gwi.js\";\n");
+        if (http_use & 3) != 0 {
+            js_out.append("import { ");
+            if (http_use & 1) != 0 { js_out.append("get as gw_get"); }
+            if (http_use & 3) == 3 { js_out.append(", "); }
+            if (http_use & 2) != 0 { js_out.append("post as gw_post"); }
+            js_out.append(" } from \"./gwh.js\";\n");
+        }
     }
     js_out.append(js);
     errs.append(errs_buf);

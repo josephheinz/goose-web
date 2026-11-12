@@ -73,6 +73,8 @@ var component_reactive: i64[>..<];     // 1 for a component with @ declarations 
 var component_props: u8[>..];          // `Name\tprop\tdefault source\n` for each @prop of each reactive component
 var component_errors = 0;              // translator errors of this gen; the build still runs goose
 var uses_fragments = false;
+var uses_http = false;                 // a component imports gwh.js (http::get or http::post)
+var http_calls: Target[>..<];          // each string-literal url of an http call (post: POST, name: get or post)
 var targets: Target[>..<];
 var tpl_script = false;
 var last_errors: u8[>..];
@@ -1274,6 +1276,27 @@ fn check_targets() {
     }
 }
 
+// A string-literal url of http::get or http::post must reach a route.goose that answers that method, found the
+// way a gw-target url finds its page. Urls that are not literals are not checked.
+fn check_http() {
+    for t in http_calls {
+        let url: u8[..512] = t.url;
+        let meth = if t.post { "POST" } else { "GET" };
+        var m: u8[>..] = [];
+        if url.len == 0 || url[0] != '/' {
+            format(m, "http::", if t.post { "post" } else { "get" }, ": a literal url starts with / (the same site): ", url);
+            err(t.path, t.line, m);
+            continue;
+        }
+        let di = match_url(url);
+        let bit = if t.post { 2 } else { 0 };
+        if di < 0 || !dirs[di].route || ((dirs[di].methods >> bit) & 1) == 0 {
+            format(m, "http::", if t.post { "post" } else { "get" }, ": no route ", meth, " ", url);
+            err(t.path, t.line, m);
+        }
+    }
+}
+
 // ---------------------------------------------------------------- main.goose
 
 let SIG = "(req: const http::Request&, ctx: web::Ctx&, res: http::Response&)";
@@ -1674,17 +1697,21 @@ let RT_PRETTY = embed_file("../client/gwi.js");
 let RT_MIN = embed_file("../client/gwi.min.js");
 let RT_FRAG_PRETTY = embed_file("../client/gwf.js");
 let RT_FRAG_MIN = embed_file("../client/gwf.min.js");
+let RT_HTTP_PRETTY = embed_file("../client/gwh.js");
+let RT_HTTP_MIN = embed_file("../client/gwh.min.js");
 
-// which: 0 is gwi.js (the core), 1 is gwf.js (fragments).
+// which: 0 is gwi.js (the core), 1 is gwf.js (fragments), 2 is gwh.js (typed fetch).
 fn runtime_js(which: i64, min: bool, out: u8[>..]&) {
     let home = goose_web_home();
     if home.len > 0 {
         var p: u8[>..] = [];
-        format(p, home, if which == 1 { if min { "/client/gwf.min.js" } else { "/client/gwf.js" } } else { if min { "/client/gwi.min.js" } else { "/client/gwi.js" } });
+        let base = if which == 1 { "/client/gwf" } else if which == 2 { "/client/gwh" } else { "/client/gwi" };
+        format(p, home, base, if min { ".min.js" } else { ".js" });
         if read(p, out) { return; }
     }
     out.clear();
     if which == 1 { out.append(if min { RT_FRAG_MIN } else { RT_FRAG_PRETTY }); }
+    else if which == 2 { out.append(if min { RT_HTTP_MIN } else { RT_HTTP_PRETTY }); }
     else { out.append(if min { RT_MIN } else { RT_PRETTY }); }
 }
 
@@ -1742,6 +1769,7 @@ fn gen_runtime(dev: bool) {
     make_dir(gw_dir);
     gen_runtime_file(0, "gwi.js", dev, gw_dir);
     if uses_fragments { gen_runtime_file(1, "gwf.js", dev, gw_dir); }
+    if uses_http { gen_runtime_file(2, "gwh.js", dev, gw_dir); }
 }
 
 // gen goes on after translator errors, so the Goose compiler reports its errors too.
@@ -1777,6 +1805,16 @@ fn gen_components(dev: bool) {
             }
         }
         emit_component_warnings(w);
+        if component::http_used() != 0 { uses_http = true; }
+        for l in split(component::http_urls(), '\n') {
+            let f = split(l, '\t');
+            if f.len != 3 || f[2].len >= 512 { continue; }
+            let ln, ok = parse_int(f[1]);
+            var t = Target { path: "", line: ln, url: "", name: "", post: f[0] == "POST", own: -1 };
+            t.path.append(path);
+            t.url.append(f[2]);
+            http_calls.push(t);
+        }
         if !compiled {
             print_compiler(e);
             note_errors(e);
@@ -1807,7 +1845,9 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     uses_sqlite = false;
     component_errors = 0;
     uses_fragments = false;
+    uses_http = false;
     targets.clear();
+    http_calls.clear();
     gen_components(dev);
     if is_dir("lib") { scan_lib_for_sqlite(); }
     if is_dir("lib") {
@@ -1895,6 +1935,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
         }
     }
     check_targets();
+    check_http();
     if errors > 0 { return false; }
     if component_names.len > 0 || uses_fragments { gen_runtime(dev); }
     var main_file: u8[>..] = [];
@@ -2067,6 +2108,11 @@ fn test_cmd() -> bool {
         p.clear();
         format(p, dir, "/gwi.js");
         write(p, GWI_SHIM);
+        var hp: u8[>..] = [];
+        runtime_js(2, compact, hp);
+        p.clear();
+        format(p, dir, "/gwh.js");
+        write(p, hp);
         for n in component_names {
             var path: u8[>..] = [];
             format(path, "components/", n, ".gshtml");

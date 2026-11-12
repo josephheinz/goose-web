@@ -389,6 +389,16 @@ goose-web's own suite is `test/components.sh` (parity components in
 `client/gwi.min.js` is current). `test/morph.sh` runs the DOM morph under jsdom (it installs jsdom
 into `~/.cache/goose-web-test` on its first run).
 
+**Fetch (reactive components).** A handler can `x = await http::get(url);`, `let r: T = await http::get(url);`,
+`await http::post(url, value);` or `x = await http::post(url, value);`; `await` goes only there and before calls of
+async functions (a function that awaits is async, through calls), never in markup, a computed or an initializer.
+The reply is checked against the type of `x` or `r` (`i64`, `bool`, `u8[..N]`, a struct, `S[>..<]`) and a mismatch
+is an error at a path such as `bad reply from /api/items at [2].title`; a refused status or a bad reply restores
+what the handler wrote (an optimistic `push` disappears) and raises `gw:error`. POST sends JSON with the page's
+`_csrf` field as `X-CSRF-Token`. A literal url must match a `route.goose` with that method (`http::get: no route
+GET /api/x`); routes answer with `web::json(res, http::Status.Ok); Name::gw_json(res.body, items);` (name the value
+first; `gw_json` takes a struct or a `S[:]`). The module imports `/_gw/gwh.js`, which gweb serves when a component uses it.
+
 **Maintainers.** After editing `client/gwi.js`, run `client/build.sh` (esbuild
 0.28.2 through `npx`, or `ESBUILD=/path/to/esbuild`); it writes
 `client/gwi.min.js` with the source's FNV-1a hash in its banner.

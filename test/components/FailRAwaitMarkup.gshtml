@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRAwaitMarkup.gshtml:6: error: markup cannot await
+@state var u: u8[..8] = "/a";
+fn load() { await http::post(u, 1); }
+</script>
+<p>{await load()}</p>

@@ -13,7 +13,7 @@ console.error = () => {};
 const dir = process.env.GW_DIR;
 const G = await import(pathToFileURL(dir + "/gwi.js").href);
 const { defs, state } = G;
-for (const n of ["RCounter", "RParts", "RComputed", "RWatch", "RStruct"]) await import(pathToFileURL(`${dir}/${n}.js`).href);
+for (const n of ["RCounter", "RParts", "RComputed", "RWatch", "RStruct", "RFetch"]) await import(pathToFileURL(`${dir}/${n}.js`).href);
 
 let errors = [];
 window.addEventListener("gw:error", (ev) => errors.push(ev.detail));
@@ -151,6 +151,142 @@ test("RStruct: struct and array state under gw-key", () => {
   eq(root.querySelectorAll("li").length, 1, "one row left");
   synced(root, "RStruct", "drop");
   eq(errors.length, 0, "no error");
+});
+
+// ---- RFetch: typed fetch through gwh.js against a stubbed fetch. Each call waits until the test answers it.
+const tick = () => new Promise((r) => setTimeout(r, 0));
+let calls = [];
+globalThis.fetch = (u, o) => new Promise((resolve) => {
+  calls.push({ u, o, answer: (status, body) => resolve({ ok: status >= 200 && status < 300, status, json: async () => body }) });
+});
+const nodeText = (root) => root.querySelector("p").textContent;
+
+test("RFetch: a reply is decoded into state and shown; the flag set before the wait shows first", async () => {
+  calls = [];
+  const root = mount("RFetch", {});
+  click(btn(root, "load"));
+  eq(calls.length, 1, "one request");
+  eq(calls[0].u, "/api/items", "its url");
+  eq(nodeText(root).startsWith("loading"), true, "loading is in the DOM before the fetch resolves");
+  eq(root.querySelector("p").className, "wait", "attribute part too");
+  synced(root, "RFetch", "before the reply");
+  calls[0].answer(200, [{ id: 3, title: "a<b>", done: false, extra: 1 }, { id: 4, title: "é", done: true }]);
+  await tick();
+  eq(state(root).items.length, 2, "two items");
+  eq(Object.keys(state(root).items[0]).join(), "id,title,done", "extra keys are dropped");
+  eq(root.querySelectorAll("li").length, 2, "shown");
+  eq(nodeText(root).startsWith("ready"), true, "loading cleared");
+  synced(root, "RFetch", "after the reply");
+  eq(errors.length, 0, "no error");
+});
+
+test("RFetch: an int and a bool reply; a post with a reply, the CSRF header and the body", async () => {
+  calls = [];
+  const root = mount("RFetch", {});
+  click(btn(root, "refresh"));
+  eq(calls[0].u, "/api/count", "first get");
+  calls[0].answer(200, 7);
+  await tick();
+  eq(state(root).count, 7, "count");
+  eq(calls.length, 2, "second get after the first");
+  calls[1].answer(200, true);
+  await tick();
+  eq(state(root).busy, true, "bool");
+  synced(root, "RFetch", "refresh");
+  // add: no token on the page, then one.
+  click(btn(root, "add"));
+  eq(root.querySelectorAll("li").length, 1, "optimistic row shows at once");
+  const c = calls[2];
+  eq(c.o.method, "POST", "post");
+  eq(c.o.headers["Content-Type"], "application/json", "json");
+  eq("X-CSRF-Token" in c.o.headers, false, "no token, no header");
+  eq(c.o.body, '{"id":1,"title":"new","done":false}', "body");
+  c.answer(200, { ok: true, note: "saved" });
+  await tick();
+  eq(state(root).note, "saved", "reply read");
+  eq(root.querySelectorAll("li").length, 1, "row stays");
+  synced(root, "RFetch", "saved");
+  document.body.insertAdjacentHTML("beforeend", '<input type="hidden" name="_csrf" value="tok123">');
+  click(btn(root, "add"));
+  eq(calls[3].o.headers["X-CSRF-Token"], "tok123", "token from the page");
+  calls[3].answer(200, { ok: true, note: "again" });
+  await tick();
+  eq(errors.length, 0, "no error");
+});
+
+test("RFetch: a status error rolls back the handler's writes; another handler's write in between survives", async () => {
+  calls = [];
+  const root = mount("RFetch", {});
+  click(btn(root, "add"));
+  eq(root.querySelectorAll("li").length, 1, "optimistic push shows");
+  click(btn(root, "mark"));
+  eq(state(root).busy, true, "other handler wrote");
+  eq(nodeText(root).includes("true"), true, "and it shows");
+  calls[0].answer(500, {});
+  await tick();
+  eq(state(root).items.length, 0, "push rolled back");
+  eq(root.querySelectorAll("li").length, 0, "row gone from the DOM");
+  eq(state(root).busy, true, "the other handler's write survived");
+  eq(nodeText(root).includes("true"), true, "still shown");
+  eq(errors.length, 1, "one gw:error");
+  eq(errors[0].includes("500 from /api/items"), true, "its text: " + errors[0]);
+  synced(root, "RFetch", "rollback");
+});
+
+test("RFetch: a bad reply rolls back, names the path, raises one gw:error", async () => {
+  calls = [];
+  const root = mount("RFetch", {});
+  click(btn(root, "load"));
+  eq(nodeText(root).startsWith("loading"), true, "loading shown");
+  calls[0].answer(200, [{ id: 1, title: "ok", done: false }, { id: 2, title: 5, done: false }]);
+  await tick();
+  eq(errors.length, 1, "one gw:error");
+  eq(errors[0].includes("bad reply from /api/items at [1].title"), true, "path: " + errors[0]);
+  eq(state(root).items.length, 0, "nothing assigned");
+  eq(state(root).loading, false, "flag restored");
+  eq(nodeText(root).startsWith("ready"), true, "and shown");
+  synced(root, "RFetch", "bad reply");
+  // Other mismatches: root type, missing field, long string, float, big int.
+  const bad = async (body, at) => {
+    errors = [];
+    calls = [];
+    click(btn(root, "load"));
+    calls[0].answer(200, body);
+    await tick();
+    eq(errors.length, 1, "error for " + JSON.stringify(body));
+    eq(errors[0].endsWith("at " + at), true, `${JSON.stringify(body)}: ${errors[0]}`);
+  };
+  await bad({ id: 1 }, "");
+  await bad([{ id: 1, done: false }], "[0].title");
+  await bad([{ id: 1.5, title: "x", done: false }], "[0].id");
+  await bad([{ id: 2 ** 60, title: "x", done: false }], "[0].id");
+  await bad([{ id: 1, title: "x".repeat(25), done: false }], "[0].title");
+  await bad([{ id: 1, title: "é".repeat(13), done: false }], "[0].title");
+  await bad([{ id: 1, title: "x", done: 1 }], "[0].done");
+  await bad([null], "[0]");
+  errors = [];
+  calls = [];
+  click(btn(root, "refresh"));
+  calls[0].answer(200, "7");
+  await tick();
+  eq(errors.length, 1, "string for an int");
+  eq(state(root).count, 0, "count untouched");
+});
+
+test("RFetch: async propagates; a post without a decoder ignores the body", async () => {
+  calls = [];
+  const root = mount("RFetch", {});
+  click(btn(root, "both"));
+  eq(calls[0].u, "/api/items", "load first");
+  calls[0].answer(200, [{ id: 9, title: "n", done: false }]);
+  await tick();
+  eq(calls.length, 2, "then ping");
+  eq(calls[1].o.body, "0", "posts the count");
+  calls[1].answer(200, "not json at all");
+  await tick();
+  eq(errors.length, 0, "no error");
+  eq(root.querySelectorAll("li").length, 1, "list shown");
+  synced(root, "RFetch", "both");
 });
 
 let pass = 0, fail = 0;

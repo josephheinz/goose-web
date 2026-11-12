@@ -1,0 +1,7 @@
+<script goose>
+// expect: components/FailRAwaitPos.gshtml:5: error: await only goes at the start of a statement
+@state var u: u8[..8] = "/a";
+@state var n: i64 = 0;
+fn f() { n = 1 + await http::get(u); }
+</script>
+<p>x</p>

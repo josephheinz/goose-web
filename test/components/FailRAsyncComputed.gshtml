@@ -1,0 +1,7 @@
+<script goose>
+// expect: components/FailRAsyncComputed.gshtml:5: error: @computed c cannot call 'size', which is async
+@state var u: u8[..8] = "/a";
+fn size() -> i64 { await http::post(u, 1); return 1; }
+@computed let c: i64 = size();
+</script>
+<p>x</p>

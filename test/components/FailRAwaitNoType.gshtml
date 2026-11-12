@@ -1,0 +1,7 @@
+<script goose>
+// expect: components/FailRAwaitNoType.gshtml:5: error: let r needs a type: await http::get(...) decodes into it
+@state var n: i64 = 0;
+@state var u: u8[..8] = "/a";
+fn load() { let r = await http::get(u); n = r; }
+</script>
+<p>x</p>

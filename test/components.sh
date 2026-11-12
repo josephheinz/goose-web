@@ -10,6 +10,9 @@
 #    with the line its `// expect: ` comment gives.
 # 2b. Each Warn*.gshtml, alone in a project, warns but builds; --strict fails it;
 #    --diagnostics json prints one JSON object per line. 2c: the parity project is warning-free.
+# 2d. test/components/site: a component with literal http::get and http::post urls and the route.goose that
+#    answers them (Name::gw_json) builds; the server sends the JSON and /_gw/gwh.js; gweb gen writes gwh.js only
+#    for a site that uses http.
 # 3. gweb test leaves .gooseweb/ alone: the built server and main.goose keep
 #    their checksums across a test run.
 #
@@ -83,6 +86,38 @@ done
 
 # 2c. The parity project builds clean under --strict.
 if out=$("$GWEB" -C "$WORK/ok" build --strict 2>&1); then ok; else bad "parity project: gweb build --strict"; echo "$out" | sed 's/^/    /'; fi
+
+# 2d. Typed fetch against real routes.
+cp -R "$HERE/components/site" "$WORK/site"
+if out=$("$GWEB" -C "$WORK/site" build --strict 2>&1); then
+  ok
+  PORT=${PORT:-$((4000 + $$ % 900))}
+  "$WORK/site/.gooseweb/server" --port "$PORT" >/dev/null 2>&1 &
+  SPID=$!
+  up=""
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.5
+    if curl -s -o /dev/null "http://127.0.0.1:$PORT/"; then up=yes; break; fi
+  done
+  if [ -n "$up" ]; then
+    body=$(curl -s "http://127.0.0.1:$PORT/api/items")
+    if [ "$body" = '[{"id":1,"title":"one"},{"id":2,"title":"t\"wo"}]' ]; then ok; else bad "site: GET /api/items answered $body"; fi
+    if curl -s "http://127.0.0.1:$PORT/_gw/gwh.js" | grep -q 'X-CSRF-Token'; then ok; else bad "site: /_gw/gwh.js is not served"; fi
+  else
+    bad "site: the server did not start"
+  fi
+  { kill "$SPID"; wait "$SPID"; } 2>/dev/null
+else
+  bad "site: gweb build"; echo "$out" | sed 's/^/    /'
+fi
+mkdir -p "$WORK/nohttp"
+cp -R "$WORK/ok/app" "$WORK/ok/components" "$WORK/nohttp/"
+rm "$WORK/nohttp/components/RFetch.gshtml"
+if "$GWEB" -C "$WORK/nohttp" gen >/dev/null 2>&1; then
+  if [ -e "$WORK/nohttp/.gooseweb/_gw/gwh.js" ]; then bad "gwh.js was written for a site without http"; else ok; fi
+else
+  bad "gweb gen without RFetch"
+fi
 
 # 3. gweb test leaves .gooseweb/ alone.
 mkdir -p "$WORK/keep"
