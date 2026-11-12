@@ -196,3 +196,25 @@ Order: Steps 1, 2, 4 and 5 run in parallel (disjoint files). Step 3 after 1 and 
 - Component column maps, after Addendum 12 merges.
 - LSP version 2: hover, completion, definitions, HTML and CSS services.
 - Trim `README.md` to install plus links, after the sibling addenda merge.
+
+## Build log
+
+No Goose compiler was on the build machine. Only the Node server tests ran.
+
+| Step | Commits | Tested |
+|---|---|---|
+| 1. Column maps in the template compiler | `c028035`, `86e8149` | No. `expected.txt` checked against a Python port of the rules. |
+| 2. Language server | `c4de77e` | Yes: `test/lsp.sh`, 18 tests, against fake `gweb` and `goose lsp`. |
+| 3. `lsp-gen`, `check`, `lsp` | `8c1bdf5` | No. The overlay part of `test/srcmap.sh` needs only a built gweb. |
+| 4. Docs site and tutorial | `4e8d224`, `44f1408` | Block-to-file check in `test/tutorial.sh` passes; build and server checks not run. |
+| 5. Stability policy | `b6e87e8` | Docs only. |
+| 6. Packages | `f621a48` | No. |
+| 7. Editor and packages docs | `d0f6820` | Docs only; editor snippets untested. |
+
+Differences from the design, kept:
+- The server overlays one buffer per `lsp-gen` run (the last changed one); other unsaved buffers are read from disk.
+- In fallback mode, `lsp-gen --check` runs on open and save, not on change.
+- Packages also refuse reserved names (`lib`, `std`, `os`, `web`, `net`, `sqlite`, `main`, `state`), duplicate names, overlapping mounts, and public URLs that clash. Package public files are copied into the output folder before embedding.
+- `Dir.root` holds the folder of that directory, not the `app` base.
+
+First things to check with a compiler: `goose build -o gweb cli/gweb.goose`, then `test/srcmap.sh`, `test/packages.sh`, `test/tutorial.sh`, `test/components.sh`, `test/release_check.sh`; then `gweb lsp` against a real `goose lsp` (position encoding, `didChange` on generated files, the symlinked `lib`).
