@@ -81,7 +81,7 @@ else
       curl -s -o "$WORK/usr.b" -w '%{http_code}' "$URL/admin/users" > "$WORK/usr.s"
       check "$([ "$(cat "$WORK/usr.s")" = 200 ] && grep -q 'admin-users' "$WORK/usr.b" && echo ok)" "GET /admin/users: 200, the package route"
       curl -s -D "$WORK/css.h" -o "$WORK/css.b" -w '%{http_code}' "$URL/admin/x.css" > "$WORK/css.s"
-      check "$([ "$(cat "$WORK/css.s")" = 200 ] && cmp -s "$WORK/css.b" "$HERE/packages/pkg/public/x.css" && echo ok)" "GET /admin/x.css: the package's public file"
+      check "$([ "$(cat "$WORK/css.s")" = 200 ] && grep -q 'color:teal' "$WORK/css.b" && echo ok)" "GET /admin/x.css: the package's public file (minified)"
       curl -s -o /dev/null -w '%{http_code}' "$URL/x.css" > "$WORK/nox.s"
       check "$([ "$(cat "$WORK/nox.s")" = 404 ] && echo ok)" "GET /x.css: 404, the file is served under the mount only"
     fi

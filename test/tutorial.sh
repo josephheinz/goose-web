@@ -82,7 +82,7 @@ else
     code=$(curl -s -c "$JAR" -o "$WORK/home.b" -w '%{http_code}' "$URL/")
     if [ "$code" = 200 ]; then ok; else bad "GET /: wanted 200, got $code"; fi
     if grep -qF '<title>Notes</title>' "$WORK/home.b"; then ok; else bad "GET /: no <title>Notes</title>"; fi
-    if grep -qF '/_gw/CharCount.js' "$WORK/home.b"; then ok; else bad "GET /: no CharCount script"; fi
+    if grep -qE '/_gw/CharCount(\.[0-9a-f]{8})?\.js' "$WORK/home.b"; then ok; else bad "GET /: no CharCount script"; fi
 
     code=$(curl -s -o "$WORK/api.b" -w '%{http_code}' "$URL/api/notes")
     if [ "$code" = 200 ] && [ "$(cat "$WORK/api.b")" = '[]' ]; then ok; else bad "GET /api/notes: wanted 200 and [], got $code $(cat "$WORK/api.b")"; fi

@@ -157,6 +157,12 @@ step cache env PORT="${PORT:-3998}" sh "$HERE/cache.sh"
 step push env PORT="${PORT:-3999}" sh "$HERE/push.sh"
 step routes sh "$HERE/routes.sh"
 step i18n env PORT="${PORT:-4000}" sh "$HERE/i18n.sh"
+step valid_test goose_test valid_test
+step upload_test goose_test upload_test
+step srcmap sh "$HERE/srcmap.sh"
+step packages env PORT="${PORT:-4001}" sh "$HERE/packages.sh"
+step tutorial env PORT="${PORT:-4002}" sh "$HERE/tutorial.sh"
+step lsp sh "$HERE/lsp.sh"
 
 gweb_new() {
   mkdir "$WORK/lone"
