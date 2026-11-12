@@ -50,6 +50,26 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     if grep -qi '^cache-control: public, max-age=0, must-revalidate' "$WORK/plain.h"; then ok; else bad "the plain URL lost must-revalidate"; fi
     if cmp -s "$WORK/hashed.b" "$WORK/plain.b" && cmp -s "$WORK/hashed.b" "$HERE/templates/site/public/site.css"; then ok; else bad "the hashed and plain URLs serve different bytes"; fi
     if [ "$(grep -ci '^etag:' "$WORK/hashed.h")" = 1 ] && [ "$(grep -i '^etag:' "$WORK/hashed.h")" = "$(grep -i '^etag:' "$WORK/plain.h")" ]; then ok; else bad "the hashed and plain URLs have different ETags"; fi
+    # The minifier ran on loose.css, and the already-minified site.css came through unchanged (checked above).
+    curl -s -o "$WORK/loose.b" "http://127.0.0.1:$PORT/loose.css"
+    if cmp -s "$WORK/loose.b" "$HERE/templates/loose.min.css"; then ok; else bad "public/loose.css was not served minified"; fi
+    # The gzip variant: site.css is over 1 KB, so it has one.
+    U="http://127.0.0.1:$PORT/site.css"
+    curl -s -H 'Accept-Encoding: gzip' -D "$WORK/gz.h" -o "$WORK/gz.b" "$U"
+    if grep -qi '^content-encoding: gzip' "$WORK/gz.h" && grep -qi '^vary: .*accept-encoding' "$WORK/gz.h"; then ok; else bad "Accept-Encoding: gzip did not give Content-Encoding and Vary"; fi
+    if gzip -dc "$WORK/gz.b" 2>/dev/null | cmp -s - "$WORK/plain.b"; then ok; else bad "the gzip body does not inflate to the plain body"; fi
+    curl -s -H 'Accept-Encoding: gzip;q=0' -D "$WORK/q0.h" -o "$WORK/q0.b" "$U"
+    if ! grep -qi '^content-encoding:' "$WORK/q0.h" && grep -qi '^vary: .*accept-encoding' "$WORK/q0.h" && cmp -s "$WORK/q0.b" "$WORK/plain.b"; then ok; else bad "gzip;q=0 did not give the plain body with Vary"; fi
+    curl -s --compressed -o "$WORK/cz.b" "$U"
+    if cmp -s "$WORK/cz.b" "$WORK/plain.b"; then ok; else bad "curl --compressed body differs from the plain body"; fi
+    pe=$(grep -i '^etag:' "$WORK/plain.h" | cut -d' ' -f2 | tr -d '\r')
+    ge=$(grep -i '^etag:' "$WORK/gz.h" | cut -d' ' -f2 | tr -d '\r')
+    if [ "$ge" = "$(printf '%s' "$pe" | sed 's/"$/-gz"/')" ]; then ok; else bad "gzip ETag '$ge' is not the plain ETag '$pe' with -gz"; fi
+    c1=$(curl -s -o /dev/null -w '%{http_code}' -H "If-None-Match: $pe" "$U")
+    c2=$(curl -s -o /dev/null -w '%{http_code}' -H 'Accept-Encoding: gzip' -H "If-None-Match: $ge" "$U")
+    c3=$(curl -s -o /dev/null -w '%{http_code}' -H 'Accept-Encoding: gzip' -H "If-None-Match: $pe" "$U")
+    c4=$(curl -s -o /dev/null -w '%{http_code}' -H "If-None-Match: $ge" "$U")
+    if [ "$c1 $c2 $c3 $c4" = "304 304 200 200" ]; then ok; else bad "If-None-Match statuses are '$c1 $c2 $c3 $c4', wanted '304 304 200 200'"; fi
     # The component's own URL: its hash is that of the JS it serves.
     cu=$(grep -o '/_gw/Brace\.[0-9a-f]\{8\}\.js' "$WORK/got.html" | head -1)
     curl -s -D "$WORK/cjs.h" -o "$WORK/cjs.b" "http://127.0.0.1:$PORT$cu"
@@ -67,6 +87,13 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
 else
   bad "gweb build of the site"; echo "$out"
 fi
+
+# CSS minifier cases, and --no-minify.
+if "$GWEB" test-css >"$WORK/css.out" 2>&1; then ok; else bad "gweb test-css:"; sed 's/^/    /' "$WORK/css.out"; fi
+cp -R "$HERE/templates/site" "$WORK/nm"
+rm -rf "$WORK/nm/.gooseweb"
+"$GWEB" -C "$WORK/nm" gen --no-minify >/dev/null 2>&1
+if [ -d "$WORK/nm/.gooseweb" ] && [ -z "$(ls "$WORK/nm/.gooseweb/_pub" 2>/dev/null)" ] && [ -n "$(ls "$WORK/ok/.gooseweb/_pub" 2>/dev/null)" ]; then ok; else bad "--no-minify did not skip the minified copies, or the default did not write them"; fi
 
 # 2. Expected failures. The page is <p>x</p>, the case on line 2, <p>y</p>.
 cp -R "$HERE/templates/site" "$WORK/f"

@@ -1,8 +1,9 @@
 // gweb: the goose-web command line.
 //
 //   gweb [-C dir] new <dir>
-//   gweb [-C dir] gen | build [--debug] | routes
-//   gweb [-C dir] start [server flags...]
+//   gweb [-C dir] gen [--no-minify]
+//   gweb [-C dir] build [--debug] [--no-minify] | routes
+//   gweb [-C dir] start [--no-minify] [server flags...]
 //   gweb [-C dir] dev [server flags...]
 //   gweb [-C dir] test
 //   gweb version
@@ -26,6 +27,9 @@ extern fn c_cwd(out: u8[>..]&) -> i32 = "gweb_cwd";
 extern fn c_remove_tree(path: const u8[:]) -> i32 = "gweb_remove_tree";
 extern fn c_tree_stamp(path: const u8[:], count: i64&) -> i64 = "gweb_tree_stamp";
 
+// gzip.c: appends the gzip of data to out; 0 when it failed.
+extern fn c_gzip(data: const u8[:], out: u8[>..]&) -> i32 = "gweb_gzip";
+
 // ---------------------------------------------------------------- model
 
 struct Dir {
@@ -40,7 +44,9 @@ struct Dir {
 }
 
 // hashed is url with the first 8 hex digits of etag before the last extension; both URLs serve the same bytes.
-struct Static { url: u8[..512], file: u8[..512], ctype: u8[..64], etag: u8[..24], hashed: u8[..520] }
+// embed is the file the binary embeds when that is not file (minified CSS); min says file must be minified to get the served bytes.
+// gz is the static_bytes index of the gzip variant, or -1.
+struct Static { url: u8[..512], file: u8[..512], ctype: u8[..64], etag: u8[..24], hashed: u8[..520], embed: u8[..512], min: bool, gz: i64 }
 
 // own is the page's dir index, or -1 in a layout, not-found.html or a component.
 struct Target { path: u8[..512], line: i64, url: u8[..512], name: u8[..64], post: bool, own: i64 }
@@ -62,6 +68,7 @@ var not_found_csrf = false;
 var uses_sqlite = false;
 var map_text: u8[>..];
 var gen_root: u8[>..];
+var minify = false;                    // gweb build, start and gen turn it on; dev and test leave it off
 var rt_js: u8[>..];                    // the client runtime, hashed before any page or component names it
 var rt_file: u8[>..];                  // its file name, gwi.<hash>.js
 // gweb test must never touch BUILD_DIR: a built server or a running gweb dev depends on it.
@@ -325,11 +332,17 @@ fn scan_public_dir(rel: const u8[:], todo: u8[..512][>..]&) {
         if r.len >= 500 { err(full, 0, "path too long"); continue; }
         var data: u8[>..] = [];
         if !read(full, data) { continue; }
-        var s = Static { url: "/", file: "", ctype: "", etag: "", hashed: "" };
+        var s = Static { url: "/", file: "", ctype: "", etag: "", hashed: "", embed: "", min: false, gz: -1 };
         s.url.append(r);
         s.file.append(full);
         s.ctype.append(content_type(name));
-        s.etag = etag_of(data);
+        var mined: u8[>..] = [];
+        if minify && starts_with(s.ctype, "text/css") && minify_css(data, mined) {
+            s.min = true;
+            s.etag = etag_of(mined);
+        } else {
+            s.etag = etag_of(data);
+        }
         s.hashed = hashed_url(s.url, s.etag);
         statics.push(s);
     }
@@ -1260,10 +1273,14 @@ fn gen_dispatch(m: u8[>..]&) {
 
 fn gen_static(m: u8[>..]&) {
     for s, i in statics {
-        format(m, "let S", i, " = embed_file(\"../"); lit(m, s.file); m.append("\");\n");
+        format(m, "let S", i, " = embed_file(\"../"); lit(m, if s.embed.len > 0 { s.embed } else { s.file }); m.append("\");\n");
+        if s.gz >= 0 { format(m, "let S", s.gz, " = embed_file(\"../"); lit(m, gen_root); format(m, "/_gz/", i, ".gz\");\n"); }
     }
     m.append("fn static_bytes(i: i64) -> const u8[:] {\n");
-    for s, i in statics { format(m, "    if i == ", i, " { return S", i, "; }\n"); }
+    for s, i in statics {
+        format(m, "    if i == ", i, " { return S", i, "; }\n");
+        if s.gz >= 0 { format(m, "    if i == ", s.gz, " { return S", s.gz, "; }\n"); }
+    }
     m.append("    return \"\";\n}\n");
     m.append("fn static_file(req: const http::Request&, res: http::Response&) -> i64, bool {\n");
     if statics.len > 0 {
@@ -1282,7 +1299,7 @@ fn gen_static(m: u8[>..]&) {
                     if hashed { u = s.hashed; }
                     if u.len != l { continue; }
                     m.append("            if p == \""); lit(m, u);
-                    format(m, "\" { return web::send_static(req, res, ", i, ", -1, \"", s.ctype, "\", \""); lit(m, s.etag);
+                    format(m, "\" { return web::send_static(req, res, ", i, ", ", s.gz, ", \"", s.ctype, "\", \""); lit(m, s.etag);
                     format(m, "\", ", if hashed { "true" } else { "false" }, "), true; }\n");
                 }
             }
@@ -1475,10 +1492,210 @@ fn check_version() {
     }
 }
 
+// ---------------------------------------------------------------- CSS minification
+
+fn css_space(c: u8) -> bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 12; }
+
+fn css_lower(c: u8) -> u8 { if c >= 'A' && c <= 'Z' { return c + 32; } return c; }
+
+fn css_ident(c: u8) -> bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+}
+
+// Index just past the string that opens at i, or -1 when it never closes.
+fn css_string_end(src: const u8[:], i: i64) -> i64 {
+    let q = src[i];
+    var k = i + 1;
+    while k < src.len {
+        if src[k] == '\\' { k += 2; continue; }
+        if src[k] == q { return k + 1; }
+        if src[k] == '\n' { return -1; }
+        k += 1;
+    }
+    return -1;
+}
+
+// i is just past "url(". A quoted argument may hold a ")".
+fn css_url_end(src: const u8[:], i: i64) -> i64 {
+    var k = i;
+    while k < src.len {
+        let c = src[k];
+        if c == '"' || c == '\'' {
+            let e = css_string_end(src, k);
+            if e < 0 { return -1; }
+            k = e;
+            continue;
+        }
+        if c == '\\' { k += 2; continue; }
+        if c == ')' { return k + 1; }
+        k += 1;
+    }
+    return -1;
+}
+
+// Writes the space that pending whitespace stands for, unless a neighbour makes it meaningless. The
+// combinators > ~ + keep their spaces inside parentheses, where + is calc's operator and > a range
+// comparison. A space before ":" stays: "a :hover" and "a:hover" select different elements.
+fn css_gap(res: u8[>..]&, next: u8, paren: i64, lit_end: bool) {
+    if res.len == 0 { return; }
+    let last = res[res.len - 1];
+    if !lit_end && (last == '{' || last == '}' || last == ';' || last == ',' || last == ':'
+                    || (paren == 0 && (last == '>' || last == '~' || last == '+'))) { return; }
+    if next == '{' || next == '}' || next == ';' || next == ',' || (paren == 0 && (next == '>' || next == '~' || next == '+')) { return; }
+    res.push(' ');
+}
+
+// Appends the minified src to out and returns true; returns false, leaving out alone, when strings, url(),
+// comments, parentheses or braces do not balance, so a file this cannot read is served as written.
+fn minify_css(src: const u8[:], out: u8[>..]&) -> bool {
+    var res: u8[>..] = [];
+    var depth = 0;
+    var paren = 0;
+    var pending = false;      // whitespace or a dropped comment came since the last byte written
+    var lit_end = false;      // the last bytes written were copied verbatim, so they say nothing about the next space
+    var i = 0;
+    while i < src.len {
+        let c = src[i];
+        if css_space(c) { pending = true; i += 1; continue; }
+        if c == '/' && i + 1 < src.len && src[i + 1] == '*' {
+            var e = i + 2;
+            while e + 1 < src.len && !(src[e] == '*' && src[e + 1] == '/') { e += 1; }
+            if e + 1 >= src.len { return false; }
+            if i + 2 < src.len && src[i + 2] == '!' {
+                if pending { css_gap(res, '/', paren, lit_end); pending = false; }
+                res.append(src[i..e + 2]);
+                lit_end = true;
+            } else {
+                pending = true;
+            }
+            i = e + 2;
+            continue;
+        }
+        let spaced = pending;
+        if pending { css_gap(res, c, paren, lit_end); pending = false; }
+        if c == '"' || c == '\'' {
+            let e = css_string_end(src, i);
+            if e < 0 { return false; }
+            res.append(src[i..e]);
+            lit_end = true;
+            i = e;
+            continue;
+        }
+        if c == '\\' && i + 1 < src.len {
+            res.push(c);
+            res.push(src[i + 1]);
+            lit_end = true;
+            i += 2;
+            continue;
+        }
+        let n = res.len;
+        if c == '(' && !spaced && n >= 3 && css_lower(res[n - 3]) == 'u' && css_lower(res[n - 2]) == 'r' && css_lower(res[n - 1]) == 'l'
+           && (n == 3 || !css_ident(res[n - 4])) {
+            let e = css_url_end(src, i + 1);
+            if e < 0 { return false; }
+            res.append(src[i..e]);
+            lit_end = true;
+            i = e;
+            continue;
+        }
+        if c == '{' { depth += 1; }
+        if c == '}' { depth -= 1; if depth < 0 { return false; } }
+        if c == '(' { paren += 1; }
+        if c == ')' { paren -= 1; if paren < 0 { return false; } }
+        res.push(c);
+        lit_end = false;
+        i += 1;
+    }
+    if depth != 0 || paren != 0 { return false; }
+    out.append(res);
+    return true;
+}
+
+fn css_case(src: const u8[:], ok: bool, want: const u8[:]) -> bool {
+    var out: u8[>..] = [];
+    let got = minify_css(src, out);
+    if got == ok && (!ok || out == want) && (ok || out.len == 0) { return true; }
+    var m: u8[>..] = [];
+    format(m, "test-css: for '", src, "' wanted ", if ok { "true" } else { "false" }, " ", want, ", got ", if got { "true" } else { "false" }, " ", out, "\n");
+    write_stderr(m);
+    return false;
+}
+
+// gweb test-css: the minifier's cases; it needs no project.
+fn test_css() -> bool {
+    var ok = true;
+    ok = css_case("p { color: red; }\n", true, "p{color:red;}") && ok;
+    ok = css_case("a::after { content: \"a  b\"; }", true, "a::after{content:\"a  b\";}") && ok;
+    ok = css_case("a { content: 'x  ; }'; }", true, "a{content:'x  ; }';}") && ok;
+    ok = css_case("a { background: url( x ) no-repeat; }", true, "a{background:url( x ) no-repeat;}") && ok;
+    ok = css_case("a { background: URL(\"a b)\" ) }", true, "a{background:URL(\"a b)\" )}") && ok;
+    ok = css_case("a { width: calc(1px + 2px); }", true, "a{width:calc(1px + 2px);}") && ok;
+    ok = css_case("a { margin: calc( 1px - 2px ) 0 }", true, "a{margin:calc( 1px - 2px ) 0}") && ok;
+    ok = css_case("/*! keep */ a { b: c } /* drop */", true, "/*! keep */ a{b:c}") && ok;
+    ok = css_case("a/* x */b { c: d }", true, "a b{c:d}") && ok;
+    ok = css_case("a  >  b ~ c + d , e { f: g }", true, "a>b~c+d,e{f:g}") && ok;
+    ok = css_case("a :hover { b: c }", true, "a :hover{b:c}") && ok;
+    ok = css_case("@media screen and (min-width: 5px) { a { b: c; } d { e: f } }", true,
+                  "@media screen and (min-width:5px){a{b:c;}d{e:f}}") && ok;
+    ok = css_case("a { b: c;", false, "") && ok;
+    ok = css_case("a { b: c } }", false, "") && ok;
+    ok = css_case("a { b: \"c; }", false, "") && ok;
+    ok = css_case("a { b: c } /* open", false, "") && ok;
+    ok = css_case("a { b: url(x }", false, "") && ok;
+    if ok { write_stdout("test-css: ok\n"); }
+    return ok;
+}
+
+// ---------------------------------------------------------------- embedded variants
+
+fn gzippable(ctype: const u8[:]) -> bool {
+    return starts_with(ctype, "text/") || starts_with(ctype, "application/json") || starts_with(ctype, "application/xml")
+        || starts_with(ctype, "image/svg+xml") || starts_with(ctype, "application/wasm");
+}
+
+// The bytes a static serves: its file, minified when min says so.
+fn served_bytes(s: const Static&, out: u8[>..]&) -> bool {
+    var raw: u8[>..] = [];
+    if !read(s.file, raw) { return false; }
+    if !s.min { out.append(raw); return true; }
+    return minify_css(raw, out);
+}
+
+// Writes what the binary embeds besides public/ and _gw/: minified CSS and gzip variants. Runs once every
+// static is known, because a gz index counts on from statics.len.
+fn gen_variants() {
+    var dir: u8[>..] = [];
+    format(dir, gen_root, "/_pub");
+    make_dir(dir);
+    dir.clear();
+    format(dir, gen_root, "/_gz");
+    make_dir(dir);
+    var next = statics.len;
+    for &s, i in statics {
+        var data: u8[>..] = [];
+        if !served_bytes(s, data) { continue; }
+        if s.min {
+            var p: u8[>..] = [];
+            format(p, gen_root, "/_pub/", i, ".css");
+            write(p, data);
+            s.embed.append(p);
+        }
+        if data.len < 1024 || !gzippable(s.ctype) { continue; }
+        var z: u8[>..] = [];
+        // A variant that saves under a tenth costs a header and a second ETag for nothing.
+        if c_gzip(data, z) == 0 || z.len * 10 > data.len * 9 { continue; }
+        var zp: u8[>..] = [];
+        format(zp, gen_root, "/_gz/", i, ".gz");
+        write(zp, z);
+        s.gz = next;
+        next += 1;
+    }
+}
+
 // ---------------------------------------------------------------- components
 
 fn push_gw_static(url: const u8[:], file: const u8[:], data: const u8[:]) {
-    var s = Static { url: "", file: "", ctype: "text/javascript; charset=utf-8", etag: "", hashed: "" };
+    var s = Static { url: "", file: "", ctype: "text/javascript; charset=utf-8", etag: "", hashed: "", embed: "", min: false, gz: -1 };
     s.url.append(url);
     s.file.append(file);
     s.etag = etag_of(data);
@@ -1673,6 +1890,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     if errors > 0 { return false; }
     if component_names.len > 0 || uses_fragments { gen_runtime(); }
     check_hashed();
+    gen_variants();
     var main_file: u8[>..] = [];
     format(main_file, root, "/main.goose");
     write(main_file, gen_main());
@@ -2090,7 +2308,7 @@ fn server_cmd(extra: u8[:][:], dev: bool) -> u8[>..] {
         // A fresh build id per spawn: open pages poll it and reload when it changes.
         format(cmd, " --dev-id ", (time() * 1000.0) as i64);
     }
-    for a in extra { cmd.push(' '); shq(cmd, a); }
+    for a in extra { if a != "--no-minify" { cmd.push(' '); shq(cmd, a); } }
     return cmd;
 }
 
@@ -2238,6 +2456,11 @@ nav a { margin-right: 1rem; }
 
 // ---------------------------------------------------------------- main
 
+fn has_flag(rest: u8[:][:], flag: const u8[:]) -> bool {
+    for a in rest { if a == flag { return true; } }
+    return false;
+}
+
 fn usage() {
     write_stderr("""
 usage: gweb [-C dir] <command>
@@ -2245,6 +2468,7 @@ usage: gweb [-C dir] <command>
   gen               write .gooseweb/ only
   build [--debug]   gen, then goose build to .gooseweb/server
   start [flags]     build, then run the server (flags go to it: --port N --workers N --log ...)
+  --no-minify       with gen, build or start: serve public/**/*.css as written
   dev [flags]       build, run on port 60053 (unless --port), and rebuild on every change under app/, lib/, public/, components/
   routes            print the route table
   version           print the version and the package sources a build declares
@@ -2267,9 +2491,11 @@ fn main() {
     if cmd == "version" { print_version(); return; }
     check_version();
     if cmd == "new" { if rest.len != 1 { usage(); } scaffold(rest[0]); return; }
+    if cmd == "test-css" { if !test_css() { exit(1); } return; }
+    minify = !has_flag(rest, "--no-minify");
     if cmd == "gen" { if !gen(false, BUILD_DIR) || component_errors > 0 { exit(1); } write_stdout("gweb: wrote .gooseweb/\n"); return; }
     if cmd == "test" { if !test_cmd() { exit(1); } return; }
-    if cmd == "build" { if !build(rest.len > 0 && rest[0] == "--debug", false) { exit(1); } return; }
+    if cmd == "build" { if !build(has_flag(rest, "--debug"), false) { exit(1); } return; }
     if cmd == "routes" { print_routes(); return; }
     if cmd == "start" {
         if !build(false, false) { exit(1); }
@@ -2277,6 +2503,6 @@ fn main() {
         write_stderr("gweb: could not start .gooseweb/server\n");
         exit(1);
     }
-    if cmd == "dev" { dev(rest); return; }
+    if cmd == "dev" { minify = false; dev(rest); return; }
     usage();
 }
