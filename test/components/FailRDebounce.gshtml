@@ -1,0 +1,7 @@
+<script goose>
+// expect: components/FailRDebounce.gshtml:7: error: a debounce is 1ms to 10000ms
+@state var n: i64 = 0;
+fn hit() { n += 1; }
+</script>
+<p>{n}</p>
+<input on:input.20000ms="hit">

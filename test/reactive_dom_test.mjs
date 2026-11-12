@@ -13,7 +13,7 @@ console.error = () => {};
 const dir = process.env.GW_DIR;
 const G = await import(pathToFileURL(dir + "/gwi.js").href);
 const { defs, state } = G;
-for (const n of ["RCounter", "RParts", "RComputed", "RWatch", "RStruct", "RFetch", "RClock", "RClockAsync"]) await import(pathToFileURL(`${dir}/${n}.js`).href);
+for (const n of ["RCounter", "RParts", "RComputed", "RWatch", "RStruct", "RFetch", "RClock", "RClockAsync", "REvents"]) await import(pathToFileURL(`${dir}/${n}.js`).href);
 
 let errors = [];
 window.addEventListener("gw:error", (ev) => errors.push(ev.detail));
@@ -395,6 +395,82 @@ test("RClockAsync: an async mount and an async every update state through a stub
   eq(errors.length, 1, "and reports");
   G.swap(host, "");
   eq(timers.size, 0, "stopped");
+});
+
+// ---- REvents: events and modifiers (gwi.js listen, gwm.js).
+const key = (el, type, k) => { const ev = new window.KeyboardEvent(type, { key: k, bubbles: true, cancelable: true }); el.dispatchEvent(ev); return ev; };
+const at = (root, sel) => root.querySelector(sel);
+
+test("REvents: a key filter runs the handler for its key only", () => {
+  const root = mount("REvents", {}), el = at(root, "[data-on-keydown^='entered']");
+  key(el, "keydown", "a");
+  key(el, "keydown", "Escape");
+  eq(state(root).n, 0, "other keys do nothing");
+  const ev = key(el, "keydown", "Enter");
+  eq(state(root).last, "enter", "Enter runs");
+  eq(ev.defaultPrevented, true, ".prevent on the key handler");
+  key(el, "keyup", "Escape");
+  eq(state(root).last, "esc", "keyup.escape");
+  key(at(root, "[data-on-keyup^='note.up']"), "keyup", "ArrowUp");
+  eq(state(root).last, "up", "ArrowUp is .up");
+  key(at(root, "[data-on-keydown^='note.space']"), "keydown", " ");
+  eq(state(root).last, "space", "a space key is .space");
+  key(at(root, "[data-on-keydown^='note.backspace']"), "keydown", "Backspace");
+  eq(state(root).last, "back", "Backspace");
+  synced(root, "REvents", "keys");
+  eq(errors.length, 0, "no errors");
+});
+
+test("REvents: .prevent sets defaultPrevented and .stop stops propagation", () => {
+  const root = mount("REvents", {});
+  const ev = new window.MouseEvent("click", { bubbles: true, cancelable: true });
+  let seen = 0;
+  const parent = () => seen++;
+  document.body.addEventListener("click", parent);
+  at(root, "button").dispatchEvent(ev);
+  document.body.removeEventListener("click", parent);
+  eq(ev.defaultPrevented, true, "prevented");
+  eq(seen, 0, "a parent listener never sees a stopped click");
+  eq(state(root).n, 1, "and the handler ran");
+  const sub = new window.Event("submit", { bubbles: true, cancelable: true });
+  at(root, "form").dispatchEvent(sub);
+  eq(sub.defaultPrevented, true, "submit prevented");
+  eq(state(root).n, 2, "submit handler ran");
+});
+
+test("REvents: .300ms runs the handler once after the last input; the bind updates at once", () => {
+  const root = mount("REvents", {}), input = at(root, "[data-bind]"), pending = new Map(), real = [globalThis.setTimeout, globalThis.clearTimeout];
+  let next = 1;
+  globalThis.setTimeout = (f, ms, ...a) => (pending.set(next, [f, ms, a]), next++);
+  globalThis.clearTimeout = (id) => pending.delete(id);
+  try {
+    input.value = "a";
+    fire(input, "input");
+    eq(state(root).text, "a", "bound at once");
+    input.value = "ab";
+    fire(input, "input");
+    eq(state(root).text, "ab", "bound again");
+    eq(state(root).n, 0, "handler waits");
+    eq(pending.size, 1, "one timer, restarted");
+    eq([...pending.values()][0][1], 300, "300ms");
+    for (const [f, , a] of [...pending.values()]) f(...a);
+    eq(state(root).n, 1, "handler ran once");
+    eq(state(root).text, "ab", "text kept");
+    synced(root, "REvents", "debounce");
+  } finally { [globalThis.setTimeout, globalThis.clearTimeout] = real; }
+  eq(errors.length, 0, "no errors");
+});
+
+test("REvents: focus, blur, dblclick and change handlers run", () => {
+  const root = mount("REvents", {}), input = at(root, "[data-bind]");
+  input.dispatchEvent(new window.FocusEvent("focus"));
+  eq(state(root).last, "focus", "focus");
+  input.dispatchEvent(new window.FocusEvent("blur"));
+  eq(state(root).last, "blur", "blur");
+  fire(input, "change");
+  eq(state(root).last, "change", "change");
+  at(root, "[data-on-dblclick]").dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }));
+  eq(state(root).last, "dbl", "dblclick");
 });
 
 let pass = 0, fail = 0;

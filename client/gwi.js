@@ -26,7 +26,10 @@ export const imod = (a, b) => {
 // Optional modules (lifecycle, child components, transitions, effects) fill this; see Addendum 12 section 5.
 export const hooks = {};
 
-export function component(name, def) { defs[name] = def; }
+export function component(name, def) {
+  defs[name] = def;
+  for (const t of ["click", "change", "input", ...(def.e ? def.e.split(" ") : [])]) listen(t);
+}
 
 const cn = (n) => n.dataset.component;
 
@@ -183,19 +186,22 @@ export function run(root, def, name, args, e, bound, m0) {
   flush(1);
 }
 
-function on(type, binds) {
-  const attr = "data-on-" + type, sel = "[" + attr + "]";
+const L = new Set();
+
+// One capture listener per event type. data-on-TYPE="handler.mod.mod": gwm.js (hooks.m, imported by components
+// that use modifiers) handles the modifiers and calls go(name, bound) when the event passes.
+function listen(type) {
+  if (!type || L.has(type)) return;
+  L.add(type);
+  const attr = "data-on-" + type, bind = type == "change" || type == "input";
   D.addEventListener(type, (e) => {
-    const t = e.target, root = t.closest?.("[data-component]");
-    const def = root && defs[cn(root)];
+    const t = e.target, root = t.closest?.("[data-component]"), def = root && defs[cn(root)];
     if (!def) return;
-    const inside = (n) => n && root.contains(n) ? n : null;
-    const el = inside(t.closest(sel)), bound = binds && inside(t.closest("[data-bind]"));
-    if (el || bound) run(root, def, el && el.getAttribute(attr), JSON.parse(el?.dataset.args || "[]"), e, bound);
+    const inside = (n) => n && root.contains(n) ? n : null, bound = bind && inside(t.closest("[data-bind]")),
+      el = inside(t.closest("[" + attr + "]"));
+    if (!el && !bound) return;
+    const [name, ...m] = el ? el.getAttribute(attr).split(".") : [],
+      go = (n, b) => run(root, def, n, JSON.parse(el?.dataset.args || "[]"), e, b);
+    m[0] && hooks.m ? hooks.m(e, m, el, bound, go, name) : go(el && name, bound);
   }, true);
 }
-
-on("click");
-on("change", 1);
-on("input", 1);
-on("submit");

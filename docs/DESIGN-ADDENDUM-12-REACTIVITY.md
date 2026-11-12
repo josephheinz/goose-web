@@ -403,6 +403,7 @@ Files: `client/gwl.js`, `cli/component.goose` (`@mount`, `@unmount`, `@every`, t
 
 **Step 8. Item 2: events and modifiers (7.2b).**
 Files: `client/gwi.js` (dynamic listeners, modifiers, debounce), `cli/component.goose` (event list, modifiers, warnings, errors), fixtures, jsdom cases (enter filter, prevent, stop, debounce with fake timers, focus and blur).
+Done: the core has `listen` and a `hooks.m` call; key filters, prevent, stop and debounce live in the optional `client/gwm.js` (466 bytes, ceiling 512), which a component module imports when its markup has a modifier; gwi.min.js is 4,079 bytes. An unknown event is a warning in legacy components too.
 
 **Step 9. Item 5: nested components (7.5).**
 Files: `client/gwc.js`, `client/gwi.js` (hook call in `morph`), `cli/component.goose` (child calls), `cli/gweb.goose` (component order: children compile first), fixtures, jsdom cases (prop update keeps child state; a new child in a keyed list renders from props; reorder keeps state).

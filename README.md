@@ -355,8 +355,15 @@ fn test_basic(s: State&) { inc(s); inc(s); }
 - The script needs `struct State`. Types: `i64`, `bool`, `u8[..N]`, structs
   of the block, and one `Name[>..<]` as the last field of `State`.
 - A handler is a function whose first parameter is `s: State&`. Markup calls
-  it with `on:click`, `on:change`, `on:input` or `on:submit`:
-  `on:click="remove(t.id)"`; arguments are `i64`, `bool` or strings.
+  it with `on:EVENT`: `on:click="remove(t.id)"`; arguments are `i64`, `bool`
+  or strings.
+- Events: `click`, `dblclick`, `change`, `input`, `submit`, `keydown`, `keyup`,
+  `focus`, `blur`. Another name builds with the warning `unknown-event`.
+  Modifiers follow the event: `on:keydown.enter.prevent="add"`. `prevent`,
+  `stop`, a debounce `300ms` (1ms to 10000ms; a bind still updates at once) and,
+  on `keydown` and `keyup`, one of `enter`, `escape`, `space`, `tab`, `up`,
+  `down`, `left`, `right`, `backspace`, `delete`. Pages with modifiers load
+  `/_gw/gwm.js`. These work in reactive and `struct State` components alike.
 - `bind:value="field"` and `bind:checked="field"` tie an input to a direct
   `State` field.
 - Templates work as in `page.html` (`{ }`, `{#raw }`, `{#if}`, `{#for}`,

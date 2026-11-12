@@ -19,7 +19,8 @@ bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 CEILINGS="gwi 4096
 gwh 512
 gwf 1536
-gwl 768"
+gwl 768
+gwm 512"
 
 for src in "$ROOT"/client/gw*.js; do
   case "$src" in *.min.js) continue ;; esac

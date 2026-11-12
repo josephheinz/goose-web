@@ -1,0 +1,8 @@
+<script goose>
+// warn: components/WarnREvent.gshtml:8: warning: unknown on: event 'wheel'
+// code: unknown-event
+@state var n: i64 = 0;
+fn hit() { n += 1; }
+</script>
+<p>{n}</p>
+<div on:wheel="hit">+</div>

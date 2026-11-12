@@ -73,6 +73,7 @@ var component_reactive: i64[>..<];     // 1 for a component with @ declarations 
 var component_props: u8[>..];          // `Name\tprop\tdefault source\n` for each @prop of each reactive component
 var component_errors = 0;              // translator errors of this gen; the build still runs goose
 var uses_fragments = false;
+var uses_mods = false;                // a component imports gwm.js (on: modifiers)
 var uses_life = false;                // a component calls life() (imports gwl.js)
 var uses_http = false;                 // a component imports gwh.js (http::get or http::post)
 var http_calls: Target[>..<];          // each string-literal url of an http call (post: POST, name: get or post)
@@ -1702,13 +1703,15 @@ let RT_HTTP_PRETTY = embed_file("../client/gwh.js");
 let RT_HTTP_MIN = embed_file("../client/gwh.min.js");
 let RT_LIFE_PRETTY = embed_file("../client/gwl.js");
 let RT_LIFE_MIN = embed_file("../client/gwl.min.js");
+let RT_MODS_PRETTY = embed_file("../client/gwm.js");
+let RT_MODS_MIN = embed_file("../client/gwm.min.js");
 
-// which: 0 is gwi.js (the core), 1 is gwf.js (fragments), 2 is gwh.js (typed fetch), 3 is gwl.js (lifecycle).
+// which: 0 is gwi.js (the core), 1 is gwf.js (fragments), 2 is gwh.js (typed fetch), 3 is gwl.js (lifecycle), 4 is gwm.js (modifiers).
 fn runtime_js(which: i64, min: bool, out: u8[>..]&) {
     let home = goose_web_home();
     if home.len > 0 {
         var p: u8[>..] = [];
-        let base = if which == 1 { "/client/gwf" } else if which == 2 { "/client/gwh" } else if which == 3 { "/client/gwl" } else { "/client/gwi" };
+        let base = if which == 1 { "/client/gwf" } else if which == 2 { "/client/gwh" } else if which == 3 { "/client/gwl" } else if which == 4 { "/client/gwm" } else { "/client/gwi" };
         format(p, home, base, if min { ".min.js" } else { ".js" });
         if read(p, out) { return; }
     }
@@ -1716,6 +1719,7 @@ fn runtime_js(which: i64, min: bool, out: u8[>..]&) {
     if which == 1 { out.append(if min { RT_FRAG_MIN } else { RT_FRAG_PRETTY }); }
     else if which == 2 { out.append(if min { RT_HTTP_MIN } else { RT_HTTP_PRETTY }); }
     else if which == 3 { out.append(if min { RT_LIFE_MIN } else { RT_LIFE_PRETTY }); }
+    else if which == 4 { out.append(if min { RT_MODS_MIN } else { RT_MODS_PRETTY }); }
     else { out.append(if min { RT_MIN } else { RT_PRETTY }); }
 }
 
@@ -1775,6 +1779,7 @@ fn gen_runtime(dev: bool) {
     if uses_fragments { gen_runtime_file(1, "gwf.js", dev, gw_dir); }
     if uses_http { gen_runtime_file(2, "gwh.js", dev, gw_dir); }
     if uses_life { gen_runtime_file(3, "gwl.js", dev, gw_dir); }
+    if uses_mods { gen_runtime_file(4, "gwm.js", dev, gw_dir); }
 }
 
 // gen goes on after translator errors, so the Goose compiler reports its errors too.
@@ -1812,6 +1817,7 @@ fn gen_components(dev: bool) {
         emit_component_warnings(w);
         if component::http_used() != 0 { uses_http = true; }
         if component::life_used() != 0 { uses_life = true; }
+        if component::mods_used() != 0 { uses_mods = true; }
         for l in split(component::http_urls(), '\n') {
             let f = split(l, '\t');
             if f.len != 3 || f[2].len >= 512 { continue; }
@@ -1852,6 +1858,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     component_errors = 0;
     uses_fragments = false;
     uses_http = false;
+    uses_mods = false;
     uses_life = false;
     targets.clear();
     http_calls.clear();
@@ -2124,6 +2131,9 @@ fn test_cmd() -> bool {
         p.clear();
         format(p, dir, "/gwl.js");
         write(p, "export function life() {}\n");
+        p.clear();
+        format(p, dir, "/gwm.js");
+        write(p, "\n");
         for n in component_names {
             var path: u8[>..] = [];
             format(path, "components/", n, ".gshtml");
