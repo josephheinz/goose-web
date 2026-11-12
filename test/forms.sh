@@ -9,7 +9,7 @@
 #    file, the 413 over MAX_UPLOAD (a page) and over --max-upload (a route), the
 #    JSON errors of a route, and that the upload dir holds no gw-/gnet- temp file
 #    after each request.
-# 2. A bad field type and a user fn decode must fail gweb build, with file:line.
+# 2. A bad field type and a user fn decode must fail gweb build, with file:line; so must {#fragment} or @slot() in loading.html.
 #
 # Needs curl, python3 and gweb built beside this folder (goose build -o gweb
 # cli/gweb.goose).
@@ -129,6 +129,19 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     req f3 POST /quick -H "$C" -d "email=&_csrf=$TK"
     check "$([ "$(status f3)" = 422 ] && ! has_header f3 'gw-fragment' && body_has f3 '<html' && echo ok)" "the same POST without the header: 422, the whole page"
 
+    # loading.html (section 4): whole pages at or below the folder carry the template; fragment replies and others do not.
+    req l1 GET /quick -H "$C"
+    check "$([ "$(status l1)" = 200 ] && body_has l1 '<template id="gw-loading"><p id="quick-loading">Loading quick...</p>' && body_has l1 '</template>' && echo ok)" "GET /quick: the whole page has the gw-loading template with the loading markup"
+    a=$(grep -bo 'id="form"' "$WORK/l1.b" | head -n 1 | cut -d: -f1)
+    b=$(grep -bo '<template id="gw-loading">' "$WORK/l1.b" | head -n 1 | cut -d: -f1)
+    c=$(grep -bo '</main>' "$WORK/l1.b" | head -n 1 | cut -d: -f1)
+    check "$([ -n "$a" ] && [ -n "$b" ] && [ -n "$c" ] && [ "$a" -lt "$b" ] && [ "$b" -lt "$c" ] && echo ok)" "the template comes after the page and inside the layout"
+    req l2 POST /quick -H 'GW-Fragment: form' -H "$C" -d "email=&_csrf=$TK"
+    check "$(! body_has l2 'gw-loading' && ! body_has l2 'quick-loading' && echo ok)" "a GW-Fragment reply has no loading template"
+    req l3 GET /signup -H "$C"
+    check "$(! body_has l3 'gw-loading' && echo ok)" "a page outside the folder has no loading template"
+    check "$(grep -qF 'gw-loading' "$WORK/ok/.gooseweb/main.goose" && echo ok)" "main.goose renders the loading template for the quick page"
+
     # Multipart on a page. _csrf travels as a text part.
     req m1 POST /upload -H "$C" -F "_csrf=$TK" -F "title=T" -F "photo=@$WORK/small.bin;filename=pic1.bin;type=application/octet-stream"
     check "$([ "$(status m1)" = 303 ] && has_header m1 'location: /thanks' && echo ok)" "multipart with a _csrf part: CSRF passes, 303"
@@ -232,6 +245,23 @@ struct SignupForm {
     email: u8[..200],
 }
 fn decode(req: const http::Request&, ctx: const web::Ctx&, f: SignupForm&, errs: web::FieldErrors&) -> bool { return true; }" 10 "fn decode is generated for SignupForm; rename yours"
+
+# loading.html: {#fragment} and @slot() are build errors in it.
+cp "$HERE/forms/site/app/signup/page.goose" "$WORK/f/app/signup/page.goose"
+expect_loading() {
+  printf '%s\n' "$1" "$2" > "$WORK/f/app/quick/loading.html"
+  want="app/quick/loading.html:$3: error: $4"
+  if out=$("$GWEB" -C "$WORK/f" build 2>&1); then
+    bad "loading.html '$4': gweb build succeeded"
+  else
+    case "$out" in
+      *"$want"*) ok ;;
+      *) bad "wanted '$want', got:"; echo "$out" | sed 's/^/    /' ;;
+    esac
+  fi
+}
+expect_loading '<p>ok</p>' '<div>{#fragment spin}<p>x</p>{/fragment}</div>' 2 "{#fragment} is for page.html only"
+expect_loading '<p>ok</p>' '<div>@slot()</div>' 2 "@slot() is for layout.html only"
 
 echo "forms.sh: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

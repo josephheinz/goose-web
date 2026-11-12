@@ -39,7 +39,8 @@ struct Dir {
     route_ns: u8[..200], page_ns: u8[..200], layout_ns: u8[..32], mw_ns: u8[..32],
     page_csrf: bool = false, layout_csrf: bool = false, csrf_const: bool = false,   // csrf_const: route.goose declares const CSRF
     max_upload: bool = false,     // page.goose or route.goose declares const MAX_UPLOAD
-    error_html: bool = false, error_ns: u8[..32] = "", error_csrf: bool = false   // error.html in this folder (DESIGN-ADDENDUM-14, D10)
+    error_html: bool = false, error_ns: u8[..32] = "", error_csrf: bool = false,   // error.html in this folder (DESIGN-ADDENDUM-14, D10)
+    loading: bool = false, loading_ns: u8[..32] = ""   // loading.html in this folder (DESIGN-ADDENDUM-14, section 4)
 }
 
 struct Static { url: u8[..512], file: u8[..512], ctype: u8[..64], etag: u8[..24] }
@@ -51,6 +52,7 @@ let K_PAGE = 0;
 let K_LAYOUT = 1;
 let K_NOT_FOUND = 2;
 let K_ERROR = 3;
+let K_LOADING = 4;
 
 let METHODS =["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
 let VARIANTS = ["Get", "Head", "Post", "Put", "Patch", "Delete", "Options"];
@@ -226,6 +228,7 @@ fn scan_dir(rel: const u8[:], todo: u8[..512][>..]&) {
         else if name == "layout.html" { d.layout = true; }
         else if name == "middleware.goose" { d.middleware = true; }
         else if name == "error.html" { d.error_html = true; }
+        else if name == "loading.html" { d.loading = true; }
         else if name == "not-found.html" {
             if rel.len == 0 { has_not_found = true; } else { err(full, 0, "not-found.html belongs in app/ only"); }
         }
@@ -244,6 +247,7 @@ fn scan_dir(rel: const u8[:], todo: u8[..512][>..]&) {
     if d.layout { n.clear(); format(n, "l", i); d.layout_ns.append(n); }
     if d.middleware { n.clear(); format(n, "m", i); d.mw_ns.append(n); }
     if d.error_html { n.clear(); format(n, "e", i); d.error_ns.append(n); }
+    if d.loading { n.clear(); format(n, "g", i); d.loading_ns.append(n); }
     dirs.push(d);
     // Children go on the stack last-first, so they come off in sorted order.
     let subs = split(subdirs, '\n');
@@ -1190,12 +1194,28 @@ fn gen_route_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     m.append("}\n");
 }
 
+// The namespace of the loading.html a page in rel uses: the nearest at or above its folder; "" for none.
+fn nearest_loading(out: u8[>..]&, rel: const u8[:]) {
+    var best = -1;
+    var best_len = -1;
+    for o, k in dirs {
+        if o.loading && is_ancestor(o.rel, rel) && o.rel.len > best_len { best = k; best_len = o.rel.len; }
+    }
+    if best >= 0 { out.append(dirs[best].loading_ns); }
+}
+
 fn gen_render_stmt(m: u8[>..]&, d: const Dir&, props: bool, part: const u8[:], rq: const u8[:]) {
     var closes = 0;
     for o in dirs {
         if o.layout && is_ancestor(o.rel, d.rel) { format(m, o.layout_ns, "::render(res.body, ", rq, ", ctx) { "); closes += 1; }
     }
     format(m, d.page_ns, "::render(res.body, ", rq, ", ctx", if props { ", props" } else { "" }, if part.len > 0 { ", " } else { "" }, part, ");");
+    // A whole page carries the nearest loading.html as a template for gwi.js (DESIGN-ADDENDUM-14, section 4).
+    var ld: u8[>..] = [];
+    nearest_loading(ld, d.rel);
+    if ld.len > 0 {
+        format(m, " res.body.append(\"<template id=\\\"gw-loading\\\">\"); ", ld, "::render(res.body, ", rq, ", ctx); res.body.append(\"</template>\");");
+    }
     for c in closes { m.append(" };"); }
 }
 
@@ -1516,6 +1536,7 @@ fn gen_main() -> u8[>..] {
         if d.layout { format(m, "import ", d.layout_ns, ";\n"); }
         if d.middleware { format(m, "import ", d.mw_ns, ";\n"); }
         if d.error_html { format(m, "import ", d.error_ns, ";\n"); }
+        if d.loading { format(m, "import ", d.loading_ns, ";\n"); }
     }
     if has_not_found { m.append("import nf;\n"); }
     if has_state {
@@ -1804,6 +1825,15 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
             imports.append("import web.errors; ");
             gen_template(src, d.error_ns, d.error_ns,
                          "fn render(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&, err: const web::ErrorInfo&)", imports, K_ERROR, -1, frags);
+        }
+        if d.loading {
+            var src: u8[>..] = [];
+            app_path(src, d.rel, "loading.html");
+            var imports: u8[>..] = [];
+            var frags: u8[>..] = [];
+            add_default_imports(imports);
+            gen_template(src, d.loading_ns, d.loading_ns,
+                         "fn render(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&)", imports, K_LOADING, -1, frags);
         }
         if d.page_html {
             var imports: u8[>..] = [];
@@ -2285,19 +2315,66 @@ fn stamp() -> i64 {
 }
 
 // The dev server serves this text in /__gweb/id; open pages show it.
+// After each of the first 5 `path:line:` lines whose file exists (relative path), 2 lines before, the line
+// marked `>`, and 2 after, each with its number (DESIGN-ADDENDUM-14, D13). Other text passes through.
+fn excerpts(text: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    let lines = split(text, '\n');
+    var shown = 0;
+    for line, li in lines {
+        out.append(line);
+        let last = li + 1 == lines.len;
+        if !last { out.push('\n'); }
+        if shown >= 5 || line.len == 0 || line[0] == '/' { continue; }
+        let c = find(line, ":");
+        if c <= 0 { continue; }
+        var e = c + 1;
+        while e < line.len && line[e] >= '0' && line[e] <= '9' { e += 1; }
+        if e == c + 1 || e >= line.len || line[e] != ':' { continue; }
+        let num, nok = parse_int(line[c + 1..e]);
+        if !nok || num < 1 { continue; }
+        var src: u8[>..] = [];
+        if !read_file(line[..c], src) { continue; }
+        let sl = split(src, '\n');
+        if num > sl.len { continue; }
+        shown += 1;
+        if last { out.push('\n'); }
+        var k = max(num - 2, 1);
+        while k <= min(num + 2, sl.len) {
+            var n: u8[>..] = [];
+            format(n, k);
+            out.push(if k == num { '>' } else { ' ' });
+            var pad = 4 - n.len;
+            while pad > 0 { out.push(' '); pad -= 1; }
+            format(out, n, " | ", sl[k - 1], "\n");
+            k += 1;
+        }
+    }
+    return out;
+}
+
 fn write_dev_errors(text: const u8[:]) {
     make_dir(".gooseweb.dev");
     write_file(".gooseweb.dev/errors.txt", text);
 }
 
 fn dev(extra: u8[:][:]) {
+    // Hidden, for tests: one build, errors.txt written, exit 0 or 1; no server and no watching.
+    for a in extra {
+        if a == "--once" {
+            write_dev_errors("");
+            if build(false, true) { exit(0); }
+            write_dev_errors(excerpts(last_errors));
+            exit(1);
+        }
+    }
     var pid: i64 = -1;
     var last = stamp();
     write_dev_errors("");
     if build(false, true) {
         pid = c_spawn(server_cmd(extra, true));
     } else {
-        write_dev_errors(last_errors);
+        write_dev_errors(excerpts(last_errors));
         write_stderr("gweb dev: fix the errors above; watching app/, lib/, public/ and components/\n");
     }
     loop {
@@ -2312,7 +2389,7 @@ fn dev(extra: u8[:][:]) {
         last = stamp();
         write_stdout("gweb dev: change seen, rebuilding\n");
         if !build(false, true) {
-            write_dev_errors(last_errors);
+            write_dev_errors(excerpts(last_errors));
             write_stderr("gweb dev: build failed; the old server keeps running\n");
             continue;
         }

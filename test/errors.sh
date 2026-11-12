@@ -13,6 +13,7 @@
 #   - a route.goose crash and a route fail: JSON {"error":..,"id":..}
 #   - --dev-id: gw-dev-error before the dev script, with the request; without it, no detail
 #   - D14: a page POST taking res that writes a 429 and calls web::done; a page POST's web::fail(429)
+#   - step 7: gweb dev --once writes errors.txt with a marked 5-line excerpt after a build error
 #   - informational: plaintext requests per second (see BENCH below)
 #
 # Needs curl, python3 and gweb built beside this folder (goose build -o gweb cli/gweb.goose).
@@ -212,6 +213,28 @@ sys.exit(0 if isinstance(d, str) and d.startswith("GET /crash") and len(d) <= 40
   check "$([ "$(status db)" = 500 ] && ! body_has db 'gw-dev-error' && echo ok)" "dev /brokenerr: the plain 500 has no detail"
   stop_server
 fi
+
+# 2b. Step 7: build-error excerpts. `gweb dev --once` (hidden) builds once, writes
+# .gooseweb.dev/errors.txt with the excerpts and exits; a good site leaves it empty.
+cp -R "$HERE/errors/site" "$WORK/bad"
+rm -rf "$WORK/bad/.gooseweb"
+mkdir -p "$WORK/bad/app/broken"
+printf '%s\n' '<h1>one</h1>' '<p>two</p>' '<p>three</p>' '<p>{no_such_name}</p>' '<p>five</p>' '<p>six</p>' '<p>seven</p>' > "$WORK/bad/app/broken/page.html"
+"$GWEB" -C "$WORK/bad" build > "$WORK/bad.plain" 2>&1
+plain_rc=$?
+"$GWEB" -C "$WORK/bad" dev --once > /dev/null 2>&1
+dev_rc=$?
+ET="$WORK/bad/.gooseweb.dev/errors.txt"
+check "$([ "$plain_rc" != 0 ] && [ "$dev_rc" != 0 ] && echo ok)" "a type error in page.html fails build and dev --once"
+check "$(grep -q '^app/broken/page.html:4:' "$ET" 2>/dev/null && echo ok)" "errors.txt has the path:line: error line"
+check "$(grep -qF '>    4 | <p>{no_such_name}</p>' "$ET" 2>/dev/null && echo ok)" "errors.txt marks the error line with > and its number"
+check "$(grep -qF '   2 | <p>two</p>' "$ET" 2>/dev/null && grep -qF '   3 | <p>three</p>' "$ET" && grep -qF '   5 | <p>five</p>' "$ET" && grep -qF '   6 | <p>six</p>' "$ET" && echo ok)" "errors.txt has 2 lines before and 2 after"
+check "$(! grep -qF ' | <p>seven</p>' "$ET" 2>/dev/null && ! grep -qF ' | <h1>one</h1>' "$ET" 2>/dev/null && echo ok)" "errors.txt has no lines beyond the 2-line window"
+check "$(! grep -qF ' | ' "$WORK/bad.plain" && echo ok)" "plain gweb build output has no excerpt"
+rm -f "$WORK/bad/app/broken/page.html"
+rmdir "$WORK/bad/app/broken"
+"$GWEB" -C "$WORK/bad" dev --once > /dev/null 2>&1
+check "$([ $? = 0 ] && [ ! -s "$ET" ] && echo ok)" "dev --once on a good site leaves errors.txt empty"
 
 # 3. Informational: plaintext requests per second.
 # BENCH_BASE=/path/to/server (built from the commit before step 5, with the same site) adds a "before" line.
