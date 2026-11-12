@@ -37,7 +37,8 @@ struct Ctx {
     outcome: Outcome,
     redirect_status: i64,
     location: u8[..1024],
-    title: u8[..256]          // set by page loaders, read by layouts
+    title: u8[..256],         // set by page loaders, read by layouts
+    set_cookies: u8[..2048]   // pending Set-Cookie lines; run_worker moves them to res (DESIGN-ADDENDUM-5)
 }
 
 // Server settings, from flags and the environment (config_from_args).
@@ -48,7 +49,7 @@ fn no_params() -> Params { Params { n: 0, names: [""; 8], values: [""; 8] } }
 
 fn new_ctx(worker: i64, owner_fd: i32) -> Ctx {
     Ctx { params: no_params(), worker: worker, owner_fd: owner_fd, outcome: Outcome.Continue,
-          redirect_status: 302, location: "", title: "" }
+          redirect_status: 302, location: "", title: "", set_cookies: "" }
 }
 
 // ---------------------------------------------------------------- params and query
@@ -106,6 +107,129 @@ fn split(path: const u8[:], seg: const u8[:][16]&, starts: i64[16]&, ends: i64[1
         }
     }
     return n;
+}
+
+// ---------------------------------------------------------------- cookies (DESIGN-ADDENDUM-5)
+//
+// Reading goes through req; setting goes through ctx, so it works the same
+// in handlers, loaders and middleware. Ctx keeps the finished Set-Cookie
+// lines (flat bytes, no slices) and run_worker moves them to res.headers
+// after the dispatcher returns.
+
+enum SameSite { Lax, Strict, None }
+
+// The attributes of a cookie to set. The defaults give a host-only session
+// cookie for the whole site that scripts cannot read.
+struct CookieOptions {
+    path: u8[..128] = "/",
+    domain: u8[..128] = "",             // "" = this host only
+    max_age: i64 = -1,                  // seconds; -1 = until the browser closes
+    secure: bool = false,               // HTTPS only
+    http_only: bool = true,             // hidden from document.cookie
+    same_site: SameSite = SameSite.Lax
+}
+
+const COOKIE_NAME_MAX = 64;
+const COOKIE_VALUE_MAX = 1024;          // after encoding
+
+let COOKIE_NAME_BYTES = byte_set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&'*+-.^_`|~");
+let COOKIE_PLAIN_BYTES = byte_set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~");
+let COOKIE_DOMAIN_BYTES = byte_set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.");
+let HEX_UPPER = "0123456789ABCDEF";
+
+fn all_in(s: const u8[:], set: const ByteSet&) -> bool {
+    for c in s { if !set.members[c] { return false; } }
+    return true;
+}
+
+// A request cookie, percent-decoded and appended to out. False when absent.
+fn cookie(req: const http::Request&, name: const u8[:], out: u8[>..]&) -> bool {
+    let v, has = http::cookie(req, name);
+    if !has { return false; }
+    var i = 0;
+    while i < v.len {
+        if v[i] == '%' && i + 2 < v.len && ascii::hex_value(v[i + 1]) >= 0 && ascii::hex_value(v[i + 2]) >= 0 {
+            out.push((ascii::hex_value(v[i + 1]) * 16 + ascii::hex_value(v[i + 2])) as u8);
+            i += 3;
+        } else { out.push(v[i]); i += 1; }
+    }
+    return true;
+}
+
+// A request cookie as sent (not decoded), or fallback when it is absent or
+// empty. One value, so templates and layouts can use it.
+fn cookie_or(req: const http::Request&, name: const u8[:], fallback: const u8[:]) -> const u8[:] {
+    let v, has = http::cookie(req, name);
+    if has && v.len > 0 { return v; }
+    return fallback;
+}
+
+// A request cookie as an integer.
+fn cookie_int(req: const http::Request&, name: const u8[:]) -> i64, bool {
+    let v, has = http::cookie(req, name);
+    if !has || v.len == 0 { return 0, false; }
+    return parse_int(v);
+}
+
+// Sets a cookie on this response. The value may be any bytes; it is
+// percent-encoded. False, with nothing set, when the name is not 1 to 64
+// token bytes, the encoded value is over 1024 bytes, an option is invalid, a
+// __Secure- or __Host- name breaks its rule, or the response's cookies would
+// pass 2048 bytes.
+fn set_cookie(ctx: Ctx&, name: const u8[:], value: const u8[:], opts: CookieOptions = CookieOptions { .. }) -> bool {
+    let secure = opts.secure || opts.same_site == SameSite.None;
+    if name.len == 0 || name.len > COOKIE_NAME_MAX || !all_in(name, COOKIE_NAME_BYTES) { return false; }
+    if opts.path.len == 0 || opts.path[0] != '/' { return false; }
+    for c in opts.path { if c <= ' ' || c >= 127 || c == ';' { return false; } }
+    if !all_in(opts.domain, COOKIE_DOMAIN_BYTES) || opts.max_age < -1 { return false; }
+    if starts_with(name, "__Secure-") && !secure { return false; }
+    if starts_with(name, "__Host-") && (!secure || opts.path != "/" || opts.domain.len > 0) { return false; }
+    var encoded = 0;
+    for c in value { encoded += if COOKIE_PLAIN_BYTES.members[c] { 1 } else { 3 }; }
+    if encoded > COOKIE_VALUE_MAX { return false; }
+
+    var line: u8[..1536] = "";
+    format(line, "Set-Cookie: ", name, "=");
+    for c in value {
+        if COOKIE_PLAIN_BYTES.members[c] { line.push(c); }
+        else { line.push('%'); line.push(HEX_UPPER[c >> 4]); line.push(HEX_UPPER[c & 15]); }
+    }
+    format(line, "; Path=", opts.path);
+    if opts.domain.len > 0 { format(line, "; Domain=", opts.domain); }
+    if opts.max_age >= 0 { format(line, "; Max-Age=", opts.max_age); }
+    if opts.max_age == 0 { line.append("; Expires=Thu, 01 Jan 1970 00:00:00 GMT"); }
+    if secure { line.append("; Secure"); }
+    if opts.http_only { line.append("; HttpOnly"); }
+    line.append(match opts.same_site { Lax => "; SameSite=Lax", Strict => "; SameSite=Strict", None => "; SameSite=None" });
+    line.append("\r\n");
+    if line.len > ctx.set_cookies.cap - ctx.set_cookies.len { return false; }
+    ctx.set_cookies.append(line);
+    return true;
+}
+
+// Tells the browser to delete a cookie. Pass the path and domain (and, for a
+// __Secure- or __Host- name, secure) it was set with; max_age is ignored.
+fn clear_cookie(ctx: Ctx&, name: const u8[:], opts: CookieOptions = CookieOptions { .. }) -> bool {
+    var o = opts;
+    o.max_age = 0;
+    return set_cookie(ctx, name, "", o);
+}
+
+// Moves the pending Set-Cookie lines to res.headers. False when they do not
+// fit beside the headers already there: the reply then becomes a 500 with no
+// cookies, so a cookie is never dropped silently. run_worker calls this
+// after the dispatcher.
+fn apply_cookies(ctx: Ctx&, res: http::Response&) -> bool {
+    if ctx.set_cookies.len == 0 { return true; }
+    if ctx.set_cookies.len > res.headers.cap - res.headers.len {
+        ctx.set_cookies.clear();
+        res.headers.clear();
+        http::json_error(res, http::Status.InternalServerError, "response headers too large");
+        return false;
+    }
+    res.headers.append(ctx.set_cookies);
+    ctx.set_cookies.clear();
+    return true;
 }
 
 // ---------------------------------------------------------------- responses
@@ -244,6 +368,7 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                         } else {
                             var ctx = new_ctx(slot, owner_fd);
                             static_index = D(req, ctx, res);
+                            if !apply_cookies(ctx, res) { static_index = -1; }
                             dev_inject(res, cfg.dev_id);
                         }
                     },

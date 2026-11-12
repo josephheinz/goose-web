@@ -121,6 +121,48 @@ Apps can read SQLite through the sibling package
 file, and `gweb` declares the package. Each worker opens its own read-only
 connection with `sqlite::local(path)`. See `examples/shop/lib/shopdb.goose`.
 
+## Cookies
+
+Read cookies from `req`, set them through `ctx`. Setting works the same in a
+route handler, a page loader and middleware, and every accepted cookie is sent
+whatever the outcome (200, redirect, not found, or a `before` that returned
+false). `run_worker` moves the pending `Set-Cookie` lines into `res.headers`
+after the dispatcher returns.
+
+```goose
+let theme = web::cookie_or(req, "theme", "light");          // one raw value, for layouts and templates
+let n, ok = web::cookie_int(req, "visits");                 // i64, bool
+var v: u8[>..] = [];
+let has = web::cookie(req, "name", v);                      // percent-decoded, appended to v
+
+web::set_cookie(ctx, "seen", "1");                          // session cookie, HttpOnly, SameSite=Lax
+web::set_cookie(ctx, "theme", "dark", web::CookieOptions { max_age: 31536000, http_only: false, .. });
+web::clear_cookie(ctx, "theme");                            // pass the same path and domain it was set with
+```
+
+A layout can read a cookie without a loader: `<body class="{{ web::cookie_or(req, "theme", "light") }}">`.
+
+`CookieOptions` has `path` (`/`), `domain` (none, this host only), `max_age`
+(-1: until the browser closes), `secure` (false), `http_only` (true) and
+`same_site` (`SameSite.Lax`, `Strict` or `None`). `SameSite.None` always writes
+`Secure`. `secure` defaults to false because goose-web serves plain HTTP; set it
+when the site is behind TLS.
+
+`set_cookie` returns false and sets nothing when the name is not an RFC 6265
+token of 1 to 64 bytes, the path or domain is bad, `max_age` is below -1, a
+`__Secure-` or `__Host-` prefix rule is broken, or the encoded value is over
+1024 bytes. Check the result for values that come from users: Goose does not
+warn about an ignored `bool`. Every byte of the value outside `A-Z a-z 0-9 - . _ ~`
+is written as `%XX`, so a value that needed encoding reads back encoded through
+`cookie_or` and `cookie_int`; use `web::cookie(req, name, out)` for those.
+
+All `Set-Cookie` lines of one response share 2048 bytes. When they do not fit
+beside the headers already in `res`, the reply becomes a bare
+`500 {"error":"response headers too large"}`; a cookie is never dropped silently.
+Pages that set cookies carry no `Cache-Control`; behind a shared cache, set
+`Cache-Control: no-store` in `after` middleware. Signed sessions are not in v1.
+The demo is `examples/shop/app/cookies` (`/cookies`).
+
 ## Example
 
 `examples/shop` is the benchmark site: pages, a JSON API, a todo list in
