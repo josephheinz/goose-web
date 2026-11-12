@@ -453,7 +453,9 @@ fn env_bool(name: const u8[:], fallback: bool) -> bool {
 fn env_required(name: const u8[:]) -> bool {
     var e: u8[>..] = [];
     if env(name, e) { return true; }
-    print("config: ", name, " is not set");
+    var msg: u8[>..] = [];
+    format(msg, "config: ", name, " is not set\n");
+    write_stderr(msg);
     return false;
 }
 
