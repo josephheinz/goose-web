@@ -13,7 +13,7 @@ console.error = () => {};
 const dir = process.env.GW_DIR;
 const G = await import(pathToFileURL(dir + "/gwi.js").href);
 const { defs, state, hooks } = G;
-for (const n of ["RCounter", "RParts", "RComputed", "RWatch", "RStruct", "RFetch", "RClock", "RClockAsync", "REvents", "RNestChild", "RNest"]) await import(pathToFileURL(`${dir}/${n}.js`).href);
+for (const n of ["RCounter", "RParts", "RComputed", "RWatch", "RStruct", "RFetch", "RClock", "RClockAsync", "REvents", "RNestChild", "RNest", "RNestEventChild", "RNestEvent"]) await import(pathToFileURL(`${dir}/${n}.js`).href);
 
 let errors = [];
 window.addEventListener("gw:error", (ev) => errors.push(ev.detail));
@@ -395,6 +395,72 @@ test("RClockAsync: an async mount and an async every update state through a stub
   eq(errors.length, 1, "and reports");
   G.swap(host, "");
   eq(timers.size, 0, "stopped");
+});
+
+// ---- RNestEvent: child-to-parent events (Addendum 12, 7.6).
+const ekids = (root) => [...root.querySelectorAll("[data-component=RNestEventChild]")];
+const ebtn = (k, text) => [...k.querySelectorAll("button")].find((b) => b.textContent.startsWith(text));
+
+test("RNestEvent: a child's event runs the parent's handler; the child's own state is its own", () => {
+  const root = mount("RNestEvent", {});
+  const [a, b, c] = ekids(root);
+  eq(a.getAttribute("data-emit-change"), "picked", "root attribute");
+  eq(a.getAttribute("data-emit-named"), "heard", "second event");
+  eq(b.getAttribute("data-emit-change"), null, "no listener, no attribute");
+  click(ebtn(a, "+"));
+  eq(root.querySelector("p").textContent, "2  false", "parent state and DOM");
+  eq(state(root).got, 2, "got");
+  eq(ebtn(a, "+").textContent, "+2/1", "the child updated itself");
+  eq(state(a).taps, 1, "child state");
+  eq(ekids(root)[0], a, "child identity");
+  click(ebtn(a, "shout"));
+  eq(root.querySelector("p").textContent, "2 a<b& true", "text and bool arguments");
+  eq(state(root).said, "a<b&", "said");
+  click(ebtn(a, "quiet"));
+  eq(root.querySelector("p").textContent, "2 a<b& true", "an event-free handler sends nothing");
+  tree(root, "RNestEvent", "events");
+  eq(errors.length, 0, "no error");
+});
+
+test("RNestEvent: a child rendered by a block carries the listener too", () => {
+  const root = mount("RNestEvent", {});
+  click(ebtn(ekids(root)[0], "shout"));
+  eq(state(root).loud, false, "qty 1 is not loud");
+  click(ebtn(ekids(root)[0], "+"));
+  click(ebtn(ekids(root)[0], "shout"));
+  const d = ekids(root).find((k) => k.parentNode.tagName == "ASIDE");
+  eq(d.getAttribute("data-emit-change"), "picked", "attribute from the block's HTML");
+  click(ebtn(d, "+"));
+  eq(state(root).got, 31, "parent handler ran");
+  eq(ebtn(d, "+").textContent, "+31/1", "child state");
+  tree(root, "RNestEvent", "block child");
+  eq(errors.length, 0, "no error");
+});
+
+test("RNestEvent: an emit with no parent listener does nothing", () => {
+  const root = mount("RNestEvent", {});
+  const b = ekids(root)[1];
+  click(ebtn(b, "+"));
+  click(ebtn(b, "shout"));
+  eq(ebtn(b, "+").textContent, "+11/1", "the child still works");
+  eq(state(root).got, 0, "parent untouched");
+  // A child that is not inside a component at all.
+  document.body.innerHTML = `<div data-component="RNestEventChild" data-emit-change="picked">${defs.RNestEventChild.r(defs.RNestEventChild.i({ start: 5 }))}</div><script type="application/json">${json(defs.RNestEventChild.i({ start: 5 }))}</script>`;
+  click(ebtn(document.body.firstChild, "+"));
+  eq(ebtn(document.body.firstChild, "+").textContent, "+6/1", "a root with no parent");
+  eq(errors.length, 0, "no error");
+});
+
+test("RNestEvent: a parent handler that throws rolls back the parent and leaves the child alone", () => {
+  const root = mount("RNestEvent", {});
+  const c = ekids(root)[2];
+  click(ebtn(c, "+"));
+  eq(state(root).got, 0, "parent write rolled back");
+  eq(root.querySelector("p").textContent, "0  false", "parent DOM unchanged");
+  eq(errors.length, 1, "one gw:error");
+  eq(ebtn(c, "+").textContent, "+21/1", "the child's own write stands");
+  eq(state(c).qty, 21, "child qty");
+  tree(root, "RNestEvent", "throw");
 });
 
 // ---- REvents: events and modifiers (gwi.js listen, gwm.js).

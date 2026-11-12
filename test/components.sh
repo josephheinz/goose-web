@@ -143,7 +143,7 @@ if [ -e "$WORK/nohttp/.gooseweb/_gw/gwl.js" ]; then ok; else bad "gwl.js is not 
 # gwc.js is written only for a site where a component calls a child.
 mkdir -p "$WORK/nokids"
 cp -R "$WORK/nolife/app" "$WORK/nolife/components" "$WORK/nokids/"
-rm "$WORK/nokids/components/RNest.gshtml"
+rm "$WORK/nokids/components/RNest.gshtml" "$WORK/nokids/components/RNestEvent.gshtml"
 if "$GWEB" -C "$WORK/nokids" gen >/dev/null 2>&1; then
   if [ -e "$WORK/nokids/.gooseweb/_gw/gwc.js" ]; then bad "gwc.js was written for a site without child components"; else ok; fi
 else

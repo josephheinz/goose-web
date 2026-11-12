@@ -23,8 +23,17 @@ export const Q = (a, p) => put(a.nextSibling, p);
 // Before a block morph: every child root below the marker's parent reads its state while its own script is still next to it.
 export const M = (a) => a.parentNode.querySelectorAll("[data-component]").forEach(state);
 
-// The server form of child n with props p and key k (text, or none), for a block's HTML (the module script is not needed).
-export const H = (n, p, k) => {
+// A child's c.e(name, args) (Addendum 12, 7.6): the root's data-emit-NAME is a handler of the parent component,
+// which runs like any handler of it. No listener, or no parent (an unmounted child), does nothing.
+const pe = hooks.e;
+hooks.e = (r, n, a) => {
+  pe?.(r, n, a);
+  const p = r.parentNode?.closest("[data-component]"), h = r.getAttribute("data-emit-" + n);
+  h && p && run(p, defs[cn(p)], h, a);
+};
+
+// The server form of child n with props p, key k (text, or none) and root attributes a (data-emit-*), for a block's HTML (the module script is not needed).
+export const H = (n, p, k, a) => {
   const d = defs[n], s = d.i(p);
-  return `<div data-component="${n}"${k ? ` gw-key="${esc(k)}"` : ""}>${d.r(s)}</div><script type="application/json">${JSON.stringify(s).replace(/[<>&]/g, (c) => "\\u00" + c.charCodeAt().toString(16))}</script>`;
+  return `<div data-component="${n}"${k ? ` gw-key="${esc(k)}"` : ""}${a || ""}>${d.r(s)}</div><script type="application/json">${JSON.stringify(s).replace(/[<>&]/g, (c) => "\\u00" + c.charCodeAt().toString(16))}</script>`;
 };

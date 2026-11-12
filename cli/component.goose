@@ -38,7 +38,8 @@ struct FnDef { name: u8[..64], tok: i64, line: i64, first: i64, n: i64, ret: Ty,
                js: u8[..72], handler: bool, test: bool,
                event: bool,       // reactive: `@event fn name(params);`, no body
                r: i64, w: i64,    // reactive: the bits it reads and writes, through calls
-               is_async: bool }   // reactive: awaits, or calls one that does
+               is_async: bool,    // reactive: awaits, or calls one that does
+               emits: bool }      // reactive: sends an @event, or calls a function that does
 
 struct Var { name: u8[..64], ty: Ty, js: u8[..72] }
 
@@ -65,7 +66,7 @@ let RB_UNMOUNT = 2;
 let RB_EVERY = 3;
 
 // @watch, @mount, @unmount or @every(ms) with its block. r and w as for a function. lb: the block's `{` token.
-struct RBlock { kind: i64, tok: i64, line: i64, ms: i64, body: i64, r: i64, w: i64, is_async: bool, lb: i64 }
+struct RBlock { kind: i64, tok: i64, line: i64, ms: i64, body: i64, r: i64, w: i64, is_async: bool, lb: i64, emits: bool }
 
 struct RUse { name: u8[..64], line: i64 }
 
@@ -294,6 +295,7 @@ var http_use = 0;              // 1: http::get is used, 2: http::post
 var await_ctx: u8[..96];       // the place an await may not stand in (markup, a computed), or empty
 var rw_noasync: u8[..96];      // the same for calls of async functions; empty where they are allowed
 var rw_async = false;          // the walker met an await or a call of an async function
+var rw_emits = false;          // the walker met an @event call or a call of a function that sends one
 var rw_awaited = -1;           // the call node of the await being walked
 
 // The components of this gweb run (child calls, Addendum 12 section 7.5), kept across compile() calls: gweb
@@ -301,6 +303,7 @@ var rw_awaited = -1;           // the call node of the await being walked
 struct RegC { name: u8[..64], done: i64 }
 var reg: RegC[>..<];
 var reg_props: u8[>..];        // `Name\tprop\tt\tcap\tdefault in Goose\tdefault in JavaScript\n`, each @prop of each reactive component
+var reg_events: u8[>..];       // `Name\tevent\ttype codes (1 i64, 2 bool, 3 text), comma separated\n`, each @event of each reactive component
 var kids: u8[..64][>..<];      // the components this module calls (its imports)
 var child_use = 0;             // gwc.js helpers the module imports: 1 H (render), 2 Q (top-level part), 4 M (block)
 
@@ -1126,7 +1129,7 @@ fn parse_fn(bodyless: bool) {
     let fi = fns.len;
     fns.push(FnDef { name: tok_name(name_tok), tok: name_tok, line: line, first: params.len, n: 0,
                      ret: ty(T_VOID), body: -1, js: "", handler: false, test: false,
-                     event: false, r: 0, w: 0, is_async: false });
+                     event: false, r: 0, w: 0, is_async: false, emits: false });
     check_reserved(name_tok);
     while !is(")") {
         if !at_k(K_ID) || is_keyword(pos) { bad_tok(pos); return; }
@@ -1341,7 +1344,7 @@ fn parse_rblock() {
     let lb = pos;
     let b = parse_block();
     if perr { return; }
-    rblocks.push(RBlock { kind: kind, tok: tk, line: line, ms: ms, body: b, r: 0, w: 0, is_async: false, lb: lb });
+    rblocks.push(RBlock { kind: kind, tok: tk, line: line, ms: ms, body: b, r: 0, w: 0, is_async: false, lb: lb, emits: false });
 }
 
 // @event fn name(params);  pos is at the word after @.
@@ -2195,6 +2198,21 @@ recursive fn rw_expr(n: i64) {
         format(m, "'", fns[r].name, "' is not async: remove await");
         report(line, m);
     }
+    if r >= 0 && (fns[r].event || fns[r].emits) {
+        rw_emits = true;
+        if rw_rep {
+            var nm: u8[>..] = [];
+            if rw_ctx == 1 { format(nm, "@computed ", rw_ctx_name); }
+            else if rw_ctx == 2 { format(nm, "@state ", rw_ctx_name); }
+            else if rw_ctx == 3 { nm.append("markup"); }
+            else if rw_noasync == "@watch" { nm.append("@watch"); }
+            if nm.len > 0 {
+                var m: u8[>..] = [];
+                format(m, "an @event is sent from a handler, not from ", nm);
+                report(line, m);
+            }
+        }
+    }
     if r >= 0 {
         rw_r = rw_r | fns[r].r;
         rw_w = rw_w | fns[r].w;
@@ -2271,11 +2289,13 @@ fn rw_fixpoint() {
             rw_r = 0;
             rw_w = 0;
             rw_async = false;
+            rw_emits = false;
             rw_block(fns[i].body);
-            if rw_r != fns[i].r || rw_w != fns[i].w || rw_async != fns[i].is_async {
+            if rw_r != fns[i].r || rw_w != fns[i].w || rw_async != fns[i].is_async || rw_emits != fns[i].emits {
                 fns[i].r = rw_r;
                 fns[i].w = rw_w;
                 fns[i].is_async = rw_async;
+                fns[i].emits = rw_emits;
                 changed = true;
             }
         }
@@ -2382,7 +2402,9 @@ fn check_reactive() {
         if rblocks[i].kind == RB_WATCH { rw_noasync.append("@watch"); }
         else if rblocks[i].kind == RB_UNMOUNT { rw_noasync.append("@unmount"); }
         rw_async = false;
+        rw_emits = false;
         rw_block(rblocks[i].body);
+        rblocks[i].emits = rw_emits;
         rblocks[i].is_async = rw_async;
         rblocks[i].r = rw_r;
         rblocks[i].w = rw_w;
@@ -2460,8 +2482,8 @@ fn check_rmodel() {
 fn takes_state(fi: i64) -> bool { (fns[fi].r | fns[fi].w) != 0 }
 
 // The JavaScript of a reactive function: (s, c, ...) when it writes or awaits, (s, ...) when it only reads, (...) else.
-fn js_takes_s(fi: i64) -> bool { return takes_state(fi) || fns[fi].is_async; }
-fn js_takes_c(fi: i64) -> bool { return fns[fi].w != 0 || fns[fi].is_async; }
+fn js_takes_s(fi: i64) -> bool { return takes_state(fi) || fns[fi].is_async || fns[fi].emits; }
+fn js_takes_c(fi: i64) -> bool { return fns[fi].w != 0 || fns[fi].is_async || fns[fi].emits; }
 
 // The name of the typed-fetch imports and of reply decoder k, in the output's style.
 fn http_name(post: bool) -> u8[..16] {
@@ -2827,6 +2849,16 @@ recursive fn emit_args(n: i64) {
 
 recursive fn emit_call(n: i64, top: bool) {
     let r = nodes[n].ref;
+    if r >= 0 && fns[r].event {
+        // c.e("change", [args]): the runtime hands it to the parent's handler.
+        w(c_js);
+        w(".e(");
+        js_str(fns[r].name);
+        wo(", [");
+        emit_args(n);
+        w("])");
+        return;
+    }
     if r >= 0 {
         w(fns[r].js);
         w("(");
@@ -4960,6 +4992,84 @@ fn child_obj(props: const u8[:][:], np: i64, pn: const i64[:], all: bool) -> u8[
     return grab(keep);
 }
 
+// The type names of an @event's parameters, from the codes of reg_events: `(i64, bool, const u8[:])`.
+fn event_types(codes: const u8[:]) -> u8[>..] {
+    var r: u8[>..] = [];
+    r.push('(');
+    var first = true;
+    for c in codes {
+        if c == ',' { continue; }
+        if !first { r.append(", "); }
+        first = false;
+        r.append(if c == '1' { "i64" } else if c == '2' { "bool" } else { "const u8[:]" });
+    }
+    r.push(')');
+    return r;
+}
+
+// An `on:EVENT="handler"` argument of a child call (text[a0..a1]). False when it is not one (a prop called `on`
+// is `on: expr`); true when handled, errors included. A good one adds ` data-emit-EVENT="handler"` to attrs.
+fn child_on(ln: i64, name: const u8[:], a0: i64, a1: i64, attrs: u8[>..]&) -> bool {
+    if a1 - a0 < 4 || text[a0..a0 + 3] != "on:" || !tscan::ident_start(text[a0 + 3]) { return false; }
+    var j = a0 + 3;
+    while j < a1 && tscan::ident_char(text[j]) { j += 1; }
+    let ev = text[a0 + 3..j];
+    var k = j;
+    while k < a1 && (text[k] == ' ' || text[k] == '\t') { k += 1; }
+    if k >= a1 || text[k] != '=' || (k + 1 < a1 && text[k + 1] == '=') { return false; }
+    k += 1;
+    while k < a1 && (text[k] == ' ' || text[k] == '\t') { k += 1; }
+    var m: u8[>..] = [];
+    var ok = a1 - k >= 3 && text[k] == '"' && text[a1 - 1] == '"' && tscan::ident_start(text[k + 1]);
+    if ok { for q in k + 1..a1 - 1 { if !tscan::ident_char(text[q]) { ok = false; } } }
+    if !ok {
+        format(m, "on:", ev, " on a component takes a handler name");
+        report(ln, m);
+        return true;
+    }
+    let h = text[k + 1..a1 - 1];
+    var codes: u8[>..] = [];
+    var have = false;
+    for l in split(reg_events, '\n') {
+        if l.len > 0 && fld(l, 0) == name && fld(l, 1) == ev { have = true; codes.append(fld(l, 2)); }
+    }
+    if !have {
+        format(m, name, " has no @event ", ev);
+        report(ln, m);
+        return true;
+    }
+    let fi = find_fn(h);
+    if fi < 0 || fns[fi].event {
+        format(m, "on:", ev, " handler '", h, "' is not a function of this component");
+        report(ln, m);
+        return true;
+    }
+    var np = 0;
+    for c in codes { if c != ',' { np += 1; } }
+    var same = fns[fi].n == np;
+    var pi = 0;
+    for c in codes {
+        if c == ',' { continue; }
+        let want = if c == '1' { T_INT } else if c == '2' { T_BOOL } else { T_STR };
+        if same && (params[fns[fi].first + pi].mref || params[fns[fi].first + pi].ty.t != want) { same = false; }
+        pi += 1;
+    }
+    if !same {
+        format(m, "on:", ev, " handler '", h, "' must take ", event_types(codes));
+        report(ln, m);
+        return true;
+    }
+    var mark: u8[>..] = [];
+    format(mark, " data-emit-", ev, "=");
+    if find(attrs, mark) >= 0 {
+        format(m, "@", name, " handles on:", ev, " twice");
+        report(ln, m);
+        return true;
+    }
+    format(attrs, " data-emit-", ev, "=\"", h, "\"");
+    return true;
+}
+
 // @Name(a: e, b: e, key: e) in a reactive component's markup. False when Name is not a reactive component of this
 // build (the caller says it is not available); true when handled, errors included. The Goose is
 // `{ let gw_c = Name::Props { ... }; Name::nest(out, gw_c, KEY); }`; the JavaScript renders the child's server form
@@ -4990,6 +5100,7 @@ fn child_call(ln: i64, s: i64, e: i64, name: const u8[:]) -> bool {
     split_args(s, e, starts, ends);
     let before = nerr;
     var rbits = 0;
+    var emit_attrs: u8[>..] = [];           // ` data-emit-change="picked"` for each on:EVENT
     var kx = -1;                            // the node of key: e
     var kx_s = 0;
     var kx_e = 0;
@@ -5009,6 +5120,7 @@ fn child_call(ln: i64, s: i64, e: i64, name: const u8[:]) -> bool {
             if starts.len > 1 && pi + 1 < starts.len { report(ln, "an empty argument; write @Name(a: 1, b: 2)"); }
             continue;
         }
+        if child_on(ln, name, a0, a1, emit_attrs) { continue; }
         let nlen = named_len(text[a0..a1]);
         if nlen == 0 {
             var m: u8[>..] = [];
@@ -5096,7 +5208,9 @@ fn child_call(ln: i64, s: i64, e: i64, name: const u8[:]) -> bool {
     if np == 0 { call.append(".. "); }
     format(call, "}; ", name, "::nest(out, gw_c, ");
     if int_key { call.append("gw_k"); } else if kx >= 0 { call.append(rewrite(kx_s, kx_e)); } else { call.append("\"\""); }
-    call.append("); } ");
+    call.append(", \"");
+    for ch in emit_attrs { if ch == '"' { call.append("\\\""); } else { call.push(ch); } }
+    call.append("\"); } ");
     var part = -1;
     if opens.len == 0 && span_kind_at(s) < 0 {
         part = part_begin(PK_CHILD);
@@ -5117,7 +5231,8 @@ fn child_call(ln: i64, s: i64, e: i64, name: const u8[:]) -> bool {
         wo(", ");
         if nodes[kx].ty.t == T_INT { w("\"\""); wo(" + "); }
         emit_expr(kx, true);
-    }
+    } else if emit_attrs.len > 0 { wo(", "); w("\"\""); }
+    if emit_attrs.len > 0 { wo(", "); js_str(emit_attrs); }
     w(")");
     var have = false;
     for k in kids { if k == name { have = true; } }
@@ -5423,10 +5538,10 @@ fn emit_reactive_tail(name: const u8[:], out: u8[>..]&) {
     }
     out.append(if first { "out.append(\"{}\"); }\n" } else { "out.push('}'); }\n" });
     // nest is the child form (a parent's markup calls it with the child's key); component adds the module script.
-    format(out, "fn nest(out: u8[>..]&, gw_p: const Props&, gw_k: const u8[:]) { let gw_s = gw_init(gw_p); out.append(\"<div data-component=\\\"", name,
-           "\\\"\"); if gw_k.len > 0 { out.append(\" gw-key=\\\"\"); web::put(out, gw_k); out.append(\"\\\"\"); } out.append(\">\"); ",
+    format(out, "fn nest(out: u8[>..]&, gw_p: const Props&, gw_k: const u8[:], gw_a: const u8[:]) { let gw_s = gw_init(gw_p); out.append(\"<div data-component=\\\"", name,
+           "\\\"\"); if gw_k.len > 0 { out.append(\" gw-key=\\\"\"); web::put(out, gw_k); out.append(\"\\\"\"); } out.append(gw_a); out.append(\">\"); ",
            "render(out, gw_p, gw_s); out.append(\"</div><script type=\\\"application/json\\\">\"); gw_json(out, gw_p, gw_s); out.append(\"</script>\"); }\n");
-    format(out, "fn component(out: u8[>..]&, gw_p: const Props&) { nest(out, gw_p, \"\"); ",
+    format(out, "fn component(out: u8[>..]&, gw_p: const Props&) { nest(out, gw_p, \"\", \"\"); ",
            "out.append(\"<script type=\\\"module\\\" src=\\\"/_gw/", name, ".js\\\"></script>\"); }\n");
 }
 
@@ -5560,6 +5675,7 @@ fn is_reactive() -> bool { return reactive; }
 fn registry_clear() {
     reg.clear();
     reg_props.clear();
+    reg_events.clear();
 }
 
 fn registry_add(name: const u8[:]) {
@@ -5758,6 +5874,17 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
                 js.resize(keep);
             }
             reg_props.push('\n');
+        }
+    }
+    if reactive {
+        for f in fns {
+            if !f.event { continue; }
+            format(reg_events, name, "\t", f.name, "\t");
+            for p in f.first..f.first + f.n {
+                if p > f.first { reg_events.push(','); }
+                format(reg_events, params[p].ty.t);
+            }
+            reg_events.push('\n');
         }
     }
     if !reactive || nerr == 0 { for i in fns.len { if fns[i].body >= 0 { emit_js_fn(i); } } }

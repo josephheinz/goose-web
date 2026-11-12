@@ -1,0 +1,7 @@
+<script goose>
+// expect: components/FailRChildEventUnknown.gshtml:7: error: RNestEventChild has no @event chnage
+// with: RNestEventChild
+@state var n: i64 = 0;
+fn picked(v: i64) { n = v; }
+</script>
+@RNestEventChild(start: 1, on:chnage="picked")

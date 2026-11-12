@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRChildEventMissing.gshtml:6: error: on:change handler 'nope' is not a function of this component
+// with: RNestEventChild
+@state var n: i64 = 0;
+</script>
+@RNestEventChild(start: 1, on:change="nope")

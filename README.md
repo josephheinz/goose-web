@@ -418,6 +418,10 @@ child (`/_gw/gwc.js`, served when a component calls one) and the child keeps its
 `<div>`, so a call cannot sit inside `<p>`. A component cannot call itself, directly or through others
 (`components cannot contain themselves`); legacy `struct State` components cannot be called or call.
 
+**Child events.** A child declares `@event fn change(v: i64);` (params `i64`, `bool`, `const u8[:]`) and sends it with
+`change(qty);` from a handler or lifecycle block, not markup, computeds or watches. The parent listens with
+`@Qty(start: 1, on:change="picked")`: `picked` is its own function taking the same parameters, run like any handler.
+
 **Maintainers.** After editing `client/gwi.js`, run `client/build.sh` (esbuild
 0.28.2 through `npx`, or `ESBUILD=/path/to/esbuild`); it writes
 `client/gwi.min.js` with the source's FNV-1a hash in its banner.

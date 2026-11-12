@@ -1,0 +1,7 @@
+<script goose>
+// expect: components/FailRChildEventCount.gshtml:7: error: on:named handler 'heard' must take (const u8[:], bool)
+// with: RNestEventChild
+@state var n: i64 = 0;
+fn heard(t: const u8[:]) { n = 1; }
+</script>
+@RNestEventChild(start: 1, on:named="heard")

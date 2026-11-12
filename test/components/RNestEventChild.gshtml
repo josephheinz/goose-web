@@ -1,0 +1,14 @@
+<script goose>
+// The child of RNestEvent (Addendum 12, 7.6): events of each parameter type, sent from handlers.
+@prop const start: i64 = 1;
+@state var qty: i64 = start;
+@state var taps: i64 = 0;
+@event fn change(v: i64);
+@event fn named(t: const u8[:], ok: bool);
+fn bump() { qty += 1; taps += 1; send(); }
+fn send() { change(qty); }
+fn shout() { named("a<b&", qty > 1); }
+fn quiet() { taps += 1; }
+fn test_bump() { bump(); bump(); shout(); }
+</script>
+<button on:click="bump">+{qty}/{taps}</button> <button on:click="shout">shout</button> <button on:click="quiet">quiet</button>

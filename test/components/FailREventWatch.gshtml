@@ -1,0 +1,8 @@
+<script goose>
+// expect: components/FailREventWatch.gshtml:6: error: an @event is sent from a handler, not from @watch
+@state var n: i64 = 0;
+@event fn change(v: i64);
+fn go() { n += 1; }
+@watch { change(n); }
+</script>
+<button on:click="go">{n}</button>

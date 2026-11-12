@@ -1,0 +1,7 @@
+<script goose>
+// expect: components/FailRChildEventType.gshtml:7: error: on:change handler 'picked' must take (i64)
+// with: RNestEventChild
+@state var n: i64 = 0;
+fn picked(v: bool) { n = 1; }
+</script>
+@RNestEventChild(start: 1, on:change="picked")
