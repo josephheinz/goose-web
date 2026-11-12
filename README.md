@@ -157,6 +157,8 @@ gweb start [flags]           build and run (--port N --workers N --log --idle-ms
 gweb dev [flags]             build, run with --log on 2 workers and port 60053 (unless --port), rebuild on change
 gweb routes                  the route table (GET,POST and a frag line for each fragment)
 gweb test                    component parity: test_* functions as Goose and as JavaScript (writes .gooseweb.test/; leaves .gooseweb/ alone)
+gweb check                   goose check on a copy of the site; errors name .gshtml and page.html lines
+gweb lsp                     language server for .gshtml and templates (needs node)
 gweb version                 the gweb version and the package sources it declares
 ```
 

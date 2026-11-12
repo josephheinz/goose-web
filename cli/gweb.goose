@@ -4,7 +4,7 @@
 //   gweb [-C dir] gen | build [--debug] | routes
 //   gweb [-C dir] start [server flags...]
 //   gweb [-C dir] dev [server flags...]
-//   gweb [-C dir] test
+//   gweb [-C dir] test | check | lsp
 //   gweb version
 
 import std;
@@ -65,6 +65,11 @@ var gen_root: u8[>..];
 // gweb test must never touch BUILD_DIR: a built server or a running gweb dev depends on it.
 let TEST_DIR = ".gooseweb.test";
 let BUILD_DIR = ".gooseweb";
+let LSP_DIR = ".gooseweb.lsp";
+let CHECK_DIR = ".gooseweb.check";
+var overlay_src: u8[>..];              // lsp-gen --overlay: this source is read from overlay_tmp instead
+var overlay_tmp: u8[>..];
+var start_cwd: u8[>..];                // the folder gweb started in, before any -C
 var component_names: u8[..64][>..<];
 var component_lines: i64[>..<];
 var component_errors = 0;              // translator errors of this gen; the build still runs goose
@@ -147,8 +152,13 @@ fn csrf_const(path: const u8[:], code: const u8[:], route: bool) -> bool {
     return found;
 }
 
+fn read_src(path: const u8[:], out: u8[>..]&) -> bool {
+    if overlay_src.len > 0 && path == overlay_src { return read_file(overlay_tmp, out); }
+    return read_file(path, out);
+}
+
 fn read(path: const u8[:], out: u8[>..]&) -> bool {
-    if !read_file(path, out) { err(path, 0, "cannot read"); return false; }
+    if !read_src(path, out) { err(path, 0, "cannot read"); return false; }
     return true;
 }
 
@@ -1594,7 +1604,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
             var imports: u8[>..] = [];
             var frags: u8[>..] = [];
             var text: u8[>..] = [];
-            if read_file(src, text) { d.layout_csrf = mentions_csrf(text); }
+            if read_src(src, text) { d.layout_csrf = mentions_csrf(text); }
             add_default_imports(imports);
             gen_template(src, d.layout_ns, d.layout_ns,
                          "fn render<F>(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&)", imports, K_LAYOUT, -1, frags);
@@ -1618,7 +1628,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
             var src: u8[>..] = [];
             app_path(src, d.rel, "page.html");
             var html: u8[>..] = [];
-            if read_file(src, html) && mentions_csrf(html) { d.page_csrf = true; }
+            if read_src(src, html) && mentions_csrf(html) { d.page_csrf = true; }
             var base: u8[>..] = [];
             format(base, d.page_ns, "_html");
             let sig = if d.has_load { "fn render<P>(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&, props: const P&)" }
@@ -1631,7 +1641,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     not_found_csrf = false;
     if has_not_found {
         var text: u8[>..] = [];
-        if read_file("app/not-found.html", text) { not_found_csrf = mentions_csrf(text); }
+        if read_src("app/not-found.html", text) { not_found_csrf = mentions_csrf(text); }
         var imports: u8[>..] = [];
         add_default_imports(imports);
         var frags: u8[>..] = [];
@@ -1784,6 +1794,93 @@ fn build(debug: bool, dev: bool) -> bool {
            ((clock() - t0) * 10.0) as i64 as f64 / 10.0, " s)\n");
     write_stdout(msg);
     return true;
+}
+
+// ---------------------------------------------------------------- check, lsp-gen, lsp
+
+// Runs goose check on root/main.goose and prints the mapped errors to stderr. True when goose is happy.
+fn check_goose(root: const u8[:]) -> bool {
+    var cwd: u8[>..] = [];
+    c_cwd(cwd);
+    var cmd: u8[>..] = [];
+    goose_cmd(cmd);
+    cmd.append(" check --color never ");
+    var main_path: u8[>..] = [];
+    format(main_path, cwd, "/", root, "/main.goose");
+    shq(cmd, main_path);
+    var out: u8[>..] = [];
+    let status = c_run(cmd, out);
+    let shown = rewrite_errors(out, cwd);
+    write_stderr(shown);
+    if status != 0 && shown.len == 0 { write_stderr("gweb: goose check failed; is goose on PATH, or GOOSE set?\n"); }
+    return status == 0;
+}
+
+// The editor entry: always exits 0, the server reads stderr.
+fn lsp_gen_cmd(rest: u8[:][:]) {
+    var check = false;
+    var k = 0;
+    while k < rest.len {
+        if rest[k] == "--check" { check = true; k += 1; }
+        else if rest[k] == "--overlay" && k + 2 < rest.len {
+            overlay_src.append(rest[k + 1]);
+            overlay_tmp.append(rest[k + 2]);
+            k += 3;
+        } else { usage(); }
+    }
+    if gen(true, LSP_DIR) && check { check_goose(LSP_DIR); }
+}
+
+fn check_cmd() -> bool {
+    if !gen(false, CHECK_DIR) { return false; }
+    var good = component_errors == 0;
+    if !check_goose(CHECK_DIR) { good = false; }
+    if good { write_stdout("gweb: check passed\n"); }
+    return good;
+}
+
+let LSP_JS = embed_file("../editor/lsp/server.mjs");
+
+fn self_path(a0: const u8[:]) -> u8[>..] {
+    var s: u8[>..] = [];
+    if a0.len > 0 && a0[0] == '/' { s.append(a0); return s; }
+    if find(a0, "/") >= 0 { format(s, start_cwd, "/", a0); return s; }
+    var q: u8[>..] = [];
+    var cmd: u8[>..] = [];
+    cmd.append("command -v ");
+    shq(cmd, a0);
+    if c_run(cmd, q) == 0 && q.len > 0 && trim(q)[0] == '/' { s.append(trim(q)); } else { s.append(a0); }
+    return s;
+}
+
+fn lsp_cmd(a0: const u8[:]) {
+    var probe: u8[>..] = [];
+    if c_run("command -v node", probe) != 0 { write_stderr("gweb lsp needs node\n"); exit(1); }
+    var base: u8[>..] = [];
+    var xdg: u8[>..] = [];
+    var home: u8[>..] = [];
+    if env("XDG_CACHE_HOME", xdg) && xdg.len > 0 { base.append(xdg); }
+    else if env("HOME", home) && home.len > 0 { format(base, home, "/.cache"); }
+    else { write_stderr("gweb lsp: set HOME or XDG_CACHE_HOME\n"); exit(1); }
+    var dir: u8[>..] = [];
+    format(dir, base, "/gweb");
+    var mk: u8[>..] = [];
+    mk.append("mkdir -p ");
+    shq(mk, dir);
+    c_run(mk, probe);
+    var file: u8[>..] = [];
+    format(file, dir, "/lsp-", trim(EMBEDDED_VERSION), ".mjs");
+    var cur: u8[>..] = [];
+    if !read_file(file, cur) || cur != LSP_JS { write(file, LSP_JS); }
+    if errors > 0 { exit(1); }
+    var cmd: u8[>..] = [];
+    cmd.append("node ");
+    shq(cmd, file);
+    cmd.append(" --gweb ");
+    shq(cmd, self_path(a0));
+    c_exec(cmd);
+    write_stderr("gweb: could not start node\n");
+    exit(1);
 }
 
 // ---------------------------------------------------------------- test
@@ -2190,7 +2287,7 @@ fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
 <p>No page at {req.path}.</p>
 
 """],
-        [".gitignore", ".gooseweb/\n.gooseweb.dev/\n.gooseweb.test/\n"],
+        [".gitignore", ".gooseweb/\n.gooseweb.dev/\n.gooseweb.test/\n.gooseweb.lsp/\n.gooseweb.check/\n"],
         ["public/site.css", """
 body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; }
 nav a { margin-right: 1rem; }
@@ -2227,6 +2324,8 @@ usage: gweb [-C dir] <command>
   dev [flags]       build, run on port 60053 (unless --port), and rebuild on every change under app/, lib/, public/, components/
   routes            print the route table
   version           print the version and the package sources a build declares
+  check             generate into .gooseweb.check/ and run goose check; errors name .gshtml and page.html lines
+  lsp               run the language server (needs node)
   test              run each component's test_* functions as Goose and as JavaScript; they must match
 
 """);
@@ -2235,6 +2334,7 @@ usage: gweb [-C dir] <command>
 
 fn main() {
     let a = args();
+    c_cwd(start_cwd);
     var i = 1;
     if a.len > 2 && a[1] == "-C" {
         if c_chdir(a[2]) == 0 { err(a[2], 0, "cannot change to this folder"); exit(1); }
@@ -2247,6 +2347,9 @@ fn main() {
     check_version();
     if cmd == "new" { if rest.len != 1 { usage(); } scaffold(rest[0]); return; }
     if cmd == "gen" { if !gen(false, BUILD_DIR) || component_errors > 0 { exit(1); } write_stdout("gweb: wrote .gooseweb/\n"); return; }
+    if cmd == "lsp-gen" { lsp_gen_cmd(rest); return; }
+    if cmd == "check" { if !check_cmd() { exit(1); } return; }
+    if cmd == "lsp" { lsp_cmd(a[0]); return; }
     if cmd == "test" { if !test_cmd() { exit(1); } return; }
     if cmd == "build" { if !build(rest.len > 0 && rest[0] == "--debug", false) { exit(1); } return; }
     if cmd == "routes" { print_routes(); return; }
