@@ -57,4 +57,30 @@ int32_t gweb_otel_flush(int32_t timeout_ms);
 int64_t gweb_jobs_stat(int32_t which);
 int64_t gweb_spans_dropped(void);
 
+/* jobs.c. Queue and scheduler behind one mutex; times are unix ms from one clock.
+   take: fires due schedules, then hands out the earliest ready job (FIFO), else waits for a ready job, a schedule,
+   the timeout or stop; returns 1 with the job bytes appended to out, 0 otherwise (also at once after stop).
+   sched_name_out gets the schedule name for scheduled jobs and nothing for ad-hoc ones.
+   done: ok completes the job; a failed attempt is requeued after min(1000 * 2^(attempt-1), 300000) ms while
+   attempt < attempts, else dropped (counted, logged on stderr). abandon is done(slot, 0) and returns 1 if the slot had a job.
+   push: 0 when full (counted as rejected; delayed jobs count, running ones do not) or stopped.
+   every: first due one interval after registration. cron: next due from gweb_cron_next. Names are 1..32 bytes and unique;
+   every/cron return 0 for a duplicate, a bad name or spec, or after stop. A schedule whose previous job is still queued
+   or running is skipped (warn on stderr). stop: no more pushes or schedules; stats stay readable.
+   cron_next: 5 fields, local time (TZ); dom and dow are ORed when both are restricted (a field starting with '*' is not);
+   -1 for a bad spec or nothing within 5 years. DST: a local time that does not exist is skipped (no run that day for
+   "30 2 * * *"); a time that occurs twice fires once, at its first occurrence. */
+void gweb_jobs_init(int32_t runners, int64_t cap, int32_t attempts);
+int32_t gweb_jobs_push(gweb_bytes bytes, int64_t delay_ms);
+int32_t gweb_jobs_take(int32_t slot, int64_t timeout_ms, gs_rref out, int64_t *id, int64_t *attempt, gs_rref sched_name_out);
+void gweb_jobs_done(int32_t slot, int32_t ok);
+int32_t gweb_jobs_abandon(int32_t slot);
+int32_t gweb_jobs_every(gweb_bytes name, int64_t ms, gweb_bytes bytes);
+int32_t gweb_jobs_cron(gweb_bytes name, gweb_bytes spec, gweb_bytes bytes);
+void gweb_jobs_stop(void);
+int64_t gweb_cron_next(gweb_bytes spec, int64_t after_unix);
+/* tests only: replaces the clock (NULL restores it); waits are then capped at 50 ms, or call test_kick after advancing */
+void gweb_jobs_test_clock(int64_t (*now_ms)(void));
+void gweb_jobs_test_kick(void);
+
 #endif
