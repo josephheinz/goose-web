@@ -60,6 +60,7 @@ var has_not_found = false;
 var not_found_csrf = false;
 var uses_sqlite = false;
 var map_text: u8[>..];
+var srcmap_text: u8[>..];
 var gen_root: u8[>..];
 // gweb test must never touch BUILD_DIR: a built server or a running gweb dev depends on it.
 let TEST_DIR = ".gooseweb.test";
@@ -427,6 +428,13 @@ fn copy_prefixed(src: const u8[:], ns: const u8[:], code: u8[>..]&) -> bool {
     format(dst, gen_root, "/", ns, ".goose");
     write(dst, out);
     format(map_text, ns, ".goose\t", src, "\n");
+    format(srcmap_text, "file ", ns, ".goose ", src, "\n");
+    // Line 1 follows the namespace prefix; empty lines map to column 0 without a record.
+    let prefix = ns.len + 12;
+    for line, i in split(code, '\n') {
+        if i == 0 { format(srcmap_text, "L 1 1 0:0:0 ", prefix, ":0:", line.len, "\n"); }
+        else if line.len > 0 { format(srcmap_text, "L ", i + 1, " ", i + 1, " 0:0:", line.len, "\n"); }
+    }
     return true;
 }
 
@@ -500,6 +508,31 @@ fn has_name(names: const u8[:], name: const u8[:]) -> bool {
     return false;
 }
 
+// Source maps (DESIGN-ADDENDUM-18, D1): the column in out of the next byte, a segment
+// "gcol:scol:len", and the width of the whitespace trim() takes off the front.
+fn out_col(out: const u8[:]) -> i64 {
+    var i = out.len;
+    while i > 0 && out[i - 1] != '\n' { i -= 1; }
+    return out.len - i;
+}
+
+fn seg_add(segs: u8[>..]&, gcol: i64, scol: i64, len: i64) {
+    format(segs, " ", gcol, ":", scol, ":", len);
+}
+
+fn lead_ws(s: const u8[:]) -> i64 {
+    var n = 0;
+    while n < s.len && ws(s[n]) { n += 1; }
+    return n;
+}
+
+// Copy trim(rest) to out; scol is where rest starts in the source line.
+fn put_expr(out: u8[>..]&, segs: u8[>..]&, rest: const u8[:], scol: i64) {
+    let x = trim(rest);
+    seg_add(segs, out_col(out), scol + lead_ws(rest), x.len);
+    out.append(x);
+}
+
 fn template_fragment_open(path: const u8[:], ln: i64, name: const u8[:], line: const u8[:], at: i64, kind: i64,
                           stack: u8[>..]&, stack_lines: i64[>..]&, frags: u8[>..]&, out: u8[>..]&) {
     let k = count_names(frags) + 1;
@@ -552,27 +585,36 @@ fn template_fragment_close(path: const u8[:], ln: i64, rest: const u8[:], kind: 
 }
 
 fn template_tag(path: const u8[:], ln: i64, inner: const u8[:], line: const u8[:], at: i64, end: i64, kind: i64,
-                stack: u8[>..]&, stack_lines: i64[>..]&, frags: u8[>..]&, out: u8[>..]&) {
+                stack: u8[>..]&, stack_lines: i64[>..]&, frags: u8[>..]&, out: u8[>..]&, segs: u8[>..]&) {
+    let b = at + 1 + lead_ws(line[at + 1..end]);   // where inner starts in line
     if inner == "#fragment" || starts_with(inner, "#fragment ") {
         template_fragment_open(path, ln, trim(inner[9..]), line, at, kind, stack, stack_lines, frags, out);
     } else if inner == "/fragment" {
         template_fragment_close(path, ln, line[end + 1..], kind, stack, stack_lines, out);
     } else if starts_with(inner, "#if ") {
-        format(out, "if ", trim(inner[4..]), " { ");
+        out.append("if ");
+        put_expr(out, segs, inner[4..], b + 4);
+        out.append(" { ");
         stack.push('i'); stack_lines.push(ln);
     } else if starts_with(inner, "#else if ") {
         if stack.len == 0 || stack[stack.len - 1] != 'i' { err(path, ln, "{#else if} outside {#if}"); }
-        format(out, "} else if ", trim(inner[9..]), " { ");
+        out.append("} else if ");
+        put_expr(out, segs, inner[9..], b + 9);
+        out.append(" { ");
     } else if inner == "#else" {
         if stack.len == 0 || stack[stack.len - 1] != 'i' { err(path, ln, "{#else} outside {#if}"); }
         out.append("} else { ");
     } else if starts_with(inner, "#for ") {
         let body = trim(inner[5..]);
         if find(body, " in ") < 0 { err(path, ln, "{#for x in e} or {#for x, i in e}"); }
-        format(out, "for ", body, " { ");
+        out.append("for ");
+        put_expr(out, segs, inner[5..], b + 5);
+        out.append(" { ");
         stack.push('f'); stack_lines.push(ln);
     } else if starts_with(inner, "#let ") {
-        format(out, "let ", trim(inner[5..]), "; ");
+        out.append("let ");
+        put_expr(out, segs, inner[5..], b + 5);
+        out.append("; ");
     } else if inner == "#else if" {
         err(path, ln, "{#else if e} needs an expression");
     } else if inner == "#for" {
@@ -584,7 +626,9 @@ fn template_tag(path: const u8[:], ln: i64, inner: const u8[:], line: const u8[:
         format(m, "{", inner, " e} needs an expression");
         err(path, ln, m);
     } else if starts_with(inner, "#raw ") {
-        format(out, "web::raw(out, ", trim(inner[5..]), "); ");
+        out.append("web::raw(out, ");
+        put_expr(out, segs, inner[5..], b + 5);
+        out.append("); ");
     } else if inner == "/if" || inner == "/for" {
         let want: u8 = if inner == "/if" { 'i' } else { 'f' };
         if stack.len == 0 || stack[stack.len - 1] != want {
@@ -599,7 +643,9 @@ fn template_tag(path: const u8[:], ln: i64, inner: const u8[:], line: const u8[:
         err(path, ln, m);
     } else {
         if inner.len == 0 { err(path, ln, "empty { }"); }
-        format(out, "web::put(out, ", inner, "); ");
+        out.append("web::put(out, ");
+        put_expr(out, segs, inner, b);
+        out.append("); ");
     }
 }
 
@@ -609,7 +655,8 @@ fn script_tag(out: u8[>..]&) {
     out.append("out.append(\""); lit(out, GW_SCRIPT); out.append("\"); ");
 }
 
-fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:], kind: i64, in_frag: bool, out: u8[>..]&) {
+fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:], kind: i64, in_frag: bool, out: u8[>..]&,
+                 segs: u8[>..]&, name_col: i64, args_col: i64) {
     if name == "slot" {
         if kind != K_LAYOUT { err(path, ln, "@slot() is for layout.html only"); }
         if args.len > 0 { err(path, ln, "@slot() takes no arguments"); }
@@ -625,14 +672,29 @@ fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:
             var m: u8[>..] = [];
             format(m, "no component named ", name, " (there is no components/", name, ".gshtml); for a literal @ write &#64;");
             err(path, ln, m);
-        } else { format(out, name, "::component(out, ", args, "); "); }
-    } else if args.len == 0 { format(out, name, "(out); "); }
-    else { format(out, name, "(out, ", args, "); "); }
+        } else {
+            seg_add(segs, out_col(out), name_col, name.len);
+            out.append(name);
+            out.append("::component(out, ");
+            put_expr(out, segs, args, args_col);
+            out.append("); ");
+        }
+    } else if args.len == 0 {
+        seg_add(segs, out_col(out), name_col, name.len);
+        out.append(name);
+        out.append("(out); ");
+    } else {
+        seg_add(segs, out_col(out), name_col, name.len);
+        out.append(name);
+        out.append("(out, ");
+        put_expr(out, segs, args, args_col);
+        out.append("); ");
+    }
 }
 
 // Every HTML line becomes one Goose line, so errors keep their line numbers.
 fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], kind: i64, wrap: bool,
-                    frags: u8[>..]&, out: u8[>..]&) -> bool {
+                    frags: u8[>..]&, out: u8[>..]&, recs: u8[>..]&) -> bool {
     let before = errors;
     tpl_script = find(src, "gw-target=\"") >= 0;
     out.append(header);
@@ -648,19 +710,26 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
         let ln = li + 1;
         let last = li == lines.len - 1;
         var text: u8[>..] = [];
+        var segs: u8[>..] = [];
+        var tcol = 0;   // where text starts in line
         var pos = 0;
         while pos < line.len {
             if tscan::is_raw(raw) {
                 let e = tscan::raw_end(line, pos, raw);
+                if text.len == 0 { tcol = pos; }
                 text.append(line[pos..e]);
                 pos = e;
                 continue;
             }
             let at = tscan::next(line, pos, raw, false);
+            if text.len == 0 { tcol = pos; }
             text.append(line[pos..at]);
             pos = at;
             if at == line.len || tscan::is_raw(raw) { continue; }
-            if text.len > 0 { out.append("out.append(\""); lit(out, text); out.append("\"); "); text.clear(); }
+            if text.len > 0 {
+                seg_add(segs, out_col(out), tcol, 0);
+                out.append("out.append(\""); lit(out, text); out.append("\"); "); text.clear();
+            }
             let rest = line[at..];
             if line[at] == '}' { err(path, ln, "'}' without '{'; for a literal brace write &#125;"); return false; }
             if line[at] == '@' {
@@ -671,7 +740,8 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
                 if name == "slot" { slots += 1; }
                 var in_frag = false;
                 for c in stack { if c == 'g' { in_frag = true; } }
-                template_call(path, ln, name, trim(line[open + 1..close]), kind, in_frag, out);
+                let args = line[open + 1..close];
+                template_call(path, ln, name, trim(args), kind, in_frag, out, segs, at + 1, open + 1 + lead_ws(args));
                 pos = close + 1;
                 continue;
             }
@@ -684,12 +754,19 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
             }
             let e = tscan::brace_end(line, at);
             if e < 0 { err(path, ln, "{ needs } on the same line; for a literal brace write &#123;"); return false; }
-            template_tag(path, ln, trim(line[at + 1..e]), line, at, e, kind, stack, stack_lines, frags, out);
+            template_tag(path, ln, trim(line[at + 1..e]), line, at, e, kind, stack, stack_lines, frags, out, segs);
             pos = e + 1;
         }
         if raw == tscan::MARKUP { raw_line = 0; } else if raw_line == 0 { raw_line = ln; }
-        if !last { text.push('\n'); }
-        if text.len > 0 { out.append("out.append(\""); lit(out, text); out.append("\"); "); }
+        if !last {
+            if text.len == 0 { tcol = line.len; }
+            text.push('\n');
+        }
+        if text.len > 0 {
+            seg_add(segs, out_col(out), tcol, 0);
+            out.append("out.append(\""); lit(out, text); out.append("\"); ");
+        }
+        if segs.len > 0 { format(recs, "L ", ln, " ", ln, segs, "\n"); }
         if last { out.append(if wrap { "} }" } else { "}" }); }
         out.push('\n');
     }
@@ -713,16 +790,18 @@ fn gen_template(src_path: const u8[:], ns: const u8[:], file_base: const u8[:], 
     // The pre-scan is a guess; a wrong guess is compiled again.
     var wrap = kind == K_PAGE && find(src, "{#fragment ") >= 0;
     var out: u8[>..] = [];
+    var recs: u8[>..] = [];
     var tries = 0;
     while tries < 2 {
         tries += 1;
         frags.clear();
         out.clear();
+        recs.clear();
         var sig: u8[>..] = [];
         if wrap { format(sig, signature[..signature.len - 1], ", gw_part: i64)"); } else { sig.append(signature); }
         var header: u8[>..] = [];
         format(header, "namespace ", ns, "; ", imports, sig, " { ");
-        if !compile_template(src_path, src, header, kind, wrap, frags, out) { return; }
+        if !compile_template(src_path, src, header, kind, wrap, frags, out, recs) { return; }
         if wrap == (frags.len > 0) { break; }
         wrap = frags.len > 0;
     }
@@ -730,6 +809,8 @@ fn gen_template(src_path: const u8[:], ns: const u8[:], file_base: const u8[:], 
     format(dst, gen_root, "/", file_base, ".goose");
     write(dst, out);
     format(map_text, file_base, ".goose\t", src_path, "\n");
+    format(srcmap_text, "file ", file_base, ".goose ", src_path, "\n");
+    srcmap_text.append(recs);
 }
 
 // ---------------------------------------------------------------- gw-target
@@ -1474,6 +1555,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     c_remove_tree(root);
     make_dir(root);
     map_text.clear();
+    srcmap_text.clear();
     uses_sqlite = false;
     component_errors = 0;
     uses_fragments = false;
@@ -1573,6 +1655,11 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     var map_file: u8[>..] = [];
     format(map_file, root, "/map.txt");
     write(map_file, map_text);
+    var srcmap_file: u8[>..] = [];
+    format(srcmap_file, root, "/srcmap.txt");
+    var srcmap: u8[>..] = [];
+    format(srcmap, "gwmap 1\n", srcmap_text);
+    write(srcmap_file, srcmap);
     return errors == 0;
 }
 

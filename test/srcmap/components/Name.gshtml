@@ -1,0 +1,4 @@
+<script goose>
+struct State { n: i64 }
+</script>
+<b>{s.n}</b>

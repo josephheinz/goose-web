@@ -1,0 +1,14 @@
+<h1>Hi {props.n}</h1>
+<p>{#raw props.html}</p>
+{#if props.n > 1}
+  <i>big</i>
+{#else if  props.n > 0 }
+  <i>one</i>
+{#else}
+  <i>none</i>
+{/if}
+{#for x, i in props.items}
+  <li>@badge(x) {i}</li>
+{/for}
+{#let m = props.n + 1}
+<b>{ m }</b> @Name( props.s ) done
