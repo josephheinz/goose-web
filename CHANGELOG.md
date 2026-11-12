@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+Needs the goose-net spool API (goose-net `arch/forms-errors`).
+
+- Forms: a `*Form` struct in `page.goose` or `route.goose` gets a generated `decode`. New `web::valid`: `FieldErrors`, `check_email`, `check_range`, `check_length`, `check_one_of`, `field_error`, `invalid`, `field_value`, `errors_json`, `set_status`, `unprocessable`.
+- 422: a form with errors answers 422. `gwi.js` morphs a 422 fragment reply instead of refusing it.
+- Uploads: multipart posts, `web::Upload`, `save_upload`, `check_upload`, `const MAX_UPLOAD`. Flags `--max-upload N` (default 32 MiB) and `--upload-dir D` (default `.gooseweb.uploads`). Large bodies are spooled to disk. `gw-target` forms with `enctype="multipart/form-data"` send `FormData`.
+- Error pages: `error.html` (nearest wins) and `web::fail`. A crashed request now gets the error page instead of hanging; `gweb dev` shows the abort text and source lines. Build errors in the dev overlay get source lines.
+- `loading.html` and `gw-loading`: a loading state for slow fragment requests.
+- A page `fn POST` or `fn load` may take `res`; `web::done(ctx)` ends the reply itself.
+- Breaking: `web::Outcome` has two new variants, `Error` and `Done`. An exhaustive `match` on it needs arms for both.
+- Behaviour change: when a worker crashes, its other keep-alive connections are now closed (they leaked before). Clients reconnect.
+
 ## v0.2.1
 
 - Fix: `gweb test` no longer deletes `.gooseweb/`; it generates into `.gooseweb.test/`. Add `.gooseweb.test/` to `.gitignore`.

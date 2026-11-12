@@ -50,6 +50,8 @@ goose-architect agent.
 | `app/**/layout.html` | Wraps every page at or below its folder; `@slot()` marks the page |
 | `app/**/middleware.goose` | `fn before` and/or `fn after` for the subtree |
 | `app/not-found.html` | The 404 page, inside the root layout |
+| `app/**/error.html` | Error page for the pages below it; the nearest wins; sees `err: web::ErrorInfo` |
+| `app/**/loading.html` | Shown by `gwi.js` while a fragment request is slow |
 | `app/state.goose` | State owned by the main thread: `Msg`, `Reply`, `fn handle`, optional `fn init` |
 | `lib/**.goose` | Your modules: `import lib.catalog;` (write their `namespace`) |
 | `public/**` | Static files, embedded in the binary, with ETags |
@@ -64,6 +66,7 @@ namespace from `gweb`; do not write one.
 fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&)        // route.goose
 fn load(req: const http::Request&, ctx: web::Ctx&) -> Props                      // page.goose
 fn POST(req: const http::Request&, ctx: web::Ctx&) -> Props                      // page.goose, optional (fragments)
+fn POST(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) -> Props   // either page fn may take res; web::done(ctx) then keeps what it wrote
 fn before(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) -> bool   // false: res is final
 fn after(req: const http::Request&, ctx: web::Ctx&, res: http::Response&)
 fn handle(msg: const Msg&) -> Reply                                               // state.goose
@@ -153,7 +156,7 @@ names its replacement.
 gweb [-C dir] new <dir>      a starter project
 gweb gen                     write .gooseweb/ only
 gweb build [--debug]         gen, then goose build to .gooseweb/server
-gweb start [flags]           build and run (--port N --workers N --log --idle-ms N --max-body N)
+gweb start [flags]           build and run (--port N --workers N --log --idle-ms N --max-body N --max-upload N --upload-dir D)
 gweb dev [flags]             build, run with --log on 2 workers and port 60053 (unless --port), rebuild on change
 gweb routes                  the route table (GET,POST and a frag line for each fragment)
 gweb test                    component parity: test_* functions as Goose and as JavaScript (writes .gooseweb.test/; leaves .gooseweb/ alone)
@@ -318,9 +321,118 @@ page.
 - `import web.form;` gives `web::form(req, "name", out)` (URL-decoded, appended to `out`) and
   `web::form_int(req, "id")`. Several intents on one page are told apart by button names:
   `<button name="remove" value="3">`.
-- Not supported: file uploads, append/prepend swaps, a target inside a component.
+- Not supported: append/prepend swaps, a target inside a component.
 - The runtime sets `aria-busy="true"` on the target while a request runs, and a failure raises `gw:error`
   (the dev overlay shows it as a `page error`). The last request per target wins.
+
+## Forms and validation
+
+A struct named `*Form` in `page.goose` or `route.goose` is a form schema. `gweb` generates
+`decode(req, ctx, form, errs) -> bool` for it. Field types are the rules: `u8[..N]` text of at most N
+bytes, `i64` a whole number, `bool` a checkbox, `web::Upload` a file (below). A field with no default
+is required. Other types are a build error; write your own `fn decode` and `gweb` stops you.
+Text is kept as typed, not trimmed.
+
+```goose
+import web.form;
+struct SignupForm { email: u8[..200], age: i64, newsletter: bool, note: u8[..500] = "" }
+struct Props { form: SignupForm, errs: web::FieldErrors }
+
+fn POST(req: const http::Request&, ctx: web::Ctx&) -> Props {
+    var p = load(req, ctx);
+    if !decode(req, ctx, p.form, p.errs) || !web::check_email(p.errs, "email", p.form.email) {
+        web::unprocessable(ctx);         // status 422
+        return p;
+    }
+    web::redirect(ctx, "/thanks", 303);
+    return p;
+}
+```
+
+```html
+<p><input name="email" value="{web::field_value(req, "email", "")}"@web::invalid(props.errs, "email")>
+@web::field_error(props.errs, "email")</p>
+```
+
+- Other checks: `web::check_length`, `check_range`, `check_one_of`, `add_error(errs, field, msg)`. The first
+  error per field is kept. A route answers with `web::errors_json(res, errs)` (422).
+- `field_value` shows what was posted, so a bad number comes back as typed.
+- A 422 reply to a `gw-target` form is morphed in like a 200; without JavaScript it is a normal page.
+  Keep the error `<span>` last in its parent (see the morph rule under Fragments).
+- Templates get `web::valid` by default. `page.goose` imports `web.form` and `web.valid` itself;
+  `gweb` adds `import web.valid;` and `import web.upload;` to a file with a `*Form` struct.
+- Structs in `lib/` get no decoder.
+
+## File uploads
+
+A `multipart/form-data` post works with the same `*Form` and `fn POST` code. A `web::Upload` field is a file;
+text fields reach `web::form` and the CSRF check as usual (put `@web::csrf_field(ctx)` in the form).
+
+```html
+<form method="post" enctype="multipart/form-data">@web::csrf_field(ctx) <input type="file" name="photo"> ...</form>
+```
+
+```goose
+import web.upload;
+const MAX_UPLOAD = 2000000;                      // optional, per page or route: 413 above it
+struct UploadForm { photo: web::Upload }
+
+...  if !decode(req, ctx, p.form, p.errs) || !web::check_upload(p.errs, "photo", p.form.photo, 2000000, ["image/png", "image/jpeg"]) { ... }
+var name: u8[>..] = [];  web::safe_name(name, p.form.photo.filename);
+web::save_upload(p.form.photo, dest);            // false if dest exists; the file moves
+```
+
+- `--max-upload N` (default 32 MiB) caps a multipart body; `--max-body` still caps everything else.
+  A multipart body over 64 KiB is spooled to a file in `--upload-dir D` (default `.gooseweb.uploads`) as it arrives.
+  One server per upload dir: files left by an earlier run are deleted at start.
+- Limits: 8 files, 64 parts, 64 KiB per text field. A malformed body is a 400, a ninth file a 413.
+- Unsaved files are deleted after the response. Use `web::save_upload` to keep one.
+- `filename` and `content_type` are what the client said. `check_upload` checks the sniffed type (PNG, JPEG,
+  GIF, WebP, PDF; never SVG). Build the saved name with `web::safe_name`.
+- A `gw-target` form with `enctype="multipart/form-data"` is sent as `FormData`.
+
+## Error pages
+
+`error.html` in an app folder is the error page for the pages and routes at or below it; the nearest wins.
+It renders inside the layouts above its own folder and sees `err: web::ErrorInfo`
+(`status`, `message`, `id`, `crashed`, `detail`).
+
+```html
+<h1>{err.status}</h1><p>{err.message}</p><p>Error id: {err.id}</p>
+```
+
+```goose
+import web.errors;                       // page.goose needs this for web::fail
+fn load(req: const http::Request&, ctx: web::Ctx&) -> Props {
+    if !allowed(ctx) { web::fail(ctx, 403, "Not yours."); return Props { .. }; }
+    ...
+}
+```
+
+- `web::fail(ctx, status, message)` ends the reply with the error page; a route gets `{"error":..,"id":..}`.
+  `web::not_found` still uses `not-found.html`.
+- A crash (bounds error, failed `guard`, any abort) is answered by the supervisor with the error page
+  (`crashed` is true) and `Connection: close`. If that fails too, a fixed plain-text 500. The crashed
+  worker's other keep-alive connections are closed; clients reconnect.
+- Without `error.html`: a small built-in page. The id is in the log line.
+- In `gweb dev` the page also carries the abort text and the source lines around each location, in the
+  overlay. Production never shows them. Build errors in the overlay get source lines too.
+- `web::done(ctx)` lets a page `fn POST` or `fn load` that took `res` write the whole reply itself
+  (a `Retry-After`, a JSON body); no template renders.
+
+## Loading states
+
+`loading.html` in an app folder is a template with no props. Whole-page renders of pages at or below it carry it
+as `<template id="gw-loading">`. After 150 ms without a reply, `gwi.js` fills a link's `gw-target` box with it;
+the reply morphs over it, and a failure restores the old content.
+
+```html
+<a href="/products" gw-target="results">Products</a>
+<form method="post" gw-target="list" gw-loading>...</form>     <!-- a form opts in; gw-loading="id" picks another template -->
+```
+
+`gw-loading="none"` turns it off for a link. No fragments or `@slot()` in `loading.html`. It does not show on first
+page load (that needs streaming).
 
 The demo is `../examples/shop/app/fragments` (`/fragments`, `/fragments/products`).
 

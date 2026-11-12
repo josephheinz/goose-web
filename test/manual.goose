@@ -17,6 +17,8 @@ fn finish(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
         NotFound => { ctx.title.clear(); web::plain_not_found(res); },
         Redirect => web::apply_redirect(ctx, res),
         Continue => {},
+        Done => {},
+        Error => http::json_error(res, http::Status.InternalServerError, "error"),
     }
 }
 

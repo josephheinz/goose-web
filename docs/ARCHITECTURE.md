@@ -111,6 +111,15 @@ flowchart TB
   `load(req, ctx) -> Props` (or `fn POST` for a form post), then the compiled
   template, and the layout wraps the result. `finish()` applies the
   outcome (status, redirect), and `run_worker` adds any queued cookies.
+- **Uploads.** A `multipart/form-data` body over 64 KiB is spooled to a file by the goose-net loop
+  (`--max-upload`, `--upload-dir`). `web::multipart_begin` turns the body into an urlencoded body of the
+  text fields plus up to 8 temp files in `ctx.uploads`, so `web::form` and the CSRF check work unchanged.
+  `run_worker` deletes the spool and unsaved files after the reply.
+- **Errors.** `web::fail` sets `Outcome.Error`; `finish` answers with the nearest `error.html` (JSON for a
+  route). A crash kills the worker thread. `src/inflight.c` keeps each slot's connection and request head, so
+  the supervisor renders the error page in a contained thread and sends it with `Connection: close`
+  (then the layout-less page, then a fixed plain-text 500). It then frees the dead loop, which closes that
+  worker's other connections, and respawns the worker. `web::done` lets a handler end the reply itself.
 - **Shared state.** Data that all workers must see, such as the in-memory todo
   list, lives on the owner thread. Workers reach it through `owner_call` over a
   socketpair, so it needs no locks.
@@ -199,7 +208,7 @@ sequenceDiagram
         R->>DOM: morph(#todo-list, html), only if this is still the latest request
     else no echo (for example a redirect to another page)
         R->>U: normal navigation to r.url
-    else network error or 4xx/5xx
+    else network error or other 4xx/5xx
         R->>R: dispatch gw:error, DOM unchanged
     end
 ```
@@ -210,6 +219,11 @@ sequenceDiagram
 - **Without JavaScript** the same form posts normally and gets the whole page.
 - **The last request wins.** Each target counts its requests, so a slow, older
   reply is dropped.
+- **422.** A 422 reply that echoes `GW-Fragment` is morphed like a 200: that is a form with its errors.
+- **Multipart.** A form with `enctype="multipart/form-data"` is sent as `FormData`, not `URLSearchParams`.
+- **Loading.** A link, or a form with `gw-loading`, starts a 150 ms timer. If no reply has come, the box's
+  children are saved and replaced with the page's `<template id="gw-loading">` (from `loading.html`).
+  The reply morphs over it; on failure the saved children return.
 
 ### 4.4 `morph`, the shared core
 
@@ -268,6 +282,9 @@ readable `gwi.js`.
 | `web.goose` | Server framework: config, workers, `Ctx`, redirects, cookies, dev status and overlay script, fragment replies. |
 | `owner.goose`, `src/owner.c` | Owner-thread state over socketpairs. |
 | `form.goose` | Decodes form bodies for `fn POST`. |
+| `valid.goose` | Field errors, checks, template partials and the `form_*` helpers the generated `decode` calls. |
+| `upload.goose`, `src/upload.c` | Multipart parser, `web::Upload`, `save_upload`, `check_upload`; file helpers in C. |
+| `errors.goose`, `src/inflight.c` | `ErrorInfo`, `web::fail`, crash replies, dev error detail; the in-flight request table. |
 | `static.goose` | Static files with ETag and 304. |
 | `template.goose` | Runtime helpers that compiled templates call (`put`, `raw`, `arg`, JSON). |
 | `cli/gweb.goose` | The CLI: scan, generate, build, dev loop, routes, tests. |
@@ -275,6 +292,10 @@ readable `gwi.js`.
 | `cli/component.goose` | The `.gshtml` compiler: Goose subset parser, type checker, JS emitter. |
 | `client/gwi.js` | The browser runtime. `client/build.sh` minifies it to `gwi.min.js`. |
 | `test/components.sh`, `templates.sh`, `fragments.sh` | The test suites. |
+| `test/forms.sh`, `errors.sh` | Site suites: forms, uploads, `error.html`, crash replies. |
+| `test/frag.sh` | `gwi.js` fragments (422, FormData, loading) against jsdom. |
+| `test/upload_c.sh`, `inflight_c.sh` | The C helpers against a stub `goose.h`. |
+| `test/valid_test.goose`, `upload_test.goose` | Unit tests of the validation and multipart code. |
 | `test/morph.sh` | The jsdom suite for `morph`; it installs jsdom into a cache on its first run. |
 
 ## 7. Limits to know
@@ -286,3 +307,8 @@ readable `gwi.js`.
   A literal `@name(` needs `&#64;`.
 - Fragments v1: one swap mode (replace the children of `#NAME`), and no
   component inside a fragment.
+- Form fields are `u8[..N]`, `i64`, `bool` or `web::Upload`; no `f64`, enums or multi-select. `lib/` structs get no decoder.
+- Uploads: at most 8 files, 64 parts, 64 KiB per text field and 16 KiB of headers per part. `--max-upload`
+  is checked by the loop; a page's `const MAX_UPLOAD` only after the body arrived.
+- A crash closes the crashed worker's other keep-alive connections; requests read from them get no reply.
+- `loading.html` shows for fragment requests only, not on first page load.

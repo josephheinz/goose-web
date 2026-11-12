@@ -34,9 +34,13 @@ struct Dir {
     methods: i64,          // bit i set: METHODS[i] is defined in route.goose
     has_load: bool, has_before: bool, has_after: bool,
     has_post: bool,
+    has_post_res: bool = false, has_load_res: bool = false,   // fn POST( / fn load( take a third parameter, res: http::Response&
     frags: u8[..600],      // the page's fragment names, space-separated
     route_ns: u8[..200], page_ns: u8[..200], layout_ns: u8[..32], mw_ns: u8[..32],
-    page_csrf: bool = false, layout_csrf: bool = false, csrf_const: bool = false   // csrf_const: route.goose declares const CSRF
+    page_csrf: bool = false, layout_csrf: bool = false, csrf_const: bool = false,   // csrf_const: route.goose declares const CSRF
+    max_upload: bool = false,     // page.goose or route.goose declares const MAX_UPLOAD
+    error_html: bool = false, error_ns: u8[..32] = "", error_csrf: bool = false,   // error.html in this folder (DESIGN-ADDENDUM-14, D10)
+    loading: bool = false, loading_ns: u8[..32] = ""   // loading.html in this folder (DESIGN-ADDENDUM-14, section 4)
 }
 
 struct Static { url: u8[..512], file: u8[..512], ctype: u8[..64], etag: u8[..24] }
@@ -47,6 +51,8 @@ struct Target { path: u8[..512], line: i64, url: u8[..512], name: u8[..64], post
 let K_PAGE = 0;
 let K_LAYOUT = 1;
 let K_NOT_FOUND = 2;
+let K_ERROR = 3;
+let K_LOADING = 4;
 
 let METHODS =["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
 let VARIANTS = ["Get", "Head", "Post", "Put", "Patch", "Delete", "Options"];
@@ -127,6 +133,16 @@ fn defines(src: const u8[:], name: const u8[:]) -> bool {
     var pat: u8[>..] = [];
     format(pat, "fn ", name, "(");
     for line in split(src, '\n') { if starts_with(trim_start(line), pat) { return true; } }
+    return false;
+}
+
+// True when the line that starts `fn name(` mentions http::Response: the handler takes res (D14).
+fn takes_res(src: const u8[:], name: const u8[:]) -> bool {
+    var pat: u8[>..] = [];
+    format(pat, "fn ", name, "(");
+    for line in split(src, '\n') {
+        if starts_with(trim_start(line), pat) { return find(line, "http::Response") >= 0; }
+    }
     return false;
 }
 
@@ -211,6 +227,8 @@ fn scan_dir(rel: const u8[:], todo: u8[..512][>..]&) {
         else if name == "page.goose" { d.page_goose = true; }
         else if name == "layout.html" { d.layout = true; }
         else if name == "middleware.goose" { d.middleware = true; }
+        else if name == "error.html" { d.error_html = true; }
+        else if name == "loading.html" { d.loading = true; }
         else if name == "not-found.html" {
             if rel.len == 0 { has_not_found = true; } else { err(full, 0, "not-found.html belongs in app/ only"); }
         }
@@ -228,6 +246,8 @@ fn scan_dir(rel: const u8[:], todo: u8[..512][>..]&) {
     if d.page_html { n.clear(); format(n, "p", i); if sl.len > 0 { format(n, "_", sl); } d.page_ns.append(n[..min(n.len, 200)]); }
     if d.layout { n.clear(); format(n, "l", i); d.layout_ns.append(n); }
     if d.middleware { n.clear(); format(n, "m", i); d.mw_ns.append(n); }
+    if d.error_html { n.clear(); format(n, "e", i); d.error_ns.append(n); }
+    if d.loading { n.clear(); format(n, "g", i); d.loading_ns.append(n); }
     dirs.push(d);
     // Children go on the stack last-first, so they come off in sorted order.
     let subs = split(subdirs, '\n');
@@ -413,6 +433,11 @@ fn check_route_shapes() {
 // ---------------------------------------------------------------- copies
 
 fn copy_prefixed(src: const u8[:], ns: const u8[:], code: u8[>..]&) -> bool {
+    return copy_prefixed_forms(src, ns, code, false);
+}
+
+// forms: a page.goose or route.goose, whose struct <Name>Form gets a generated fn decode after the user's last line.
+fn copy_prefixed_forms(src: const u8[:], ns: const u8[:], code: u8[>..]&, forms: bool) -> bool {
     if !read(src, code) { return false; }
     for line, i in split(code, '\n') {
         if starts_with(trim_start(line), "namespace ") {
@@ -421,13 +446,145 @@ fn copy_prefixed(src: const u8[:], ns: const u8[:], code: u8[>..]&) -> bool {
         }
     }
     if imports_sqlite(code) { uses_sqlite = true; }
+    var extra: u8[>..] = [];
+    if forms { form_decoders(src, code, extra); }
     var out: u8[>..] = [];
-    format(out, "namespace ", ns, "; ", code);
+    format(out, "namespace ", ns, "; ");
+    if extra.len > 0 {
+        // On line 1, so the user's line numbers stay the same.
+        var have: u8[>..] = [];
+        imports_of(code, have);
+        if find(have, "import web.valid;") < 0 { out.append("import web.valid; "); }
+        if find(have, "import web.upload;") < 0 { out.append("import web.upload; "); }
+    }
+    out.append(code);
+    out.append(extra);
     var dst: u8[>..] = [];
     format(dst, gen_root, "/", ns, ".goose");
     write(dst, out);
     format(map_text, ns, ".goose\t", src, "\n");
     return true;
+}
+
+fn ident_byte(c: u8) -> bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+// The name when t starts `struct <Name>Form {` (Name at least one character), else "".
+fn form_struct_name(t: const u8[:]) -> const u8[:] {
+    if !starts_with(t, "struct ") { return ""; }
+    let r = trim_start(t[7..]);
+    var n = 0;
+    while n < r.len && ident_byte(r[n]) { n += 1; }
+    if n <= 4 || !ends_with(r[..n], "Form") { return ""; }
+    let rest = trim_start(r[n..]);
+    if rest.len == 0 || rest[0] != '{' { return ""; }
+    return r[..n];
+}
+
+// True for u8[..N], where N is a number or a name.
+fn is_text_type(ty: const u8[:]) -> bool {
+    if !starts_with(ty, "u8[..") || !ends_with(ty, "]") || ty.len <= 6 { return false; }
+    let n = ty[5..ty.len - 1];
+    for c in n { if !ident_byte(c) { return false; } }
+    return true;
+}
+
+// One `name: type = default` field: checks the type and appends its decoder statement to body.
+fn form_field(src: const u8[:], line: i64, text: const u8[:], body: u8[>..]&) {
+    let t = trim(text);
+    if t.len == 0 { return; }
+    let colon = find(t, ":");
+    if colon <= 0 { err(src, line, "form fields are u8[..N], i64, bool or web::Upload"); return; }
+    let name = trim(t[..colon]);
+    let rest = trim_start(t[colon + 1..]);
+    let eq = find(rest, "=");
+    let ty = trim(if eq >= 0 { rest[..eq] } else { rest });
+    let required = if eq >= 0 { "false" } else { "true" };
+    if !is_ident(name) { err(src, line, "form fields are u8[..N], i64, bool or web::Upload"); return; }
+    if is_text_type(ty) { format(body, "    web::form_text(req, \"", name, "\", f.", name, ", errs, ", required, ");\n"); }
+    else if ty == "i64" { format(body, "    web::form_int(req, \"", name, "\", f.", name, ", errs, ", required, ");\n"); }
+    else if ty == "bool" { format(body, "    web::form_bool(req, \"", name, "\", f.", name, ");\n"); }
+    else if ty == "web::Upload" { format(body, "    web::form_upload(ctx, \"", name, "\", f.", name, ", errs, ", required, ");\n"); }
+    else { err(src, line, "form fields are u8[..N], i64, bool or web::Upload"); }
+}
+
+// Finds each `struct <Name>Form {`, checks its fields and appends one fn decode per struct to extra.
+// A user fn decode( is an error. Nothing is appended when the file has no form struct.
+fn form_decoders(src: const u8[:], code: const u8[:], extra: u8[>..]&) {
+    let lines = split(code, '\n');
+    var first_form: u8[>..] = [];
+    var k = 0;
+    while k < lines.len {
+        let name = form_struct_name(trim_start(lines[k]));
+        if name.len == 0 { k += 1; continue; }
+        if extra.len == 0 { extra.append("\n// gweb: form decoders (generated)\n"); first_form.append(name); }
+        var body: u8[>..] = [];
+        var cur: u8[>..] = [];
+        var cur_line = 0;
+        var depth = 0;
+        var in_str = false;
+        var done = false;
+        var ln = k;
+        var start = find(lines[k], "{") + 1;
+        while ln < lines.len && !done {
+            let line = lines[ln];
+            var ci = start;
+            while ci < line.len {
+                let c = line[ci];
+                if in_str {
+                    cur.push(c);
+                    if c == '\\' && ci + 1 < line.len { ci += 1; cur.push(line[ci]); }
+                    else if c == '"' { in_str = false; }
+                    ci += 1;
+                    continue;
+                }
+                if c == '/' && ci + 1 < line.len && line[ci + 1] == '/' { break; }
+                if depth == 0 && c == '}' { done = true; break; }
+                if depth == 0 && c == ',' {
+                    form_field(src, cur_line, cur, body);
+                    cur.clear();
+                    cur_line = 0;
+                    ci += 1;
+                    continue;
+                }
+                if c == '"' { in_str = true; }
+                if c == '[' || c == '(' || c == '{' { depth += 1; }
+                if c == ']' || c == ')' || c == '}' { depth -= 1; }
+                if cur_line == 0 && c != ' ' && c != '\t' { cur_line = ln + 1; }
+                cur.push(c);
+                ci += 1;
+            }
+            if !done { cur.push(' '); }
+            start = 0;
+            ln += 1;
+        }
+        form_field(src, cur_line, cur, body);
+        if !done { err(src, k + 1, "this struct is never closed with }"); }
+        format(extra, "fn decode(req: const http::Request&, ctx: const web::Ctx&, f: ", name, "&, errs: web::FieldErrors&) -> bool {\n");
+        extra.append("    let before = errs.n;\n");
+        extra.append(body);
+        extra.append("    return errs.n == before;\n}\n");
+        k = ln;
+    }
+    if extra.len == 0 { return; }
+    for line, i in split(code, '\n') {
+        if starts_with(trim_start(line), "fn decode(") {
+            var m: u8[>..] = [];
+            format(m, "fn decode is generated for ", first_form, "; rename yours");
+            err(src, i + 1, m);
+            return;
+        }
+    }
+}
+
+// True when a line of code starts const MAX_UPLOAD.
+fn max_upload_const(code: const u8[:]) -> bool {
+    for line in split(code, '\n') {
+        let t = trim_start(line);
+        if starts_with(t, "const MAX_UPLOAD") && (t.len == 16 || !ident_byte(t[16])) { return true; }
+    }
+    return false;
 }
 
 fn imports_sqlite(code: const u8[:]) -> bool {
@@ -465,7 +622,7 @@ fn imports_of(src: const u8[:], out: u8[>..]&) {
 }
 
 fn add_default_imports(imports: u8[>..]&) {
-    for imp in ["import std;", "import net.http;", "import web;", "import web.template;"] {
+    for imp in ["import std;", "import net.http;", "import web;", "import web.template;", "import web.valid;"] {
         if find(imports, imp) < 0 { imports.append(imp); imports.push(' '); }
     }
     for n in component_names {
@@ -984,65 +1141,95 @@ fn allow_list(d: const Dir&, out: u8[>..]&) {
     }
 }
 
-fn middleware_before(m: u8[>..]&, d: const Dir&) {
+fn middleware_before(m: u8[>..]&, d: const Dir&, rq: const u8[:]) {
     for o in dirs {
         if o.middleware && o.has_before && is_ancestor(o.rel, d.rel) {
-            format(m, "    if !", o.mw_ns, "::before(req, ctx, res) { return; }\n");
+            format(m, "    if !", o.mw_ns, "::before(", rq, ", ctx, res) { return; }\n");
         }
     }
 }
 
-fn middleware_after(m: u8[>..]&, d: const Dir&) {
+fn middleware_after(m: u8[>..]&, d: const Dir&, rq: const u8[:]) {
     var k = dirs.len;
     while k > 0 {
         k -= 1;
         let o = dirs[k];
         if o.middleware && o.has_after && is_ancestor(o.rel, d.rel) {
-            format(m, "    ", o.mw_ns, "::after(req, ctx, res);\n");
+            format(m, "    ", o.mw_ns, "::after(", rq, ", ctx, res);\n");
         }
     }
+}
+
+// DESIGN-ADDENDUM-14 D9: the MAX_UPLOAD check, then multipart turned into a plain form in r.
+fn gen_upload_prelude(m: u8[>..]&, ns: const u8[:], max_upload: bool) {
+    if max_upload {
+        // The dispatcher calls finish after this function returns, and finish answers the Error outcome.
+        format(m, "    if ", ns, "::MAX_UPLOAD > 0 && web::content_length(req) > ", ns, "::MAX_UPLOAD { web::fail(ctx, 413, \"The upload is too large.\"); return; }\n");
+    }
+    m.append("    var mp: u8[>..] = [];\n    var r = req;\n");
+    m.append("    if web::is_multipart(req) { if !web::multipart_begin(req, ctx, res, mp) { return; } r.body = mp; }\n");
 }
 
 fn gen_route_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     var allow: u8[>..] = [];
     allow_list(d, allow);
+    // A route with POST, PUT or PATCH reads the body through r. The prelude comes first because the CSRF check reads the body.
+    let body = d.methods & 0x1c != 0;
+    let rq = if body { "r" } else { "req" };
     format(m, "fn route_", i, SIG, " {   // app/", d.rel, if d.rel.len > 0 { "/" } else { "" }, "route.goose\n");
-    if d.csrf_const { format(m, "    if ", d.route_ns, "::CSRF && !web::csrf_ok(req, res) { return; }\n"); }
-    else if d.methods & 0x3c != 0 { m.append("    if !web::csrf_ok(req, res) { return; }\n"); }
-    middleware_before(m, d);
+    if body { gen_upload_prelude(m, d.route_ns, d.max_upload); }
+    if d.csrf_const { format(m, "    if ", d.route_ns, "::CSRF && !web::csrf_ok(", rq, ", res) { return; }\n"); }
+    else if d.methods & 0x3c != 0 { format(m, "    if !web::csrf_ok(", rq, ", res) { return; }\n"); }
+    middleware_before(m, d, rq);
     m.append("    match req.method {\n");
     for k in 7 {
         let has = (d.methods >> k) & 1 == 1;
-        if has { format(m, "        ", VARIANTS[k], " => ", d.route_ns, "::", METHODS[k], "(req, ctx, res),\n"); }
-        else if k == 1 && d.methods & 1 == 1 { format(m, "        Head => ", d.route_ns, "::GET(req, ctx, res),\n"); }
+        if has { format(m, "        ", VARIANTS[k], " => ", d.route_ns, "::", METHODS[k], "(", rq, ", ctx, res),\n"); }
+        else if k == 1 && d.methods & 1 == 1 { format(m, "        Head => ", d.route_ns, "::GET(", rq, ", ctx, res),\n"); }
         else if k == 6 { format(m, "        Options => web::options(res, \"", allow, "\"),\n"); }
     }
     format(m, "        _ => web::method_not_allowed(res, \"", allow, "\"),\n");
     m.append("    }\n");
-    middleware_after(m, d);
+    middleware_after(m, d, rq);
     m.append("}\n");
 }
 
-fn gen_render_stmt(m: u8[>..]&, d: const Dir&, props: bool, part: const u8[:]) {
+// The namespace of the loading.html a page in rel uses: the nearest at or above its folder; "" for none.
+fn nearest_loading(out: u8[>..]&, rel: const u8[:]) {
+    var best = -1;
+    var best_len = -1;
+    for o, k in dirs {
+        if o.loading && is_ancestor(o.rel, rel) && o.rel.len > best_len { best = k; best_len = o.rel.len; }
+    }
+    if best >= 0 { out.append(dirs[best].loading_ns); }
+}
+
+fn gen_render_stmt(m: u8[>..]&, d: const Dir&, props: bool, part: const u8[:], rq: const u8[:]) {
     var closes = 0;
     for o in dirs {
-        if o.layout && is_ancestor(o.rel, d.rel) { format(m, o.layout_ns, "::render(res.body, req, ctx) { "); closes += 1; }
+        if o.layout && is_ancestor(o.rel, d.rel) { format(m, o.layout_ns, "::render(res.body, ", rq, ", ctx) { "); closes += 1; }
     }
-    format(m, d.page_ns, "::render(res.body, req, ctx", if props { ", props" } else { "" }, if part.len > 0 { ", " } else { "" }, part, ");");
+    format(m, d.page_ns, "::render(res.body, ", rq, ", ctx", if props { ", props" } else { "" }, if part.len > 0 { ", " } else { "" }, part, ");");
+    // A whole page carries the nearest loading.html as a template for gwi.js (DESIGN-ADDENDUM-14, section 4).
+    var ld: u8[>..] = [];
+    nearest_loading(ld, d.rel);
+    if ld.len > 0 {
+        format(m, " res.body.append(\"<template id=\\\"gw-loading\\\">\"); ", ld, "::render(res.body, ", rq, ", ctx); res.body.append(\"</template>\");");
+    }
     for c in closes { m.append(" };"); }
 }
 
-fn gen_page_reply(m: u8[>..]&, d: const Dir&, props: bool, indent: const u8[:]) {
+fn gen_page_reply(m: u8[>..]&, d: const Dir&, props: bool, indent: const u8[:], rq: const u8[:]) {
     format(m, indent, "if ctx.outcome == web::Outcome.Continue {\n", indent, "    ");
-    if d.frags.len == 0 { gen_render_stmt(m, d, props, ""); }
+    if d.frags.len == 0 { gen_render_stmt(m, d, props, "", rq); }
     else {
-        m.append("if part > 0 { web::fragment_reply(req, ctx, res); ");
-        format(m, d.page_ns, "::render(res.body, req, ctx", if props { ", props" } else { "" }, ", part); }\n");
+        format(m, "if part > 0 { web::fragment_reply(", rq, ", ctx, res); ");
+        format(m, d.page_ns, "::render(res.body, ", rq, ", ctx", if props { ", props" } else { "" }, ", part); }\n");
         format(m, indent, "    else { ");
-        gen_render_stmt(m, d, props, "0");
+        gen_render_stmt(m, d, props, "0", rq);
         m.append(" }");
     }
-    format(m, "\n", indent, "}\n");
+    format(m, "\n", indent, "    if ctx.status != 0 { res.status = http::status_from_code(ctx.status); }\n", indent, "}\n");
 }
 
 // True when the page, or a layout around it, writes web::csrf_ fields.
@@ -1054,34 +1241,38 @@ fn starts_token(d: const Dir&) -> bool {
 
 fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     let allow = if d.has_post { "GET, HEAD, POST, OPTIONS" } else { "GET, HEAD, OPTIONS" };
+    let rq = if d.has_post { "r" } else { "req" };   // r: the request with its multipart body made plain (D9)
     format(m, "fn page_", i, SIG, " {   // app/", d.rel, if d.rel.len > 0 { "/" } else { "" }, "page.html\n");
     m.append("    match req.method {\n");
     format(m, "        Get, Head", if d.has_post { ", Post" } else { "" }, " => {},\n");
     format(m, "        Options => { web::options(res, \"", allow, "\"); return; },\n");
     format(m, "        _ => { web::method_not_allowed(res, \"", allow, "\"); return; },\n");
     m.append("    }\n");
-    if d.has_post { m.append("    if !web::csrf_ok(req, res) { return; }\n"); }
-    middleware_before(m, d);
+    if d.has_post {
+        gen_upload_prelude(m, d.page_ns, d.max_upload);
+        m.append("    if !web::csrf_ok(r, res) { return; }\n");
+    }
+    middleware_before(m, d, rq);
     m.append("    web::html(res, http::Status.Ok);\n");
-    if starts_token(d) { m.append("    if !web::csrf_begin(req, ctx, res) { return; }\n"); }
+    if starts_token(d) { format(m, "    if !web::csrf_begin(", rq, ", ctx, res) { return; }\n"); }
     if d.frags.len > 0 {
-        m.append("    let part = web::fragment_index(req, [");
+        format(m, "    let part = web::fragment_index(", rq, ", [");
         for n, k in split(d.frags, ' ') { if k > 0 { m.append(", "); } format(m, "\"", n, "\""); }
         m.append("]);\n");
     }
     if d.has_post {
         m.append("    if req.method == http::Method.Post {\n");
-        format(m, "        let props = ", d.page_ns, "::POST(req, ctx);\n");
-        gen_page_reply(m, d, true, "        ");
+        format(m, "        let props = ", d.page_ns, "::POST(r, ctx", if d.has_post_res { ", res" } else { "" }, ");\n");
+        gen_page_reply(m, d, true, "        ", rq);
         m.append("    } else {\n");
-        format(m, "        let props = ", d.page_ns, "::load(req, ctx);\n");
-        gen_page_reply(m, d, true, "        ");
+        format(m, "        let props = ", d.page_ns, "::load(r, ctx", if d.has_load_res { ", res" } else { "" }, ");\n");
+        gen_page_reply(m, d, true, "        ", rq);
         m.append("    }\n");
     } else {
-        if d.has_load { format(m, "    let props = ", d.page_ns, "::load(req, ctx);\n"); }
-        gen_page_reply(m, d, d.has_load, "    ");
+        if d.has_load { format(m, "    let props = ", d.page_ns, "::load(req, ctx", if d.has_load_res { ", res" } else { "" }, ");\n"); }
+        gen_page_reply(m, d, d.has_load, "    ", rq);
     }
-    middleware_after(m, d);
+    middleware_after(m, d, rq);
     m.append("}\n");
 }
 
@@ -1199,7 +1390,7 @@ fn gen_dispatch(m: u8[>..]&) {
             }
             let call_kind = if d.route { "route_" } else { "page_" };
             var call: u8[>..] = [];
-            format(call, call_kind, i, "(req, ctx, res);");
+            format(call, "ctx.route = ", i, "; web::inflight_route(ctx.worker, ", i, "); ", call_kind, i, "(req, ctx, res);");
             var body: u8[>..] = [];
             if params.len > 0 { format(body, "if ", params, " { ", call, " } else { web::not_found(ctx); } finish(req, ctx, res); return -1;"); }
             else { format(body, call, " finish(req, ctx, res); return -1;"); }
@@ -1248,7 +1439,7 @@ fn gen_static(m: u8[>..]&) {
 
 fn gen_finish(m: u8[>..]&) {
     m.append("fn finish(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {\n");
-    m.append("    match ctx.outcome {\n        Continue => {},\n        NotFound => {\n");
+    m.append("    match ctx.outcome {\n        Continue => {},\n        Done => {},\n        NotFound => {\n");
     if has_not_found {
         m.append("            ctx.title.clear();\n            res.body.clear();\n            web::html(res, http::Status.NotFound);\n");
         var root_layout: u8[>..] = [];
@@ -1263,7 +1454,72 @@ fn gen_finish(m: u8[>..]&) {
     } else {
         m.append("            res.body.clear();\n            web::plain_not_found(res);\n");
     }
-    m.append("        },\n        Redirect => web::apply_redirect(ctx, res),\n    }\n}\n");
+    m.append("        },\n        Redirect => web::apply_redirect(ctx, res),\n");
+    // Phase 1: a crash while this renders makes the supervisor start at attempt 2 (D12).
+    m.append("        Error => { web::inflight_phase(ctx.worker, 1); error_reply(ctx.route, 1, req, ctx, res, \"\"); },\n    }\n}\n");
+}
+
+// The dir index of the error.html a page or route in rel uses (D10): the nearest at or above its folder; -1 for none.
+fn nearest_error(rel: const u8[:]) -> i64 {
+    var best = -1;
+    var best_len = -1;
+    for o, k in dirs {
+        if o.error_html && is_ancestor(o.rel, rel) && o.rel.len > best_len { best = k; best_len = o.rel.len; }
+    }
+    return best;
+}
+
+// error_reply: attempt 1 renders the nearest error.html inside the layouts at or above the error file's folder;
+// attempt 2 (after a crash in attempt 1) renders it bare. No error.html: the built-in page. A route.goose dir: JSON.
+// why is the abort text of a crash, "" for a web::fail.
+fn gen_error_reply(m: u8[>..]&) {
+    let root = nearest_error("");
+        m.append("fn error_at(route: i64) -> i64 {\n    match route {\n");
+    for d, i in dirs {
+        if !d.route && !d.page_html { continue; }
+        let e = nearest_error(d.rel);
+        if e >= 0 && e != root { format(m, "        ", i, " => { return ", e, "; },\n"); }
+    }
+    format(m, "        _ => {},\n    }\n    return ", root, ";\n}\n\n");
+    m.append("fn error_reply(route: i64, attempt: i64, req: const http::Request&, ctx: web::Ctx&, res: http::Response&, why: const u8[:]) {\n");
+    m.append("    let crashed = !(ctx.outcome == web::Outcome.Error);\n");
+    m.append("    var status: i64 = 500;\n    var message: u8[..512] = \"Internal Server Error\";\n");
+    m.append("    if !crashed { status = ctx.error_status; message.clear(); message.append(ctx.error_message); }\n");
+    m.append("    var info = web::new_error(status, message, crashed);\n");
+    m.append("    if why.len > 0 { web::log_error(info, req, why); } else { web::log_error(info, req, message); }\n");
+    m.append("    if web::dev_mode() { web::dev_detail(info, req, why); }\n");
+    m.append("    res.headers.clear();\n");
+    var api: u8[>..] = [];
+    for d, i in dirs {
+        if !d.route { continue; }
+        if api.len > 0 { api.append(" || "); }
+        format(api, "route == ", i);
+    }
+    if api.len > 0 { format(m, "    if ", api, " { web::error_json(res, info); return; }\n"); }
+    m.append("    ctx.title.clear();\n    web::error_start(res, info);\n");
+    m.append("    match error_at(route) {\n");
+    for e, k in dirs {
+        if !e.error_html { continue; }
+        var csrf = e.error_csrf;
+        var wrapped: u8[>..] = [];
+        var closes = 0;
+        for o in dirs {
+            if o.layout && is_ancestor(o.rel, e.rel) {
+                format(wrapped, o.layout_ns, "::render(res.body, req, ctx) { ");
+                closes += 1;
+                if o.layout_csrf { csrf = true; }
+            }
+        }
+        format(wrapped, e.error_ns, "::render(res.body, req, ctx, info);");
+        for c in closes { wrapped.append(" };"); }
+        format(m, "        ", k, " => {\n            ");
+        if csrf { m.append("if web::csrf_begin(req, ctx, res) { "); }
+        if closes > 0 { format(m, "if attempt == 1 { ", wrapped, " } else { ", e.error_ns, "::render(res.body, req, ctx, info); }"); }
+        else { format(m, e.error_ns, "::render(res.body, req, ctx, info);"); }
+        m.append(if csrf { " }\n        },\n" } else { "\n        },\n" });
+    }
+    m.append("        _ => web::builtin_page(res.body, info),\n    }\n");
+    m.append("    if web::dev_mode() { web::dev_error_script(res.body, info); }\n}\n");
 }
 
 fn gen_main() -> u8[>..] {
@@ -1273,12 +1529,14 @@ fn gen_main() -> u8[>..] {
     m.append("import web from \""); lit(m, pkg_source(0)); m.append("\";\n");
     m.append("import net from \""); lit(m, pkg_source(1)); m.append("\";\n");
     if uses_sqlite { m.append("import sqlite from \""); lit(m, pkg_source(2)); m.append("\";\n"); }
-    m.append("import net.http;\nimport web.template;\nimport web.static;\nimport web.owner;\nimport web.form;\nimport web.csrf;\n");
+    m.append("import net.http;\nimport web.template;\nimport web.static;\nimport web.owner;\nimport web.form;\nimport web.csrf;\nimport web.valid;\nimport web.upload;\nimport web.errors;\n");
     for d in dirs {
         if d.route { format(m, "import ", d.route_ns, ";\n"); }
         if d.page_html { format(m, "import ", d.page_ns, "_html;\n"); if d.page_goose { format(m, "import ", d.page_ns, ";\n"); } }
         if d.layout { format(m, "import ", d.layout_ns, ";\n"); }
         if d.middleware { format(m, "import ", d.mw_ns, ";\n"); }
+        if d.error_html { format(m, "import ", d.error_ns, ";\n"); }
+        if d.loading { format(m, "import ", d.loading_ns, ";\n"); }
     }
     if has_not_found { m.append("import nf;\n"); }
     if has_state {
@@ -1294,6 +1552,8 @@ fn gen_main() -> u8[>..] {
         if d.page_html { gen_page_fn(m, d, i); }
     }
     m.append("\n");
+    gen_error_reply(m);
+    m.append("\n");
     gen_finish(m);
     m.append("\n");
     gen_dispatch(m);
@@ -1302,10 +1562,44 @@ thread_fn worker(slot: i64, server: net::Socket, owner_fd: i32, cfg: web::Config
     web::run_worker(slot, server, owner_fd, cfg, dispatch, static_bytes);
 }
 
+// D12: answers the request the dead worker held. Runs contained, so a crash here only costs this attempt.
+// The head buffer lives as long as the Request parsed from it. Returning normally means the reply is sent.
+thread_fn crash_reply(slot: i64, cfg: web::Config, attempt: i64) {
+    var head: u8[>..] = [];
+    var abort_text: u8[>..] = [];
+    web::crash_info(slot, head, abort_text);
+    let req, parsed = http::parse_request(head);
+    match parsed {
+        Ready => {
+            var ctx = web::new_ctx(slot, -1);
+            var res = http::new_response();
+            error_reply(web::inflight_route_of(slot), attempt, req, ctx, res, abort_text);
+            web::apply_cookies(ctx, res);
+            web::dev_inject(res, cfg.dev_id);
+            http::send_response(web::inflight_conn(slot), res, req.method == http::Method.Head, false);
+        },
+        _ => web::plain_500(slot),
+    }
+}
+
+// After an abort with a request in flight: attempt 1, then 2, then a fixed plain 500; a crash during a web::fail
+// render (phase 1) skips attempt 1. Then the dead worker's loop is freed, which closes its connections.
 thread_fn supervisor(slot: i64, server: net::Socket, owner_fd: i32, cfg: web::Config) {
     var why: u8[>..] = [];
     while !thread_wait(thread_spawn_contained(worker, slot, server, owner_fd, cfg), why) {
         print("goose-web: worker ", slot, " stopped: ", why, "; restarting it");
+        if web::inflight_pending(slot) {
+            web::inflight_set_why(slot, why);
+            var attempt = if web::inflight_phase_of(slot) == 1 { 2 } else { 1 };
+            var answered = false;
+            while attempt <= 2 && !answered {
+                var attempt_why: u8[>..] = [];
+                answered = thread_wait(thread_spawn_contained(crash_reply, slot, cfg, attempt), attempt_why);
+                attempt += 1;
+            }
+            if !answered { web::plain_500(slot); }
+        }
+        web::inflight_release(slot);
         why.clear();
     }
 }
@@ -1314,12 +1608,14 @@ fn main() {
     let cfg = web::config_from_args();
     let server = net::listen(cfg.port, cfg.host, 1024);
     guard server.ok() else { print("goose-web: cannot listen on port ", cfg.port, ": ", net::last_error()); exit(1); }
+    web::inflight_init(cfg.workers, cfg.dev_id != 0);
 
 """);
     if has_state {
         if has_state_init { m.append("    state::init();\n"); }
         m.append("    let chans = web::owner_channels(cfg.workers);\n");
     }
+    m.append("    web::prepare_uploads(cfg);\n");
     m.append("    print(\"goose-web: http://localhost:\", cfg.port, \" (\", cfg.workers, \" workers)\");\n");
     m.append("    var ids: i64[>..] = [];\n");
     if has_state { m.append("    for i in cfg.workers { ids.push(thread_spawn(supervisor, i, server, web::worker_end(chans, i), cfg)); }\n"); }
@@ -1490,7 +1786,8 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
             var src: u8[>..] = [];
             app_path(src, d.rel, "route.goose");
             var code: u8[>..] = [];
-            if copy_prefixed(src, d.route_ns, code) {
+            if copy_prefixed_forms(src, d.route_ns, code, true) {
+                d.max_upload = max_upload_const(code);
                 for k in 7 { if defines(code, METHODS[k]) { d.methods |= 1 << k; } }
                 d.csrf_const = csrf_const(src, code, true);
                 if d.methods == 0 { err(src, 0, "route.goose defines none of fn GET(, POST(, PUT(, PATCH(, DELETE(, HEAD(, OPTIONS("); }
@@ -1517,15 +1814,39 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
             gen_template(src, d.layout_ns, d.layout_ns,
                          "fn render<F>(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&)", imports, K_LAYOUT, -1, frags);
         }
+        if d.error_html {
+            var src: u8[>..] = [];
+            app_path(src, d.rel, "error.html");
+            var imports: u8[>..] = [];
+            var frags: u8[>..] = [];
+            var text: u8[>..] = [];
+            if read_file(src, text) { d.error_csrf = mentions_csrf(text); }
+            add_default_imports(imports);
+            imports.append("import web.errors; ");
+            gen_template(src, d.error_ns, d.error_ns,
+                         "fn render(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&, err: const web::ErrorInfo&)", imports, K_ERROR, -1, frags);
+        }
+        if d.loading {
+            var src: u8[>..] = [];
+            app_path(src, d.rel, "loading.html");
+            var imports: u8[>..] = [];
+            var frags: u8[>..] = [];
+            add_default_imports(imports);
+            gen_template(src, d.loading_ns, d.loading_ns,
+                         "fn render(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&)", imports, K_LOADING, -1, frags);
+        }
         if d.page_html {
             var imports: u8[>..] = [];
             if d.page_goose {
                 var src: u8[>..] = [];
                 app_path(src, d.rel, "page.goose");
                 var code: u8[>..] = [];
-                if copy_prefixed(src, d.page_ns, code) {
+                if copy_prefixed_forms(src, d.page_ns, code, true) {
+                    d.max_upload = max_upload_const(code);
                     d.has_load = defines(code, "load");
                     d.has_post = defines(code, "POST");
+                    d.has_load_res = takes_res(code, "load");
+                    d.has_post_res = takes_res(code, "POST");
                     if d.has_post && !d.has_load { err(src, 0, "fn POST( needs fn load( beside it"); }
                     csrf_const(src, code, false);
                     if mentions_csrf(code) { d.page_csrf = true; }
@@ -1994,19 +2315,66 @@ fn stamp() -> i64 {
 }
 
 // The dev server serves this text in /__gweb/id; open pages show it.
+// After each of the first 5 `path:line:` lines whose file exists (relative path), 2 lines before, the line
+// marked `>`, and 2 after, each with its number (DESIGN-ADDENDUM-14, D13). Other text passes through.
+fn excerpts(text: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    let lines = split(text, '\n');
+    var shown = 0;
+    for line, li in lines {
+        out.append(line);
+        let last = li + 1 == lines.len;
+        if !last { out.push('\n'); }
+        if shown >= 5 || line.len == 0 || line[0] == '/' { continue; }
+        let c = find(line, ":");
+        if c <= 0 { continue; }
+        var e = c + 1;
+        while e < line.len && line[e] >= '0' && line[e] <= '9' { e += 1; }
+        if e == c + 1 || e >= line.len || line[e] != ':' { continue; }
+        let num, nok = parse_int(line[c + 1..e]);
+        if !nok || num < 1 { continue; }
+        var src: u8[>..] = [];
+        if !read_file(line[..c], src) { continue; }
+        let sl = split(src, '\n');
+        if num > sl.len { continue; }
+        shown += 1;
+        if last { out.push('\n'); }
+        var k = max(num - 2, 1);
+        while k <= min(num + 2, sl.len) {
+            var n: u8[>..] = [];
+            format(n, k);
+            out.push(if k == num { '>' } else { ' ' });
+            var fill = 4 - n.len;
+            while fill > 0 { out.push(' '); fill -= 1; }
+            format(out, n, " | ", sl[k - 1], "\n");
+            k += 1;
+        }
+    }
+    return out;
+}
+
 fn write_dev_errors(text: const u8[:]) {
     make_dir(".gooseweb.dev");
     write_file(".gooseweb.dev/errors.txt", text);
 }
 
 fn dev(extra: u8[:][:]) {
+    // Hidden, for tests: one build, errors.txt written, exit 0 or 1; no server and no watching.
+    for a in extra {
+        if a == "--once" {
+            write_dev_errors("");
+            if build(false, true) { exit(0); }
+            write_dev_errors(excerpts(last_errors));
+            exit(1);
+        }
+    }
     var pid: i64 = -1;
     var last = stamp();
     write_dev_errors("");
     if build(false, true) {
         pid = c_spawn(server_cmd(extra, true));
     } else {
-        write_dev_errors(last_errors);
+        write_dev_errors(excerpts(last_errors));
         write_stderr("gweb dev: fix the errors above; watching app/, lib/, public/ and components/\n");
     }
     loop {
@@ -2021,7 +2389,7 @@ fn dev(extra: u8[:][:]) {
         last = stamp();
         write_stdout("gweb dev: change seen, rebuilding\n");
         if !build(false, true) {
-            write_dev_errors(last_errors);
+            write_dev_errors(excerpts(last_errors));
             write_stderr("gweb dev: build failed; the old server keeps running\n");
             continue;
         }
