@@ -1719,7 +1719,7 @@ fn gen_sitemap(m: u8[>..]&) {
         m.append("        Options => { web::options(res, \"GET, HEAD, OPTIONS\"); return; },\n");
         m.append("        _ => { web::method_not_allowed(res, \"GET, HEAD, OPTIONS\"); return; },\n    }\n");
         if name == "robots_txt" { m.append("    web::robots_reply(req, res);\n}\n"); continue; }
-        m.append("    var s = web::sitemap_new(req);\n");
+        m.append("    var s = web::Sitemap { base: [], body: [], count: 0 };\n    web::sitemap_init(req, s);\n");
         for d in dirs {
             if !d.page_html || !d.in_sitemap || find(d.rel, "[") >= 0 { continue; }
             var u: u8[>..] = [];

@@ -15,12 +15,14 @@ let SITEMAP_MAX_BYTES = 52428000;
 let SITEMAP_MAX_PATH = 2048;
 
 // body holds only the <url> entries; sitemap_reply wraps them, so the cap checks need no header arithmetic.
-struct Sitemap { base: u8[>..], body: u8[>..], count: i64 }
+root struct Sitemap { base: u8[>..], body: u8[>..], count: i64 }
 
-fn sitemap_new(req: const http::Request&) -> Sitemap {
-    var s = Sitemap { base: [], body: [], count: 0 };
+// Fills a Sitemap the caller owns (a root struct cannot be returned): var s = Sitemap { base: [], body: [], count: 0 };
+fn sitemap_init(req: const http::Request&, s: Sitemap&) {
+    s.base.clear();
+    s.body.clear();
+    s.count = 0;
     site_url(req, s.base);
-    return s;
 }
 
 fn digit(c: u8) -> bool { return c >= '0' && c <= '9'; }
