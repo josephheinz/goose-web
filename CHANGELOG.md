@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- `.env` files (`.env.<env>.local`, `.env.local`, `.env.<env>`, `.env`), `WEB_SECRET` with rotation, and typed `web::env_*` helpers.
+- Signed cookies and stateless sessions: `web::login`, `logout`, `session`, `require_login`, `require_login_api`, `safe_next`.
+- PBKDF2-HMAC-SHA-256 passwords: `web::password_hash`, `password_verify`, `password_needs_rehash`.
+- Rate limits shared by all workers: `web::rate_limit`, `rate_limit_key`; `WEB_TRUST_PROXY` for `client_ip`.
+- CORS: `web::cors`.
+- CSP with a per-request nonce, opt-in with `WEB_CSP`; `web::nonce` for templates; optional `WEB_HSTS`.
+- Behaviour change: every response now carries `X-Content-Type-Options`, `Referrer-Policy` and `X-Frame-Options` headers. Opt out with `WEB_SECURITY_HEADERS=0`.
+- Behaviour change: `web::login` rotates the CSRF token.
+- Apps that use sessions refuse to start in production without `WEB_SECRET`.
+
 ## v0.2.1
 
 - Fix: `gweb test` no longer deletes `.gooseweb/`; it generates into `.gooseweb.test/`. Add `.gooseweb.test/` to `.gitignore`.

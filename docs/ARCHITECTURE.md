@@ -118,6 +118,10 @@ flowchart TB
   statements.
 - **Cookies.** `web::cookie_or(req, name, fallback)` reads a cookie.
   `ctx` setters queue `Set-Cookie` headers, and `run_worker` applies them.
+- **Sessions and security.** `config_from_args` loads `.env` files and `WEB_SECRET` into `Config`, and
+  `run_worker` copies the keys into `Ctx`. A session is a signed cookie that handlers load on demand.
+  A GCRA rate table in C is shared by all workers behind one mutex. `run_worker` adds three security
+  headers to every response, and a CSP nonce when CSP is on.
 
 ## 4. The browser runtime: what `gwi.min.js` does
 
@@ -267,6 +271,10 @@ readable `gwi.js`.
 |---|---|
 | `web.goose` | Server framework: config, workers, `Ctx`, redirects, cookies, dev status and overlay script, fragment replies. |
 | `owner.goose`, `src/owner.c` | Owner-thread state over socketpairs. |
+| `crypto.goose`, `src/crypto.c` | SHA-256, HMAC, PBKDF2 in C; base64url, constant-time compare, random bytes. |
+| `session.goose` | Signed cookies, sessions, `login`/`logout`/`require_login`, password hashes. |
+| `rate.goose`, `src/rate.c` | `rate_limit`, `rate_limit_key`, `client_ip`; the shared GCRA table. |
+| `cors.goose` | `web::cors` for route middleware. |
 | `form.goose` | Decodes form bodies for `fn POST`. |
 | `static.goose` | Static files with ETag and 304. |
 | `template.goose` | Runtime helpers that compiled templates call (`put`, `raw`, `arg`, JSON). |
@@ -274,7 +282,7 @@ readable `gwi.js`.
 | `cli/tscan.goose` | The template scanner shared by both compilers: braces, `@` calls, script and style blocks. |
 | `cli/component.goose` | The `.gshtml` compiler: Goose subset parser, type checker, JS emitter. |
 | `client/gwi.js` | The browser runtime. `client/build.sh` minifies it to `gwi.min.js`. |
-| `test/components.sh`, `templates.sh`, `fragments.sh` | The test suites. |
+| `test/components.sh`, `templates.sh`, `fragments.sh`, `auth.sh` | The test suites. |
 | `test/morph.sh` | The jsdom suite for `morph`; it installs jsdom into a cache on its first run. |
 
 ## 7. Limits to know
