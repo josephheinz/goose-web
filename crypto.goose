@@ -24,7 +24,7 @@ fn pbkdf2_sha256(out: u8[:], pw: const u8[:], salt: const u8[:], iter: i64) -> b
 }
 
 fn b64_value(c: u8) -> i64 {
-    if c >= 'A' && c <= 'Z' { return (c - 'A') as i64; }
+    if c >= 'A' && c <= 'Z' { return c - 'A'; }
     if c >= 'a' && c <= 'z' { return (c - 'a') as i64 + 26; }
     if c >= '0' && c <= '9' { return (c - '0') as i64 + 52; }
     if c == '-' { return 62; }
@@ -59,7 +59,7 @@ fn b64url_decode(out: u8[>..]&, s: const u8[:]) -> bool {
 fn bytes_equal(a: const u8[:], b: const u8[:]) -> bool {
     if a.len != b.len { return false; }
     var diff = 0;
-    for i in a.len { diff |= (a[i] ^ b[i]) as i64; }
+    for i in a.len { diff |= a[i] ^ b[i]; }
     return diff == 0;
 }
 

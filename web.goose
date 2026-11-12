@@ -449,7 +449,7 @@ let HEX_LOWER = "0123456789abcdef";
 fn b64url(out: u8[>..]&, data: const u8[:]) {
     var i = 0;
     while i + 2 < data.len {
-        let n = ((data[i] as i64) << 16) | ((data[i + 1] as i64) << 8) | (data[i + 2] as i64);
+        let n = ((data[i] as i64) << 16) | ((data[i + 1] as i64) << 8) | data[i + 2];
         out.push(B64URL[(n >> 18) & 63]);
         out.push(B64URL[(n >> 12) & 63]);
         out.push(B64URL[(n >> 6) & 63]);
@@ -494,7 +494,7 @@ fn lower_is(s: const u8[:], word: const u8[:]) -> bool {
     if s.len != word.len { return false; }
     for i in s.len {
         var c = s[i];
-        if c >= 'A' && c <= 'Z' { c = (c + 32) as u8; }
+        if c >= 'A' && c <= 'Z' { c = c + 32; }
         if c != word[i] { return false; }
     }
     return true;
