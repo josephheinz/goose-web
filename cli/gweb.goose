@@ -826,7 +826,7 @@ fn named_arg_len(arg: const u8[:]) -> i64 {
     return 0;
 }
 
-// @Name(a: e1, b: e2) for a reactive component: Name::component(out, Name::Props { a: e1, b: e2, c: DEFAULT });
+// @Name(a: e1, b: e2) for a reactive component: { let gw_p = Name::Props { a: e1, b: e2, c: DEFAULT }; Name::component(out, gw_p); }
 fn reactive_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:], out: u8[>..]&) {
     var mine: u8[>..] = [];                 // `prop\tdefault\n` for this component, in declaration order
     for l in split(component_props, '\n') {
@@ -890,7 +890,7 @@ fn reactive_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:
         ve[found] = vals.len;
     }
     var call: u8[>..] = [];
-    format(call, name, "::component(out, ", name, "::Props { ");
+    format(call, "{ let gw_p = ", name, "::Props { ");
     for k in np {
         let l = props[k];
         let tab = find(l, "\t");
@@ -907,7 +907,8 @@ fn reactive_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:
         }
     }
     if np == 0 { call.append(".. "); }
-    call.append("}); ");
+    // A temporary cannot bind to the const Props& parameter, so the props get a name first.
+    format(call, "}; ", name, "::component(out, gw_p); } ");
     if errors == before { out.append(call); }
 }
 
