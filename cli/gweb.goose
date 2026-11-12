@@ -5,6 +5,7 @@
 //   gweb [-C dir] start [server flags...]
 //   gweb [-C dir] dev [server flags...]
 //   gweb [-C dir] test
+//   gweb version
 
 import std;
 import os;
@@ -1226,6 +1227,17 @@ fn runtime_js(min: bool, out: u8[>..]&) {
     out.append(if min { RT_MIN } else { RT_PRETTY });
 }
 
+let EMBEDDED_VERSION = embed_file("../VERSION");
+
+fn print_version() {
+    var out: u8[>..] = [];
+    format(out, "gweb ", trim(EMBEDDED_VERSION), "\n");
+    format(out, "web     ", pkg_source(0), "\n");
+    format(out, "net     ", pkg_source(1), "\n");
+    format(out, "sqlite  ", pkg_source(2), "\n");
+    write_stdout(out);
+}
+
 // ---------------------------------------------------------------- components
 
 fn push_gw_static(url: const u8[:], file: const u8[:], data: const u8[:]) {
@@ -1913,6 +1925,7 @@ usage: gweb [-C dir] <command>
   start [flags]     build, then run the server (flags go to it: --port N --workers N --log ...)
   dev [flags]       build, run on port 60053 (unless --port), and rebuild on every change under app/, lib/, public/, components/
   routes            print the route table
+  version           print the version and the package sources a build declares
   test              run each component's test_* functions as Goose and as JavaScript; they must match
 
 """);
@@ -1934,6 +1947,7 @@ fn main() {
     if cmd == "test" { if !test_cmd() { exit(1); } return; }
     if cmd == "build" { if !build(rest.len > 0 && rest[0] == "--debug", false) { exit(1); } return; }
     if cmd == "routes" { print_routes(); return; }
+    if cmd == "version" { print_version(); return; }
     if cmd == "start" {
         if !build(false, false) { exit(1); }
         c_exec(server_cmd(rest, false));
