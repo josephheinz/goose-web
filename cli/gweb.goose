@@ -41,7 +41,9 @@ struct Dir {
     frags: u8[..600],      // the page's fragment names, space-separated
     route_ns: u8[..200], page_ns: u8[..200], layout_ns: u8[..32], mw_ns: u8[..32],
     page_csrf: bool = false, layout_csrf: bool = false, csrf_const: bool = false,   // csrf_const: route.goose declares const CSRF
-    in_sitemap: bool = true                                                          // false: page.goose has const SITEMAP = false;
+    in_sitemap: bool = true,                                                         // false: page.goose has const SITEMAP = false;
+    revalidate: i64 = 0,                                                             // seconds from const REVALIDATE = N;, 0 = not cached
+    static_paths: bool = false                                                       // page.goose defines fn static_paths(
 }
 
 // hashed is url with the first 8 hex digits of etag before the last extension; both URLs serve the same bytes.
@@ -170,6 +172,31 @@ fn sitemap_listed(path: const u8[:], code: const u8[:]) -> bool {
         else if !starts_with(t, "const SITEMAP = true;") { err(path, i + 1, "write const SITEMAP = false; to leave this page out of /sitemap.xml (or const SITEMAP = true;)"); }
     }
     return listed;
+}
+
+// N of const REVALIDATE = N; or 0 when absent; a declaration that is not a whole number above 0 is reported and counts as absent.
+fn revalidate_const(path: const u8[:], code: const u8[:]) -> i64 {
+    var secs = 0;
+    for line, i in split(code, '\n') {
+        let t = trim_start(line);
+        if !starts_with(t, "const REVALIDATE") { continue; }
+        if t.len > 16 && (is_ident(t[16..17]) || (t[16] >= '0' && t[16] <= '9')) { continue; }
+        var n = -1;
+        let r = trim(t[16..]);
+        if r.len > 2 && r[0] == '=' && r[r.len - 1] == ';' {
+            let digits = trim(r[1..r.len - 1]);
+            if digits.len > 0 && digits.len <= 9 {
+                n = 0;
+                for c in digits {
+                    if c < '0' || c > '9' { n = -1; break; }
+                    n = n * 10 + (c - '0');
+                }
+            }
+        }
+        if n > 0 { secs = n; }
+        else { err(path, i + 1, "write const REVALIDATE = N; with N the seconds to cache this page, a whole number above 0"); }
+    }
+    return secs;
 }
 
 fn has_static(url: const u8[:]) -> bool {
@@ -1421,6 +1448,11 @@ fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     m.append("    }\n");
     if d.has_post { m.append("    if !web::csrf_ok(req, res) { return; }\n"); }
     middleware_before(m, d);
+    if d.revalidate > 0 {
+        m.append("    if web::cache_serve(req, ctx, res) {\n");
+        middleware_after(m, d);
+        m.append("        return;\n    }\n");
+    }
     m.append("    web::html(res, http::Status.Ok);\n");
     if starts_token(d) { m.append("    if !web::csrf_begin(req, ctx, res) { return; }\n"); }
     if d.frags.len > 0 {
@@ -1440,6 +1472,7 @@ fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
         if d.has_load { format(m, "    let props = ", d.page_ns, "::load(req, ctx);\n"); }
         gen_page_reply(m, d, d.has_load, "    ");
     }
+    if d.revalidate > 0 { format(m, "    web::cache_store(req, ctx, res, ", d.revalidate, ");\n"); }
     middleware_after(m, d);
     m.append("}\n");
 }
@@ -1685,6 +1718,98 @@ fn gen_finish(m: u8[>..]&) {
     m.append("        },\n        Redirect => web::apply_redirect(ctx, res),\n    }\n}\n");
 }
 
+// The generated main's export mode: each page is rendered in process through dispatch with a synthetic request.
+let EXPORT_RUNTIME = """
+struct Export { pages: i64, files: i64, failed: bool }
+
+fn export_error(a: const u8[:], b: const u8[:], c: const u8[:], st: Export&) {
+    var s: u8[>..] = [];
+    format(s, "gweb: ", a, b, c, "\n");
+    write_stderr(s);
+    st.failed = true;
+}
+
+fn export_get(path: const u8[:], owner_fd: i32, st: Export&, out: u8[>..]&) -> bool {
+    var raw: u8[>..] = [];
+    format(raw, "GET ", path, " HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    let req, parsed = http::parse_request(raw);
+    var ready = false;
+    match parsed { Ready => { ready = true; }, _ => {}, }
+    if !ready { export_error(path, ": not a valid request path", "", st); return false; }
+    var ctx = web::new_ctx(0, owner_fd);
+    var res = http::new_response();
+    let hit = dispatch(req, ctx, res);
+    if res.status != http::Status.Ok {
+        var code: u8[>..] = [];
+        format(code, http::code(res.status));
+        export_error(path, ": the reply is ", code, st);
+        return false;
+    }
+    if hit >= 0 { out.append(static_bytes(hit)); } else { out.append(res.body); }
+    return true;
+}
+
+fn export_write(file: const u8[:], data: const u8[:], st: Export&) -> bool {
+    for c, i in file { if c == '/' && i > 0 { make_dir(file[..i]); } }
+    if write_file(file, data) { return true; }
+    export_error("cannot write ", file, "", st);
+    return false;
+}
+
+fn export_page(dir: const u8[:], path: const u8[:], owner_fd: i32, st: Export&) {
+    var body: u8[>..] = [];
+    if !export_get(path, owner_fd, st, body) { return; }
+    var file: u8[>..] = [];
+    format(file, dir, if path == "/" { "/index" } else { path }, ".html");
+    if export_write(file, body, st) { st.pages += 1; }
+}
+
+fn export_generated(dir: const u8[:], path: const u8[:], owner_fd: i32, st: Export&) {
+    var body: u8[>..] = [];
+    if !export_get(path, owner_fd, st, body) { return; }
+    var file: u8[>..] = [];
+    format(file, dir, path);
+    if export_write(file, body, st) { st.files += 1; }
+}
+
+fn export_static(dir: const u8[:], url: const u8[:], data: const u8[:], st: Export&) {
+    var file: u8[>..] = [];
+    format(file, dir, url);
+    if export_write(file, data, st) { st.files += 1; }
+}
+
+""";
+
+// Pages without a dynamic segment, then each static_paths() path, then the static files at both URLs, then the generated routes.
+fn gen_export(m: u8[>..]&) {
+    m.append(EXPORT_RUNTIME);
+    m.append("fn run_export(out_dir: const u8[:], owner_fd: i32) -> bool {\n");
+    m.append("    var dir: u8[>..] = [];\n    dir.append(out_dir);\n");
+    m.append("    while dir.len > 1 && dir[dir.len - 1] == '/' { dir.pop(); }\n");
+    m.append("    var st = Export { pages: 0, files: 0, failed: false };\n");
+    for d in dirs {
+        if !d.page_html { continue; }
+        var u: u8[>..] = [];
+        url_of(u, d.rel);
+        if find(d.rel, "[") < 0 { m.append("    export_page(dir, \""); lit(m, u); m.append("\", owner_fd, st);\n"); }
+        else if d.static_paths { format(m, "    for p in ", d.page_ns, "::static_paths() { export_page(dir, p, owner_fd, st); }\n"); }
+        else { m.append("    print(\"gweb: skipped "); lit(m, u); m.append(": it has a dynamic segment and no fn static_paths() in its page.goose\");\n"); }
+    }
+    for s, i in statics {
+        for hashed in [false, true] {
+            m.append("    export_static(dir, \""); lit(m, if hashed { s.hashed } else { s.url });
+            format(m, "\", static_bytes(", i, "), st);\n");
+        }
+    }
+    if has_sitemap {
+        m.append("    export_generated(dir, \"/sitemap.xml\", owner_fd, st);\n");
+        if !has_static("/robots.txt") { m.append("    export_generated(dir, \"/robots.txt\", owner_fd, st);\n"); }
+    }
+    m.append("    print(\"gweb: exported \", st.pages, \" pages and \", st.files, \" files to \", dir);\n");
+    m.append("    return !st.failed;\n}\n\n");
+    if has_state { m.append("thread_fn export_thread(owner_fd: i32, cfg: web::Config) {\n    exit(if run_export(cfg.export_dir, owner_fd) { 0 } else { 1 });\n}\n\n"); }
+}
+
 fn gen_main() -> u8[>..] {
     var m: u8[>..] = [];
     m.append("// Generated by gweb. Do not edit; it is rewritten on every build.\n");
@@ -1692,7 +1817,7 @@ fn gen_main() -> u8[>..] {
     m.append("import web from \""); lit(m, pkg_source(0)); m.append("\";\n");
     m.append("import net from \""); lit(m, pkg_source(1)); m.append("\";\n");
     if uses_sqlite { m.append("import sqlite from \""); lit(m, pkg_source(2)); m.append("\";\n"); }
-    m.append("import net.http;\nimport web.template;\nimport web.meta;\nimport web.sitemap;\nimport web.static;\nimport web.owner;\nimport web.form;\nimport web.csrf;\n");
+    m.append("import os;\nimport net.http;\nimport web.template;\nimport web.meta;\nimport web.sitemap;\nimport web.static;\nimport web.owner;\nimport web.form;\nimport web.csrf;\nimport web.cache;\n");
     for d in dirs {
         if d.route { format(m, "import ", d.route_ns, ";\n"); }
         if d.page_html { format(m, "import ", d.page_ns, "_html;\n"); if d.page_goose { format(m, "import ", d.page_ns, ";\n"); } }
@@ -1719,6 +1844,8 @@ fn gen_main() -> u8[>..] {
     gen_finish(m);
     m.append("\n");
     gen_dispatch(m);
+    m.append("\n");
+    gen_export(m);
     m.append("""
 thread_fn worker(slot: i64, server: net::Socket, owner_fd: i32, cfg: web::Config) {
     web::run_worker(slot, server, owner_fd, cfg, dispatch, static_bytes);
@@ -1734,7 +1861,18 @@ thread_fn supervisor(slot: i64, server: net::Socket, owner_fd: i32, cfg: web::Co
 
 fn main() {
     let cfg = web::config_from_args();
-    let server = net::listen(cfg.port, cfg.host, 1024);
+""");
+    // Export renders in process: no socket and no workers, but pages that ask the state owner still need it.
+    if has_state {
+        m.append("    if cfg.export_dir.len > 0 {\n");
+        if has_state_init { m.append("        state::init();\n"); }
+        m.append("        let chans = web::owner_channels(1);\n");
+        m.append("        thread_spawn(export_thread, web::worker_end(chans, 0), cfg);\n");
+        m.append("        web::owner_loop<state::Msg, state::Reply>(chans, state::handle);\n        return;\n    }\n");
+    } else {
+        m.append("    if cfg.export_dir.len > 0 { exit(if run_export(cfg.export_dir, -1) { 0 } else { 1 }); }\n");
+    }
+    m.append("""    let server = net::listen(cfg.port, cfg.host, 1024);
     guard server.ok() else { print("goose-web: cannot listen on port ", cfg.port, ": ", net::last_error()); exit(1); }
 
 """);
@@ -2186,6 +2324,8 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
                     if d.has_post && !d.has_load { err(src, 0, "fn POST( needs fn load( beside it"); }
                     csrf_const(src, code, false);
                     d.in_sitemap = sitemap_listed(src, code);
+                    d.revalidate = revalidate_const(src, code);
+                    d.static_paths = defines(code, "static_paths");
                     if mentions_csrf(code) { d.page_csrf = true; }
                     imports_of(code, imports);
                 }
@@ -2202,6 +2342,13 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
             var frags: u8[>..] = [];
             gen_template(src, d.page_ns, base, sig, imports, K_PAGE, di, frags);
             d.frags.append(frags);
+        }
+    }
+    for d in dirs {
+        if d.revalidate > 0 && starts_token(d) {
+            var src: u8[>..] = [];
+            app_path(src, d.rel, "page.goose");
+            err(src, 0, "a page with REVALIDATE cannot use a CSRF token; its HTML would be shared by every visitor");
         }
     }
     not_found_csrf = false;
@@ -2819,6 +2966,7 @@ usage: gweb [-C dir] <command>
   build [--debug]   gen, then goose build to .gooseweb/server
   start [flags]     build, then run the server (flags go to it: --port N --workers N --log ...)
   --no-minify       with gen, build or start: serve public/**/*.css as written
+  export [-o DIR]   build, then write the site as static files to DIR (default out/)
   dev [flags]       build, run on port 60053 (unless --port), and rebuild on every change under app/, lib/, public/, components/
   routes            print the route table
   version           print the version and the package sources a build declares
@@ -2850,6 +2998,22 @@ fn main() {
     if cmd == "start" {
         if !build(false, false) { exit(1); }
         c_exec(server_cmd(rest, false));
+        write_stderr("gweb: could not start .gooseweb/server\n");
+        exit(1);
+    }
+    if cmd == "export" {
+        var dir: const u8[:] = "out";
+        var k = 0;
+        while k < rest.len {
+            if rest[k] == "-o" && k + 1 < rest.len && rest[k + 1].len > 0 { dir = rest[k + 1]; k += 2; }
+            else if rest[k] == "--no-minify" { k += 1; }
+            else { usage(); }
+        }
+        if !build(false, false) { exit(1); }
+        var cmd: u8[>..] = [];
+        cmd.append("./.gooseweb/server --export ");
+        shq(cmd, dir);
+        c_exec(cmd);
         write_stderr("gweb: could not start .gooseweb/server\n");
         exit(1);
     }

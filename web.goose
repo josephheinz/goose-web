@@ -35,7 +35,8 @@ struct Ctx {
 }
 
 struct Config { port: i64, host: u8[..64], workers: i64, log: bool, idle_ms: i64, max_body: i64,
-                dev_id: i64 }   // 0 = off
+                dev_id: i64,    // 0 = off
+                export_dir: u8[..512] }   // "" = serve; else the generated main writes the site here and exits
 
 fn no_params() -> Params { Params { n: 0, names: [""; 8], values: [""; 8] } }
 
@@ -322,10 +323,10 @@ fn default_workers() -> i64 {
 
 fn default_config() -> Config {
     Config { port: 3000, host: "0.0.0.0", workers: default_workers(), log: false,
-             idle_ms: 5000, max_body: 1048576, dev_id: 0 }
+             idle_ms: 5000, max_body: 1048576, dev_id: 0, export_dir: "" }
 }
 
-// Reads --port N, --host H, --workers N, --log, --idle-ms N, --max-body N,
+// Reads --port N, --host H, --workers N, --log, --idle-ms N, --max-body N, --export DIR,
 // and the PORT and WEB_WORKERS environment variables (flags win).
 fn config_from_args() -> Config {
     var cfg = default_config();
@@ -347,10 +348,11 @@ fn config_from_args() -> Config {
             if flag == "--idle-ms" && ok { cfg.idle_ms = n; i += 2; continue; }
             if flag == "--max-body" && ok { cfg.max_body = n; i += 2; continue; }
             if flag == "--dev-id" && ok { cfg.dev_id = n; i += 2; continue; }
+            if flag == "--export" && v.len > 0 && v.len <= 512 { cfg.export_dir.clear(); cfg.export_dir.append(v); i += 2; continue; }
             if flag == "--host" { cfg.host.clear(); cfg.host.append(v[..min(v.len, 64)]); i += 2; continue; }
         }
         print("unknown or incomplete flag: ", flag);
-        print("flags: --port N --host H --workers N --log --idle-ms N --max-body N (--dev-id N: gweb dev only)");
+        print("flags: --port N --host H --workers N --log --idle-ms N --max-body N --export DIR (--dev-id N: gweb dev only)");
         exit(2);
     }
     return cfg;
