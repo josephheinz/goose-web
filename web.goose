@@ -20,6 +20,11 @@ enum Outcome { Continue, NotFound, Redirect }
 struct Keys { n: i64 = 0, k: u8[..64][4] = [""; 4] }   // the first key signs, all verify
 struct AuthConfig { keys: Keys = Keys { .. }, idle: i64 = 86400, max: i64 = 2592000, trust_proxy: bool = false }
 
+// A signed session cookie, loaded lazily by web::session (DESIGN-ADDENDUM-13, D4).
+enum SessionState { Unread, Absent, Valid }
+struct Session { state: SessionState = SessionState.Unread, sid: u8[..22] = "", uid: i64 = 0, ver: i64 = 0,
+                 iat: i64 = 0, exp: i64 = 0, remember: bool = false, data: u8[..256] = "" }
+
 // Ctx holds no references or slices, so a handler may shrink res while it still reads req and ctx.
 struct Ctx {
     params: Params,
@@ -32,7 +37,8 @@ struct Ctx {
     location: u8[..1024],
     title: u8[..256],
     set_cookies: u8[..2048],  // pending Set-Cookie lines; run_worker moves them to res
-    auth: AuthConfig = AuthConfig { .. }   // copied from Config by run_worker; the keys live here so handlers need no globals
+    auth: AuthConfig = AuthConfig { .. }, // copied from Config by run_worker; the keys live here so handlers need no globals
+    session: Session = Session { .. }
 }
 
 struct Config { port: i64, host: u8[..64], workers: i64, log: bool, idle_ms: i64, max_body: i64,

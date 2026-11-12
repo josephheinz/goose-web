@@ -81,3 +81,8 @@ fn csrf_field(out: u8[>..]&, ctx: const Ctx&) {
 
 // This page's CSRF token, for a meta tag.
 fn csrf_token(ctx: const Ctx&) -> const u8[:] { return ctx.csrf; }
+
+// The logged-in user's id; 0 unless web::session or web::login loaded a valid session.
+fn user_id(ctx: const Ctx&) -> i64 { return if ctx.session.state == SessionState.Valid { ctx.session.uid } else { 0 }; }
+
+fn logged_in(ctx: const Ctx&) -> bool { return ctx.session.state == SessionState.Valid; }
