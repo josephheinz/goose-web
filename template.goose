@@ -7,11 +7,8 @@ import net from "../goose-net";
 import net.http;
 import web;
 
-// Helpers the compiled page.html templates call.
-
 let ESCAPED = byte_set("&<>\"'");
 
-// Appends s with & < > " ' escaped for HTML text and attributes.
 fn escape(out: u8[>..]&, s: const u8[:]) {
     var pos = 0;
     loop {
@@ -28,7 +25,7 @@ fn escape(out: u8[>..]&, s: const u8[:]) {
     }
 }
 
-// {expr} in a template: the value's text, escaped.
+// {expr}: the value's text, escaped.
 fn put(out: u8[>..]&, s: const u8[:]) { escape(out, s); }
 fn put(out: u8[>..]&, v: i64) { format(out, v); }
 fn put(out: u8[>..]&, v: f64) { format(out, v); }
@@ -39,15 +36,9 @@ fn put<T>(out: u8[>..]&, v: const T&) {
     escape(out, tmp);
 }
 
-// {#raw expr} in a template: the value's text, not escaped.
+// {#raw expr}: the value's text, unescaped.
 fn raw<T>(out: u8[>..]&, v: const T&) { format(out, v); }
-
-
-// ---------------------------------------------------------------- components (DESIGN-ADDENDUM-3, E2)
-
-// Appends s as a JSON string, written as JavaScript's JSON.stringify writes
-// it: " and \ escaped, \b \f \n \r \t, other control bytes as \u00XX, every
-// other byte unchanged. safe also writes < > & as < > &.
+// Matches JSON.stringify: " and \ escaped, \b \f \n \r \t, other control bytes as \u00XX. safe also escapes < > & as \u00XX.
 fn json_quoted(out: u8[>..]&, s: const u8[:], safe: bool) {
     let hex = "0123456789abcdef";
     out.push('"');
@@ -67,10 +58,10 @@ fn json_quoted(out: u8[>..]&, s: const u8[:], safe: bool) {
     out.push('"');
 }
 
-// A JSON string that is safe inside <script>: <, > and & as <, >, &.
+// Safe inside <script>.
 fn json_text(out: u8[>..]&, s: const u8[:]) { json_quoted(out, s, true); }
 
-// One argument of an on: handler call, inside data-args="[...]".
+// An argument of an on: handler call, inside data-args="[...]".
 fn arg(out: u8[>..]&, v: i64) { format(out, v); }
 fn arg(out: u8[>..]&, v: bool) { format(out, v); }
 fn arg(out: u8[>..]&, v: const u8[:]) {
@@ -79,5 +70,4 @@ fn arg(out: u8[>..]&, v: const u8[:]) {
     escape(out, tmp);
 }
 
-// a contains b (client code: a.includes(b)).
 fn has(a: const u8[:], b: const u8[:]) -> bool { find(a, b) >= 0 }

@@ -7,11 +7,7 @@ import net from "../goose-net";
 import net.http;
 import web;
 
-// Serving files from public/, embedded in the binary by gweb.
-
-// Answers with embedded file number index: 304 when If-None-Match carries
-// etag, otherwise the headers; the dispatcher returns index so run_worker
-// sends the bytes straight from static data.
+// Answers 304 when If-None-Match carries etag; otherwise returns index, so run_worker sends the embedded bytes.
 fn send_static(req: const http::Request&, res: http::Response&, index: i64, content_type: const u8[:], etag: const u8[:]) -> i64 {
     http::set_header(res, "ETag", etag);
     http::set_header(res, "Cache-Control", "public, max-age=0, must-revalidate");

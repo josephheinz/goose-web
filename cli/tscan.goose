@@ -1,26 +1,18 @@
-// tscan: where the template tags are in one line of markup
-// (DESIGN-ADDENDUM-6). Shared by gweb.goose (page templates) and
-// component.goose (.gshtml markup).
-//
-//   {expr} {#if e} {/if} {-- note --}    a tag: '{' to its matching '}'
-//   @Name(expr) @ns::f(a, b) @slot()     a call: '@', a path, '(' to its ')'
-//
+// tscan: finds template tags and calls in one line of markup. Shared by gweb.goose and component.goose.
 // Inside <script> and <style> elements nothing is a tag.
 
 namespace tscan;
 
 import std;
 
-// The raw-text state, kept across the lines of one file.
-let MARKUP = 0;         // ordinary markup
-let SCRIPT_TAG = 1;     // inside <script ...>, before its '>'
-let SCRIPT = 2;         // script text, up to </script
+let MARKUP = 0;
+let SCRIPT_TAG = 1;
+let SCRIPT = 2;
 let STYLE_TAG = 3;
 let STYLE = 4;
 
 fn is_raw(st: i64) -> bool { st == SCRIPT || st == STYLE }
 
-// The error for a file that ends in state st: an element never closed ("" if none).
 fn unclosed(st: i64) -> const u8[:] {
     if st == SCRIPT_TAG || st == SCRIPT { return "<script> is never closed with </script>"; }
     if st == STYLE_TAG || st == STYLE { return "<style> is never closed with </style>"; }
@@ -30,7 +22,7 @@ fn unclosed(st: i64) -> const u8[:] {
 fn ident_start(c: u8) -> bool { (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' }
 fn ident_char(c: u8) -> bool { ident_start(c) || (c >= '0' && c <= '9') }
 
-// line[at..] starts with word, in any letter case (word is lower case).
+// word must be lower case.
 fn starts_nocase(line: const u8[:], at: i64, word: const u8[:]) -> bool {
     if at + word.len > line.len { return false; }
     for i in word.len {
@@ -41,15 +33,12 @@ fn starts_nocase(line: const u8[:], at: i64, word: const u8[:]) -> bool {
     return true;
 }
 
-// line[at..] is `<name` followed by white space, '>', '/' or the line's end.
 fn opens_element(line: const u8[:], at: i64, name: const u8[:]) -> bool {
     if line[at] != '<' || !starts_nocase(line, at + 1, name) { return false; }
     let e = at + 1 + name.len;
     return e == line.len || line[e] == ' ' || line[e] == '\t' || line[e] == '>' || line[e] == '/' || line[e] == '\r';
 }
 
-// The index after the Goose literal that starts at line[i] (a string, a raw
-// string or a character), or i when none starts there.
 fn skip_literal(line: const u8[:], i: i64) -> i64 {
     let n = line.len;
     if line[i] == '"' {
@@ -76,8 +65,6 @@ fn skip_literal(line: const u8[:], i: i64) -> i64 {
     return i;
 }
 
-// line[at] is open ('{' or '('): the index of its matching close, or -1.
-// Nested pairs count; Goose string and character literals are skipped.
 fn match_end(line: const u8[:], at: i64, open: u8, close: u8) -> i64 {
     var depth = 0;
     var i = at;
@@ -100,8 +87,6 @@ fn match_end(line: const u8[:], at: i64, open: u8, close: u8) -> i64 {
 fn brace_end(line: const u8[:], at: i64) -> i64 { match_end(line, at, '{', '}') }
 fn paren_end(line: const u8[:], at: i64) -> i64 { match_end(line, at, '(', ')') }
 
-// line[at] is '@': the index of the '(' when a call starts here, that is
-// '@', then name or ns::name, then '(' with nothing between; else -1.
 fn call_open(line: const u8[:], at: i64) -> i64 {
     var i = at + 1;
     loop {
@@ -114,8 +99,6 @@ fn call_open(line: const u8[:], at: i64) -> i64 {
     return -1;
 }
 
-// The index after an on:NAME="..." or bind:NAME='...' attribute that starts
-// at line[i] after white space, or i when none does.
 fn skip_attr(line: const u8[:], i: i64) -> i64 {
     if i == 0 || (line[i - 1] != ' ' && line[i - 1] != '\t') { return i; }
     var q = i;
@@ -131,8 +114,6 @@ fn skip_attr(line: const u8[:], i: i64) -> i64 {
     return e + 1;
 }
 
-// With st raw (script or style text) at from: the index where that text ends
-// on this line: the '<' of its closing tag (st becomes MARKUP), or line.len.
 fn raw_end(line: const u8[:], from: i64, st: i64&) -> i64 {
     let name = if st == SCRIPT { "script" } else { "style" };
     for i in from..line.len {
@@ -144,10 +125,7 @@ fn raw_end(line: const u8[:], from: i64, st: i64&) -> i64 {
     return line.len;
 }
 
-// With st not raw at from: the index of the next '{', '}' or '@' call, or
-// line.len. When a <script ...> or <style ...> tag closes first, st becomes
-// raw and the index is the one after its '>'. attrs: on: and bind:
-// attribute values are passed over (component markup).
+// When a <script> or <style> start tag closes first, st becomes raw and the index is after its '>'.
 fn next(line: const u8[:], from: i64, st: i64&, attrs: bool) -> i64 {
     var i = from;
     while i < line.len {
@@ -169,7 +147,6 @@ fn next(line: const u8[:], from: i64, st: i64&, attrs: bool) -> i64 {
     return line.len;
 }
 
-// What to write instead of the old tag that starts at rest ("{{...").
 fn old_syntax(rest: const u8[:]) -> const u8[:] {
     if starts_with(rest, "{{{") { return "'{{{ e }}}' is the old syntax: write {#raw e}"; }
     if starts_with(rest, "{{--") { return "'{{-- --}}' is the old syntax: write {-- note --}"; }

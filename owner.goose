@@ -1,7 +1,5 @@
-// Part of goose-web: the state owner. `main` owns app/state.goose's data;
-// workers reach it over one socketpair each (src/owner.c). A message is a
-// one-element array of M as a to_bytes image; the reply is one of R.
-// Import with `import web.owner;`.
+// The state owner: `main` owns app/state.goose's data; workers reach it over one socketpair each.
+// A message is a one-element array of M as a to_bytes image; the reply is one of R.
 
 namespace web;
 
@@ -17,12 +15,11 @@ extern fn c_recv_frame(fd: i32, out: u8[>..]&) -> i32 = "gweb_recv_frame";
 extern fn c_set_recv_timeout(fd: i32, ms: i64) = "gweb_set_recv_timeout";
 extern fn c_owner_next(h: u64, out: u8[>..]&) -> i32 = "gweb_owner_next";
 
-// Makes one channel per worker. Call before spawning the workers.
 fn owner_channels(workers: i64) -> Channels {
     Channels { handle: c_chans_new(workers as i32), n: workers }
 }
 
-// Worker i's end of its channel, with a 5 second reply timeout.
+// Worker i's end of its channel; replies time out after 5 seconds.
 fn worker_end(c: Channels, i: i64) -> i32 {
     let fd = c_chans_worker_fd(c.handle, i as i32);
     c_set_recv_timeout(fd, 5000);
@@ -44,8 +41,7 @@ fn owner_call_fd<M, R>(fd: i32, msg: M) -> R, bool {
     return R { .. }, false;
 }
 
-// Serves the workers forever on the calling thread (main): decodes each
-// message, calls H(msg) -> R, sends the reply back to that worker.
+// Serves the workers on the calling thread (main) forever: H(msg) -> R.
 fn owner_loop<M, R, H>(c: Channels) {
     var buf: u8[>..] = [];
     var out: u8[>..] = [];

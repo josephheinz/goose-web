@@ -1,16 +1,10 @@
-// gweb: the goose-web command line. See ../DESIGN.md section 9.
+// gweb: the goose-web command line.
 //
 //   gweb [-C dir] new <dir>
 //   gweb [-C dir] gen | build [--debug] | routes
 //   gweb [-C dir] start [server flags...]
 //   gweb [-C dir] dev [server flags...]
 //   gweb [-C dir] test
-//
-// It scans app/, lib/ and public/ and writes a program to .gooseweb/:
-// copies of the app files with a namespace on line 1, one Goose file per
-// template (one Goose line per HTML line), main.goose with the dispatcher,
-// and map.txt. Then it runs `goose build` and maps error paths back.
-// Components (components/Name.gshtml, DESIGN-ADDENDUM-3) go through component.goose.
 
 import std;
 import os;
@@ -32,25 +26,21 @@ extern fn c_tree_stamp(path: const u8[:], count: i64&) -> i64 = "gweb_tree_stamp
 
 // ---------------------------------------------------------------- model
 
-// One directory under app/. rel is "" for app/ itself, else "api/todos/[id]".
 struct Dir {
     rel: u8[..512],
     route: bool, page_html: bool, page_goose: bool, layout: bool, middleware: bool,
     methods: i64,          // bit i set: METHODS[i] is defined in route.goose
     has_load: bool, has_before: bool, has_after: bool,
-    has_post: bool,        // page.goose defines fn POST( (DESIGN-ADDENDUM-4)
+    has_post: bool,
     frags: u8[..600],      // the page's fragment names, space-separated
     route_ns: u8[..200], page_ns: u8[..200], layout_ns: u8[..32], mw_ns: u8[..32]
 }
 
-// One file under public/.
 struct Static { url: u8[..512], file: u8[..512], ctype: u8[..64], etag: u8[..24] }
 
-// One gw-target attribute, recorded by scan_targets. own is the dir index of
-// the page that holds it, or -1 in a layout, not-found.html or a component.
+// own is the page's dir index, or -1 in a layout, not-found.html or a component.
 struct Target { path: u8[..512], line: i64, url: u8[..512], name: u8[..64], post: bool, own: i64 }
 
-// The kind of a template.
 let K_PAGE = 0;
 let K_LAYOUT = 1;
 let K_NOT_FOUND = 2;
@@ -66,13 +56,13 @@ var has_state_init = false;
 var has_not_found = false;
 var uses_sqlite = false;
 var map_text: u8[>..];
-var component_names: u8[..64][>..<];   // components/Name.gshtml, sorted
-var component_lines: i64[>..<];        // each component's source line count
+var component_names: u8[..64][>..<];
+var component_lines: i64[>..<];
 var component_errors = 0;              // translator errors of this gen; the build still runs goose
-var uses_fragments = false;            // some template has a gw-target (DESIGN-ADDENDUM-4)
-var targets: Target[>..<];             // every gw-target found, checked by check_targets
-var tpl_script = false;                // the template being compiled has gw-target="
-var last_errors: u8[>..];      // what this build printed as errors, for the dev overlay (max 16 KB)
+var uses_fragments = false;
+var targets: Target[>..<];
+var tpl_script = false;
+var last_errors: u8[>..];
 
 fn note_errors(text: const u8[:]) {
     let room = 16384 - last_errors.len;
@@ -106,14 +96,12 @@ fn slug(out: u8[>..]&, rel: const u8[:]) {
     }
 }
 
-// Appends s as a single-quoted shell word.
 fn shq(out: u8[>..]&, s: const u8[:]) {
     out.push('\'');
     for c in s { if c == '\'' { out.append("'\\''"); } else { out.push(c); } }
     out.push('\'');
 }
 
-// Appends s as the inside of a Goose string literal.
 fn lit(out: u8[>..]&, s: const u8[:]) {
     let hex = "0123456789abcdef";
     for c in s {
@@ -127,7 +115,6 @@ fn lit(out: u8[>..]&, s: const u8[:]) {
     }
 }
 
-// Lines starting (after indentation) with `fn <name>(`.
 fn defines(src: const u8[:], name: const u8[:]) -> bool {
     var pat: u8[>..] = [];
     format(pat, "fn ", name, "(");
@@ -144,7 +131,6 @@ fn write(path: const u8[:], data: const u8[:]) {
     if !write_file(path, data) { err(path, 0, "cannot write"); }
 }
 
-// rel_a is rel_b or one of its ancestors.
 fn is_ancestor(a: const u8[:], b: const u8[:]) -> bool {
     if a.len == 0 || a == b { return true; }
     return b.len > a.len && starts_with(b, a) && b[a.len] == '/';
@@ -225,7 +211,6 @@ fn scan_dir(rel: const u8[:], todo: u8[..512][>..]&) {
     }
 }
 
-// Every folder under app/, parents before children.
 fn scan_app() {
     var todo: u8[..512][>..] = [];
     todo.push("");
@@ -264,7 +249,6 @@ fn content_type(file: const u8[:]) -> const u8[:] {
     return "application/octet-stream";
 }
 
-// The quoted FNV-1a hash of data, as an ETag.
 fn etag_of(data: const u8[:]) -> u8[..24] {
     var h: u64 = 14695981039346656037;
     for c in data { h = (h ^ c) * 1099511628211; }
@@ -311,7 +295,6 @@ fn scan_public() {
     }
 }
 
-// components/*.gshtml: the names, checked (DESIGN-ADDENDUM-3, E1).
 fn scan_components() {
     component_names.clear();
     if is_dir("public/_gw") { err("public/_gw", 0, "/_gw/ is goose-web's component folder; rename this folder"); }
@@ -361,7 +344,6 @@ fn scan() {
 
 // ---------------------------------------------------------------- copies
 
-// Copies an app file to .gooseweb/<ns>.goose with `namespace ns; ` on line 1.
 fn copy_prefixed(src: const u8[:], ns: const u8[:], code: u8[>..]&) -> bool {
     if !read(src, code) { return false; }
     for line, i in split(code, '\n') {
@@ -380,13 +362,11 @@ fn copy_prefixed(src: const u8[:], ns: const u8[:], code: u8[>..]&) -> bool {
     return true;
 }
 
-// A Goose file with an `import sqlite;` line.
 fn imports_sqlite(code: const u8[:]) -> bool {
     for line in split(code, '\n') { if find(line, "import sqlite;") >= 0 && starts_with(trim(line), "import") { return true; } }
     return false;
 }
 
-// Looks for `import sqlite;` in every .goose file under lib/.
 fn scan_lib_for_sqlite() {
     var todo: u8[..512][>..] = [];
     todo.push("lib");
@@ -409,7 +389,6 @@ fn scan_lib_for_sqlite() {
     }
 }
 
-// The import lines of a Goose file, joined on one line.
 fn imports_of(src: const u8[:], out: u8[>..]&) {
     for line in split(src, '\n') {
         let t = trim(line);
@@ -430,7 +409,6 @@ fn add_default_imports(imports: u8[>..]&) {
 
 // ---------------------------------------------------------------- templates
 
-// A fragment name: [A-Za-z][A-Za-z0-9_-]*, at most 64 bytes.
 fn frag_name_ok(s: const u8[:]) -> bool {
     if s.len == 0 || s.len > 64 { return false; }
     for c, i in s {
@@ -441,7 +419,6 @@ fn frag_name_ok(s: const u8[:]) -> bool {
     return true;
 }
 
-// How many names are in a space-separated list.
 fn count_names(names: const u8[:]) -> i64 {
     if names.len == 0 { return 0; }
     var n = 1;
@@ -455,9 +432,6 @@ fn has_name(names: const u8[:], name: const u8[:]) -> bool {
     return false;
 }
 
-// {#fragment NAME} at line[at..] (DESIGN-ADDENDUM-4, section 2). Each rule is
-// an error at the tag's line. The tag closes the page's gw_part == 0 block
-// and opens the block for part K.
 fn template_fragment_open(path: const u8[:], ln: i64, name: const u8[:], line: const u8[:], at: i64, kind: i64,
                           stack: u8[>..]&, stack_lines: i64[>..]&, frags: u8[>..]&, out: u8[>..]&) {
     let k = count_names(frags) + 1;
@@ -465,7 +439,6 @@ fn template_fragment_open(path: const u8[:], ln: i64, name: const u8[:], line: c
     else if !frag_name_ok(name) { err(path, ln, "a fragment name is [A-Za-z][A-Za-z0-9_-]*, at most 64 bytes"); }
     else {
         if stack.len > 0 { err(path, ln, "{#fragment} cannot be inside {#if}, {#for} or another {#fragment}"); }
-        // The text before the tag ends with the opening tag that has id="NAME".
         var ok = false;
         let before = line[..at];
         if before.len > 0 && before[before.len - 1] == '>' {
@@ -473,8 +446,7 @@ fn template_fragment_open(path: const u8[:], ln: i64, name: const u8[:], line: c
             while lt > 0 && before[lt] != '<' { lt -= 1; }
             var want: u8[>..] = [];
             format(want, "id=\"", name, "\"");
-            // id="NAME" must start an attribute: the byte before it is a space
-            // or a tab, so data-id="NAME" does not count (follow-up 1, point 6).
+            // id="NAME" must start an attribute, so data-id="NAME" does not count.
             var from = lt;
             while before[lt] == '<' && !ok {
                 let k2 = find(before[from..], want);
@@ -500,7 +472,6 @@ fn template_fragment_open(path: const u8[:], ln: i64, name: const u8[:], line: c
     format(out, "} if gw_part == 0 || gw_part == ", k, " { ");
 }
 
-// {/fragment}; rest is the text after it on the line.
 fn template_fragment_close(path: const u8[:], ln: i64, rest: const u8[:], kind: i64,
                            stack: u8[>..]&, stack_lines: i64[>..]&, out: u8[>..]&) {
     if kind != K_PAGE { err(path, ln, "{#fragment} is for page.html only"); }
@@ -512,9 +483,6 @@ fn template_fragment_close(path: const u8[:], ln: i64, rest: const u8[:], kind: 
     out.append("} if gw_part == 0 { ");
 }
 
-// One tag's inside, inner (trimmed), at line ln: its Goose code. line and at
-// are the whole line and the tag's '{'; end is its '}' (fragment tags look at
-// the text around them).
 fn template_tag(path: const u8[:], ln: i64, inner: const u8[:], line: const u8[:], at: i64, end: i64, kind: i64,
                 stack: u8[>..]&, stack_lines: i64[>..]&, frags: u8[>..]&, out: u8[>..]&) {
     if inner == "#fragment" || starts_with(inner, "#fragment ") {
@@ -567,14 +535,12 @@ fn template_tag(path: const u8[:], ln: i64, inner: const u8[:], line: const u8[:
     }
 }
 
-// The runtime's script tag, added to a template that has a gw-target.
 let GW_SCRIPT = "<script type=\"module\" src=\"/_gw/gwi.js\"></script>";
 
 fn script_tag(out: u8[>..]&) {
     out.append("out.append(\""); lit(out, GW_SCRIPT); out.append("\"); ");
 }
 
-// @name(args): slot, a component, or a function that writes to out.
 fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:], kind: i64, in_frag: bool, out: u8[>..]&) {
     if name == "slot" {
         if kind != K_LAYOUT { err(path, ln, "@slot() is for layout.html only"); }
@@ -596,12 +562,7 @@ fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:
     else { format(out, name, "(out, ", args, "); "); }
 }
 
-// Compiles a template. header ends with `{ `; every HTML line becomes one
-// Goose line, so errors keep their line numbers. False on a template error.
-// kind is K_PAGE, K_LAYOUT or K_NOT_FOUND. wrap is true for a page with
-// fragments (DESIGN-ADDENDUM-4, section 4): the page's text goes in
-// `if gw_part == 0 { }` blocks, and each fragment's text in the block of its
-// number. The fragment names go to frags, space-separated.
+// Every HTML line becomes one Goose line, so errors keep their line numbers.
 fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], kind: i64, wrap: bool,
                     frags: u8[>..]&, out: u8[>..]&) -> bool {
     let before = errors;
@@ -611,9 +572,9 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
     if tpl_script && kind != K_LAYOUT { script_tag(out); }
     var stack: u8[>..] = [];      // 'i' for if, 'f' for for, 'g' for fragment
     var stack_lines: i64[>..] = [];
-    var raw = tscan::MARKUP;      // <script> and <style> text holds no tags
+    var raw = tscan::MARKUP;
     var slots = 0;
-    var raw_line = 0;             // the line where the open <script>/<style> began
+    var raw_line = 0;
     let lines = split(src, '\n');
     for line, li in lines {
         let ln = li + 1;
@@ -676,15 +637,12 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
     return errors == before;
 }
 
-// own is the page's dir index, or -1. frags gets the page's fragment names.
 fn gen_template(src_path: const u8[:], ns: const u8[:], file_base: const u8[:], signature: const u8[:],
                 imports: const u8[:], kind: i64, own: i64, frags: u8[>..]&) {
     var src: u8[>..] = [];
     if !read(src_path, src) { return; }
     scan_targets(src_path, src, own);
-    // A page with {#fragment gets a last parameter gw_part. The pre-scan is a
-    // guess; the compile says which names there really are, and a wrong guess
-    // is compiled again.
+    // The pre-scan is a guess; a wrong guess is compiled again.
     var wrap = kind == K_PAGE && find(src, "{#fragment ") >= 0;
     var out: u8[>..] = [];
     var tries = 0;
@@ -706,7 +664,7 @@ fn gen_template(src_path: const u8[:], ns: const u8[:], file_base: const u8[:], 
     format(map_text, file_base, ".goose\t", src_path, "\n");
 }
 
-// ---------------------------------------------------------------- gw-target (DESIGN-ADDENDUM-4, section 5)
+// ---------------------------------------------------------------- gw-target
 
 fn lower_eq(a: const u8[:], b: const u8[:]) -> bool {
     if a.len != b.len { return false; }
@@ -722,10 +680,6 @@ fn lower_eq(a: const u8[:], b: const u8[:]) -> bool {
 
 fn ws(c: u8) -> bool { return c == ' ' || c == '\t' || c == '\r'; }
 
-// Walks the opening tag whose '<' is line[lt]: attribute names, and values
-// that are quoted, bare or hold {...} spans. Returns the index of the tag's
-// '>' or -1 when it does not end on this line. When the attribute want is
-// there, its raw value goes to val and found is set.
 fn walk_tag(line: const u8[:], lt: i64, want: const u8[:], val: u8[>..]&, found: bool&) -> i64 {
     let n = line.len;
     var i = lt + 1;
@@ -778,8 +732,6 @@ fn walk_tag(line: const u8[:], lt: i64, want: const u8[:], val: u8[>..]&, found:
     return -1;
 }
 
-// Records every gw-target="..." of one template (DESIGN-ADDENDUM-4, section
-// 5), on the raw text. own is the page's dir index, or -1.
 fn scan_targets(path: const u8[:], src: const u8[:], own: i64) {
     for line, li in split(src, '\n') {
         let ln = li + 1;
@@ -806,7 +758,6 @@ fn scan_targets(path: const u8[:], src: const u8[:], own: i64) {
                 err(path, ln, "gw-target goes on <a href=\"...\"> or <form>, with the whole opening tag on one line");
                 continue;
             }
-            // The name: literal text up to the closing quote.
             let close = find(line[at + 11..], "\"");
             let name = if close < 0 { "" } else { line[at + 11..at + 11 + close] };
             if !frag_name_ok(name) {
@@ -845,8 +796,6 @@ fn scan_targets(path: const u8[:], src: const u8[:], own: i64) {
     }
 }
 
-// The dirs with a route or page of count segments, in the dispatcher's order:
-// a literal segment before a dynamic one.
 fn dispatch_order(count: i64, order: i64[>..]&) {
     for d, i in dirs {
         if (d.route || d.page_html) && seg_count(d.rel) == count {
@@ -864,9 +813,7 @@ fn dispatch_order(count: i64, order: i64[>..]&) {
     }
 }
 
-// The first dir the dispatcher would send url to, or -1. The URL's segments
-// are cut at the first ? or #; a segment with a { is a wildcard that fits a
-// [name] folder only.
+// A segment with a { is a wildcard that fits a [name] folder only.
 fn match_url(url: const u8[:]) -> i64 {
     var cut = url.len;
     for c, i in url { if c == '?' || c == '#' { cut = i; break; } }
@@ -905,8 +852,7 @@ fn match_url(url: const u8[:]) -> i64 {
     return -1;
 }
 
-// Checks every recorded gw-target against the pages: called after every
-// page's fragments and POST flag are known.
+// Run after every page's fragments and POST flag are known.
 fn check_targets() {
     for t in targets {
         let url: u8[..512] = t.url;
@@ -999,8 +945,6 @@ fn gen_route_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     m.append("}\n");
 }
 
-// The statement that renders a page inside its layouts. part is the extra
-// argument of a page with fragments ("0" or "part"), or "" for none.
 fn gen_render_stmt(m: u8[>..]&, d: const Dir&, props: bool, part: const u8[:]) {
     var closes = 0;
     for o in dirs {
@@ -1010,8 +954,6 @@ fn gen_render_stmt(m: u8[>..]&, d: const Dir&, props: bool, part: const u8[:]) {
     for c in closes { m.append(" };"); }
 }
 
-// What follows the loader or POST of a page: the whole page, or with
-// fragments, the fragment the request asks for (DESIGN-ADDENDUM-4, section 4).
 fn gen_page_reply(m: u8[>..]&, d: const Dir&, props: bool, indent: const u8[:]) {
     format(m, indent, "if ctx.outcome == web::Outcome.Continue {\n", indent, "    ");
     if d.frags.len == 0 { gen_render_stmt(m, d, props, ""); }
@@ -1057,7 +999,6 @@ fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     m.append("}\n");
 }
 
-// Segment-wise order: a literal segment before a dynamic one.
 fn route_before(a: const u8[:], b: const u8[:]) -> bool {
     let sa = split(a, '/');
     let sb = split(b, '/');
@@ -1084,7 +1025,6 @@ fn gen_dispatch(m: u8[>..]&) {
     m.append("    let n = web::split(req.path, seg, starts, ends);\n");
     m.append("    match n {\n");
     for count in 17 {
-        // The routes with this many segments, literal-first.
         var order: i64[>..] = [];
         dispatch_order(count, order);
         if order.len == 0 { continue; }
@@ -1259,9 +1199,6 @@ fn push_gw_static(url: const u8[:], file: const u8[:], data: const u8[:]) {
     statics.push(s);
 }
 
-// Copies the runtime to .gooseweb/_gw/gwi.js (client/gwi.js in dev,
-// client/gwi.min.js otherwise) and adds it to the static files. Called when
-// the project has a component or a gw-target.
 fn gen_runtime(dev: bool) {
     make_dir(".gooseweb/_gw");
     var rt_path: u8[>..] = [];
@@ -1272,10 +1209,7 @@ fn gen_runtime(dev: bool) {
     push_gw_static("/_gw/gwi.js", ".gooseweb/_gw/gwi.js", rt);
 }
 
-// Translates every component to .gooseweb/Name.goose and .gooseweb/_gw/Name.js
-// and adds the scripts to the static files; gw-targets in their markup are
-// recorded too. Translator errors are printed and counted in
-// component_errors; gen goes on, so the Goose compiler reports its errors too.
+// gen goes on after translator errors, so the Goose compiler reports its errors too.
 fn gen_components(dev: bool) {
     component_lines.clear();
     if component_names.len == 0 { return; }
@@ -1312,8 +1246,6 @@ fn gen_components(dev: bool) {
     }
 }
 
-// Writes .gooseweb/. False when there were errors. dev picks readable component
-// JS and the unminified runtime (DESIGN-ADDENDUM-3, follow-up 1).
 fn gen(dev: bool) -> bool {
     scan();
     if errors > 0 { return false; }
@@ -1412,7 +1344,6 @@ fn goose_cmd(out: u8[>..]&) {
     if env("GOOSE", g) && g.len > 0 { shq(out, g); } else { out.append("goose"); }
 }
 
-// Replaces .gooseweb/<gen> paths in compiler output with the source paths.
 fn rewrite_errors(text: const u8[:], cwd: const u8[:]) -> u8[>..] {
     var cur: u8[>..] = [];
     cur.append(text);
@@ -1441,9 +1372,7 @@ fn rewrite_errors(text: const u8[:], cwd: const u8[:]) -> u8[>..] {
     return component_lines_back(next);
 }
 
-// A compiler error at components/Name.gshtml:K past the source's last line is
-// in the generated tail: gw_check lines carry `// gw:line N` and point back
-// at the markup; any other is "generated code for components/Name.gshtml".
+// Past the source's last line, a component error is in the generated tail; gw_check lines carry `// gw:line N`.
 fn component_lines_back(text: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];
     var p = 0;
@@ -1533,9 +1462,6 @@ fn build(debug: bool, dev: bool) -> bool {
 
 // ---------------------------------------------------------------- test
 
-// gweb test (DESIGN-ADDENDUM-3, E5): each component's test_* functions, and a
-// zero case, run as Goose and as JavaScript (pretty and compact); the state
-// and the render must match exactly.
 fn test_cmd() -> bool {
     if !gen(false) { return false; }
     if component_errors > 0 { write_stderr("gweb test: fix the component errors above\n"); return false; }
@@ -1641,8 +1567,7 @@ fn test_cmd() -> bool {
     return status == 0;
 }
 
-// Component modules under test import this as ./gwi.js: the runtime, plus a
-// record of each component(...) call for run.mjs.
+// Component modules under test import this as ./gwi.js.
 let GWI_SHIM = """
 export * from "./gwi.real.js";
 import { component as register } from "./gwi.real.js";
@@ -1650,7 +1575,6 @@ export function component(name, def) { globalThis.__gw[name] = def; register(nam
 
 """;
 
-// The comparison half of gweb test; .gooseweb/test/run.mjs is COMPONENTS and this.
 let RUN_MJS = """
 // Generated by gweb test: runs each case in JavaScript and compares it with goose.out.
 import fs from "node:fs";
@@ -1750,7 +1674,6 @@ fn print_routes() {
             format(line, u);
             while line.len < 62 { line.push(' '); }
             format(line, src, "\n");
-            // A line for each {#fragment NAME} of the page.
             var html: u8[>..] = [];
             if read_file(src, html) {
                 var rest: const u8[:] = html;
@@ -1813,8 +1736,7 @@ fn stamp() -> i64 {
     return newest * 31 + count;
 }
 
-// The running dev server serves this file's text in /__gweb/id; open pages
-// show it in an overlay. Empty after a good build.
+// The dev server serves this text in /__gweb/id; open pages show it.
 fn write_dev_errors(text: const u8[:]) {
     make_dir(".gooseweb.dev");
     write_file(".gooseweb.dev/errors.txt", text);
@@ -1934,7 +1856,6 @@ nav a { margin-right: 1rem; }
     for f in files {
         var path: u8[>..] = [];
         format(path, dir, "/", f[0]);
-        // make each parent folder
         make_dir(dir);
         var at = dir.len + 1;
         loop {

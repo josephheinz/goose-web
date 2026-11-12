@@ -1,11 +1,5 @@
 // web: the runtime of goose-web, a Next.js-like framework on goose-net.
-//
-// Programs do not call most of this directly: `gweb` scans app/, lib/ and
-// public/ and generates a root file (.gooseweb/main.goose) whose dispatcher
-// calls the user's route, page and middleware functions. See DESIGN.md.
-//
-// User functions take (req: const http::Request&, ctx: web::Ctx&, ...);
-// see DESIGN-ADDENDUM-1.md for each signature.
+// `gweb` generates the root file whose dispatcher calls the user's routes, pages and middleware.
 
 namespace web;
 
@@ -16,35 +10,26 @@ import net.http;
 import json;
 
 // ---------------------------------------------------------------- types
-//
-// The request travels as its own `const http::Request&` parameter, and Ctx
-// holds no references or slices (DESIGN-ADDENDUM-1). So a handler may shrink
-// res at any time while it still reads req and ctx.
 
-// Route parameters from dynamic segments: app/todos/[id]/ gives "id". The
-// values are copies.
 struct Params { n: i64, names: u8[..32][8], values: u8[..256][8] }
 
-// What a handler, loader or middleware decided. The generated finish()
-// applies it after the route or page.
 enum Outcome { Continue, NotFound, Redirect }
 
-// One request's context.
+// Ctx holds no references or slices, so a handler may shrink res while it still reads req and ctx.
 struct Ctx {
     params: Params,
-    worker: i64,              // 0..workers-1
-    owner_fd: i32,            // this worker's channel to the state owner, -1 without app/state.goose
+    worker: i64,
+    owner_fd: i32,            // -1 without app/state.goose
     outcome: Outcome,
-    fragment: bool = false,   // this reply is a fragment: no dev script (DESIGN-ADDENDUM-4)
+    fragment: bool = false,   // fragment replies get no dev script
     redirect_status: i64,
     location: u8[..1024],
-    title: u8[..256],         // set by page loaders, read by layouts
-    set_cookies: u8[..2048]   // pending Set-Cookie lines; run_worker moves them to res (DESIGN-ADDENDUM-5)
+    title: u8[..256],
+    set_cookies: u8[..2048]   // pending Set-Cookie lines; run_worker moves them to res
 }
 
-// Server settings, from flags and the environment (config_from_args).
 struct Config { port: i64, host: u8[..64], workers: i64, log: bool, idle_ms: i64, max_body: i64,
-                dev_id: i64 }   // gweb dev's build id (0 = off): serves /__gweb/id and injects live reload
+                dev_id: i64 }   // 0 = off
 
 fn no_params() -> Params { Params { n: 0, names: [""; 8], values: [""; 8] } }
 
@@ -55,8 +40,7 @@ fn new_ctx(worker: i64, owner_fd: i32) -> Ctx {
 
 // ---------------------------------------------------------------- params and query
 
-// Records a dynamic segment. False when the value is over 256 bytes, the
-// name over 32, or there are already 8; the dispatcher then answers 404.
+// False, and the dispatcher answers 404, when a limit is exceeded: 8 params, 32-byte name, 256-byte value.
 fn set_param(ctx: Ctx&, name: const u8[:], value: const u8[:]) -> bool {
     let i = ctx.params.n;
     if i >= 8 || name.len > 32 || value.len > 256 { return false; }
@@ -76,23 +60,20 @@ fn param(ctx: const Ctx&, name: const u8[:]) -> const u8[:] {
     return "";
 }
 
-// A route parameter as an integer.
 fn param_int(ctx: const Ctx&, name: const u8[:]) -> i64, bool {
     let v = param(ctx, name);
     if v.len == 0 { return 0, false; }
     return parse_int(v);
 }
 
-// A query parameter, URL-decoded and appended to out. False when absent.
+// Appends the URL-decoded value to out; false when absent.
 fn query(req: const http::Request&, name: const u8[:], out: u8[>..]&) -> bool {
     let v, has = http::query_param(req, name);
     if has { http::url_decode(out, v); }
     return has;
 }
 
-// Splits a path into at most 16 segments ("/a/b" gives "a", "b"; "/" gives
-// none). seg gets each segment and starts/ends its offsets in path. Returns
-// the count, or 17 when there are more than 16.
+// Returns the segment count, or 17 when there are more than 16; starts and ends are offsets into path.
 fn split(path: const u8[:], seg: const u8[:][16]&, starts: i64[16]&, ends: i64[16]&) -> i64 {
     var n = 0;
     var start = 1;
@@ -110,23 +91,17 @@ fn split(path: const u8[:], seg: const u8[:][16]&, starts: i64[16]&, ends: i64[1
     return n;
 }
 
-// ---------------------------------------------------------------- cookies (DESIGN-ADDENDUM-5)
-//
-// Reading goes through req; setting goes through ctx, so it works the same
-// in handlers, loaders and middleware. Ctx keeps the finished Set-Cookie
-// lines (flat bytes, no slices) and run_worker moves them to res.headers
-// after the dispatcher returns.
+// ---------------------------------------------------------------- cookies
+// Ctx holds the finished Set-Cookie lines (flat bytes, no slices); run_worker moves them to res.headers after the dispatcher returns.
 
 enum SameSite { Lax, Strict, None }
 
-// The attributes of a cookie to set. The defaults give a host-only session
-// cookie for the whole site that scripts cannot read.
 struct CookieOptions {
     path: u8[..128] = "/",
     domain: u8[..128] = "",             // "" = this host only
     max_age: i64 = -1,                  // seconds; -1 = until the browser closes
-    secure: bool = false,               // HTTPS only
-    http_only: bool = true,             // hidden from document.cookie
+    secure: bool = false,
+    http_only: bool = true,
     same_site: SameSite = SameSite.Lax
 }
 
@@ -143,7 +118,7 @@ fn all_in(s: const u8[:], set: const ByteSet&) -> bool {
     return true;
 }
 
-// A request cookie, percent-decoded and appended to out. False when absent.
+// Appends the percent-decoded value to out; false when absent.
 fn cookie(req: const http::Request&, name: const u8[:], out: u8[>..]&) -> bool {
     let v, has = http::cookie(req, name);
     if !has { return false; }
@@ -157,26 +132,21 @@ fn cookie(req: const http::Request&, name: const u8[:], out: u8[>..]&) -> bool {
     return true;
 }
 
-// A request cookie as sent (not decoded), or fallback when it is absent or
-// empty. One value, so templates and layouts can use it.
+// The value as sent (not decoded), or fallback when absent or empty.
 fn cookie_or(req: const http::Request&, name: const u8[:], fallback: const u8[:]) -> const u8[:] {
     let v, has = http::cookie(req, name);
     if has && v.len > 0 { return v; }
     return fallback;
 }
 
-// A request cookie as an integer.
 fn cookie_int(req: const http::Request&, name: const u8[:]) -> i64, bool {
     let v, has = http::cookie(req, name);
     if !has || v.len == 0 { return 0, false; }
     return parse_int(v);
 }
 
-// Sets a cookie on this response. The value may be any bytes; it is
-// percent-encoded. False, with nothing set, when the name is not 1 to 64
-// token bytes, the encoded value is over 1024 bytes, an option is invalid, a
-// __Secure- or __Host- name breaks its rule, or the response's cookies would
-// pass 2048 bytes.
+// The value is percent-encoded. False, with nothing set, when an argument or option is invalid,
+// a __Secure- or __Host- name breaks its rule, or the response's cookies would pass 2048 bytes.
 fn set_cookie(ctx: Ctx&, name: const u8[:], value: const u8[:], opts: CookieOptions = CookieOptions { .. }) -> bool {
     let secure = opts.secure || opts.same_site == SameSite.None;
     if name.len == 0 || name.len > COOKIE_NAME_MAX || !all_in(name, COOKIE_NAME_BYTES) { return false; }
@@ -208,18 +178,14 @@ fn set_cookie(ctx: Ctx&, name: const u8[:], value: const u8[:], opts: CookieOpti
     return true;
 }
 
-// Tells the browser to delete a cookie. Pass the path and domain (and, for a
-// __Secure- or __Host- name, secure) it was set with; max_age is ignored.
+// Pass the path and domain (and secure, for __Secure-/__Host- names) the cookie was set with; max_age is ignored.
 fn clear_cookie(ctx: Ctx&, name: const u8[:], opts: CookieOptions = CookieOptions { .. }) -> bool {
     var o = opts;
     o.max_age = 0;
     return set_cookie(ctx, name, "", o);
 }
 
-// Moves the pending Set-Cookie lines to res.headers. False when they do not
-// fit beside the headers already there: the reply then becomes a 500 with no
-// cookies, so a cookie is never dropped silently. run_worker calls this
-// after the dispatcher.
+// False when the lines do not fit beside res.headers: the reply becomes a 500 with no cookies, so a cookie is never dropped silently.
 fn apply_cookies(ctx: Ctx&, res: http::Response&) -> bool {
     if ctx.set_cookies.len == 0 { return true; }
     if ctx.set_cookies.len > res.headers.cap - res.headers.len {
@@ -235,20 +201,16 @@ fn apply_cookies(ctx: Ctx&, res: http::Response&) -> bool {
 
 // ---------------------------------------------------------------- responses
 
-// Sets an HTML reply. Write the HTML into res.body.
 fn html(res: http::Response&, status: http::Status) {
     res.status = status;
     res.content_type.clear();
     res.content_type.append("text/html; charset=utf-8");
 }
 
-// Sets a JSON reply. Write the JSON into res.body.
 fn json(res: http::Response&, status: http::Status) { http::json_reply(res, status); }
 
-// Marks the request as not found; finish() renders the 404 page.
 fn not_found(ctx: Ctx&) { ctx.outcome = Outcome.NotFound; }
 
-// Redirects to `to`; finish() writes the status and Location.
 fn redirect(ctx: Ctx&, to: const u8[:], status: i64 = 302) {
     ctx.outcome = Outcome.Redirect;
     ctx.redirect_status = status;
@@ -256,7 +218,6 @@ fn redirect(ctx: Ctx&, to: const u8[:], status: i64 = 302) {
     ctx.location.append(to[..min(to.len, 1024)]);
 }
 
-// Applies a Redirect outcome to res. finish() calls this.
 fn apply_redirect(ctx: const Ctx&, res: http::Response&) {
     res.status = http::status_from_code(ctx.redirect_status);
     res.content_type.clear();
@@ -264,19 +225,16 @@ fn apply_redirect(ctx: const Ctx&, res: http::Response&) {
     http::set_header(res, "Location", ctx.location);
 }
 
-// 204 with Allow, for OPTIONS without a handler.
 fn options(res: http::Response&, allow: const u8[:]) {
     res.status = http::Status.NoContent;
     http::set_header(res, "Allow", allow);
 }
 
-// 405 with Allow.
 fn method_not_allowed(res: http::Response&, allow: const u8[:]) {
     http::json_error(res, http::Status.MethodNotAllowed, "method not allowed");
     http::set_header(res, "Allow", allow);
 }
 
-// The plain 404, used when there is no app/not-found.html.
 fn plain_not_found(res: http::Response&) {
     http::text(res, http::Status.NotFound, "404 not found\n");
 }
@@ -285,8 +243,7 @@ fn plain_not_found(res: http::Response&) {
 
 extern fn c_performance_cores() -> i64 = "gweb_performance_cores";
 
-// The default worker count: min(performance cores, 4), or min(hardware
-// threads, 4) where performance cores are unknown (DESIGN-ADDENDUM-2, Q1).
+// min(performance cores, 4); hardware threads where cores are unknown.
 fn default_workers() -> i64 {
     let perf = c_performance_cores();
     let cores = if perf > 0 { perf } else { hardware_threads() };
@@ -331,14 +288,9 @@ fn config_from_args() -> Config {
 
 // ---------------------------------------------------------------- the worker loop
 
-// One worker: a connection loop on the shared listening socket. For each
-// request it calls D(req, ctx, res), the generated dispatcher, which fills
-// res and returns the index of a static file to send, or -1. S, the
-// generated static table, gives that file's bytes, which go out without a
-// copy. Runs forever.
+// D, the generated dispatcher, returns the index of a static file to send, or -1; S gives its bytes, sent without a copy. Never returns.
 fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) {
-    // One worker takes every waiting connection per pass; several take one
-    // each, so a burst spreads across them.
+    // One worker takes every waiting connection per pass; several take one each, so a burst spreads.
     let lp = net::connection_loop(server, cfg.idle_ms, cfg.max_body, if cfg.workers == 1 { 0 } else { 1 });
     var raw: u8[>..] = [];
     loop {
@@ -360,7 +312,6 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                             dev_status(res, cfg.dev_id);
                             dev_request = true;
                         } else if get_like && p.len > 1 && p[p.len - 1] == '/' {
-                            // /x/ -> /x, keeping the query.
                             var to: u8[>..] = [];
                             to.append(p[..p.len - 1]);
                             if req.query.len > 0 { to.push('?'); to.append(req.query); }
@@ -401,10 +352,9 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
     }
 }
 
-// ---------------------------------------------------------------- dev live reload (DESIGN-ADDENDUM-3, A and follow-up 1)
+// ---------------------------------------------------------------- dev live reload
 
-// The dev status for /__gweb/id: the build id on line 1, then gweb dev's
-// last build errors from .gooseweb.dev/errors.txt (nothing after a good build).
+// Line 1 is the build id; the rest is gweb dev's last build errors (empty after a good build).
 fn dev_status(res: http::Response&, dev_id: i64) {
     http::text(res, http::Status.Ok, "");
     format(res.body, dev_id);
@@ -416,12 +366,9 @@ fn dev_status(res: http::Response&, dev_id: i64) {
     http::set_header(res, "Cache-Control", "no-store");
 }
 
-// In gweb dev, appends a script to HTML replies that polls /__gweb/id: it
-// reloads the page when the id changes and shows errors in an overlay
-// (DESIGN-ADDENDUM-3, follow-up 3). Two slots: sys (build failed, or the
-// server stopped answering), which the poll sets and clears, and isl (component and page
-// errors), which stays until a click on the overlay or a reload. sys shows
-// first. Nothing happens when dev_id is 0.
+// Appends the dev script that polls /__gweb/id: reload on a new id, error overlay otherwise.
+// Two overlay slots: sys (build failed or server down; the poll sets and clears it) and isl
+// (page errors; cleared by a click or reload). sys shows first.
 fn dev_inject(res: http::Response&, dev_id: i64) {
     if dev_id == 0 || !starts_with(res.content_type, "text/html") { return; }
     format(res.body, "<script>(function(){var id=\"", dev_id, "\",fails=0,box,sys=\"\",isl=\"\";\n");
@@ -436,5 +383,4 @@ fn dev_inject(res: http::Response&, dev_id: i64) {
     res.body.append("""setInterval(function(){fetch("/__gweb/id",{cache:"no-store"}).then(function(r){return r.text()}).then(function(t){fails=0;var n=t.indexOf("\n"),cur=n<0?t:t.slice(0,n),errs=n<0?"":t.slice(n+1);if(cur!==id){location.reload();return}sys=errs.trim()?"build failed\n\n"+errs:"";draw()}).catch(function(){if(++fails>=4){sys="gweb dev: the server is not responding";draw()}})},500)})();</script>""");
 }
 
-// The static table for an app without public/: no files.
 fn no_static(i: i64) -> const u8[:] { "" }

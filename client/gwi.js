@@ -1,11 +1,5 @@
-// goose-web component runtime (DESIGN-ADDENDUM-3, E4). Served as /_gw/gwi.js;
-// every /_gw/Name.js imports it. client/gwi.min.js is this file minified by
-// client/build.sh, which gweb build and gweb start ship instead.
-//
-// A component is <div data-component="Name">, its render, then a
-// <script type="application/json"> with its state. Four capture listeners on
-// document find the component of an event, run the bind or handler on its state,
-// render again and morph the DOM to the new HTML.
+// goose-web component runtime, served as /_gw/gwi.js; every /_gw/Name.js imports it.
+// client/gwi.min.js is this file minified by client/build.sh.
 
 const D = document;
 const defs = {};
@@ -17,7 +11,6 @@ function fail(msg) { throw new RangeError(msg); }
 function ix(a, i) { if (!(i >= 0 && i < a.length)) fail("bad index " + i); }
 const nz = (b) => b || fail("division by zero");
 
-// The helpers generated component code calls (E3's JS rules).
 export const esc = (v) => typeof v == "string" ? v.replace(/[&<>"']/g, (c) => E[c]) : "" + v;
 export const at = (a, i) => (ix(a, i), a[i]);
 export const set = (a, i, v) => { ix(a, i); a[i] = v; };
@@ -32,11 +25,8 @@ export const imod = (a, b) => {
 
 export function component(name, def) { defs[name] = def; }
 
-// Makes from's children match to's: walks both lists in parallel, replaces a
-// node of another type or tag, updates text, syncs attributes, recurses, then
-// syncs value and checked (after the recursion, so a <select> has its new
-// options first). The focused control keeps its value unless force is set.
-// Extra new nodes are appended and extra old ones removed. No keys (E4 limits).
+// Makes from's children match to's, without keys. value and checked sync after recursing so a <select>
+// has its new options first; the focused control keeps its value unless force is set.
 function morph(from, to, force) {
   let a = from.firstChild, b = to.firstChild;
   while (b) {
@@ -49,7 +39,6 @@ function morph(from, to, force) {
       for (const { name } of [...a.attributes]) if (!b.hasAttribute(name)) a.removeAttribute(name);
       for (const { name, value } of b.attributes) if (a.getAttribute(name) != value) a.setAttribute(name, value);
       morph(a, b, force);
-      // Form controls: value unless the user is typing in it, and checked.
       if ("form" in a) {
         if ((a != D.activeElement || force) && a.value != b.value) a.value = b.value;
         a.checked = b.checked;
@@ -61,23 +50,19 @@ function morph(from, to, force) {
   while (a) { b = a.nextSibling; a.remove(); a = b; }
 }
 
-// Reports an error: the console, and a gw:error event (gweb dev's overlay shows it).
+// Logs the error and raises gw:error for gweb dev's overlay.
 function oops(err) {
   console.error(err);
   dispatchEvent(new CustomEvent("gw:error", { detail: String(err) }));
 }
 
-// Morphs root's children to html.
 function swap(root, html, force) {
   const tp = D.createElement("template");
   tp.innerHTML = html;
   morph(root, tp.content, force);
 }
 
-// One capture listener: the nearest component, the nearest element with a
-// handler for this event and (for input and change) the nearest bound one,
-// both only when inside the component. Bind, handler and render run in one try:
-// on a throw the state goes back to its copy and the DOM is left as it is.
+// On a throw the state goes back to its copy and the DOM is left as it is.
 function on(type, binds) {
   const attr = "data-on-" + type, sel = "[" + attr + "]";
   D.addEventListener(type, (e) => {
@@ -90,7 +75,6 @@ function on(type, binds) {
     let s = live.get(root);
     if (!s) live.set(root, s = JSON.parse(root.nextElementSibling.textContent));
     const keep = structuredClone(s);
-    // The focused bound control and its state before the handler (point 3).
     const f = inside(D.activeElement), k = f && f.dataset.bind;
     let force = 0, before, html;
     try {
@@ -108,8 +92,6 @@ function on(type, binds) {
       }
       html = def.render(s);
     } catch (err) {
-      // The changes are dropped: the state goes back to its copy, and the DOM
-      // already shows that state.
       live.set(root, keep);
       return oops(err);
     }
@@ -123,13 +105,8 @@ on("change", 1);
 on("input", 1);
 on("submit");
 
-// Fragments (DESIGN-ADDENDUM-4). A click on <a href gw-target="NAME"> or a
-// submit of <form gw-target="NAME"> fetches the URL with the header
-// GW-Fragment: NAME and morphs the reply into the element with id NAME. The
-// browser does its normal navigation instead when there is no such element,
-// it is inside a component, the event was already handled, or a modifier key
-// is down. A reply without the GW-Fragment echo (a redirect to another page)
-// becomes a normal navigation. The last request for a target wins.
+// A reply without the GW-Fragment echo (a redirect to another page) becomes a normal navigation;
+// the last request for a target wins.
 function frag(type, sel, attr, form) {
   D.addEventListener(type, async (e) => {
     const el = e.target.closest?.(sel);

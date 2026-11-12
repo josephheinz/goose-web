@@ -1,20 +1,9 @@
-// component: the .gshtml component translator (DESIGN-ADDENDUM-3, E1-E3 and
-// follow-up 1). gweb calls compile() once for each components/Name.gshtml.
+// component: the .gshtml component translator. gweb calls compile() once for each
+// components/Name.gshtml.
 //
-// It writes two outputs from one source:
-//   .gooseweb/Name.goose  line for line with the source: line 1 is the
-//                         header, the script is copied as it is, the
-//                         </script> line opens render, and each markup line
-//                         is one Goose line. gw_check, gw_json and component
-//                         follow the last source line.
-//   _gw/Name.js           the browser module: every script function,
-//                         render, zero and the component(...) call. Pretty (one
-//                         statement per line, real names) or compact.
-//
-// The script is parsed into nodes, every expression gets a type (Int, Bool,
-// Str, Struct, Array), and the JavaScript is written from the nodes. Goose
-// compiles the copy itself, so the translator reports only what is outside
-// the client subset (E3) and what it cannot type.
+// .gooseweb/Name.goose stays line for line with the source, so a Goose compiler
+// error maps back to its markup line; gw_check, gw_json and component follow
+// the last source line. _gw/Name.js is the browser module.
 
 namespace component;
 
@@ -23,8 +12,6 @@ import tscan;
 
 enum Kind { Int, Bool, Str, Struct, Array }
 
-// A field of a struct in the block. cap is N for u8[..N]; struct_name is the
-// struct (Struct) or the element struct (Array).
 struct Field { name: u8[..64], kind: Kind, struct_name: u8[..64], cap: i64 }
 
 // ---------------------------------------------------------------- types
@@ -50,7 +37,6 @@ struct Param { name: u8[..64], ty: Ty, mref: bool, tok: i64, var_id: i64 }
 struct FnDef { name: u8[..64], tok: i64, line: i64, first: i64, n: i64, ret: Ty, body: i64,
                js: u8[..72], handler: bool, test: bool }
 
-// A variable in client code; js is its JavaScript name.
 struct Var { name: u8[..64], ty: Ty, js: u8[..72] }
 
 // Tokens: offsets into text.
@@ -63,7 +49,6 @@ let K_BAD = 5;       // m: 1 char literal, 2 raw string, 3 float, else the text 
 
 struct Tok { k: i64, s: i64, e: i64, line: i64, m: i64 }   // m: the matching brace
 
-// Node kinds.
 let E_INT = 1;
 let E_BOOL = 2;
 let E_STR = 3;
@@ -142,7 +127,7 @@ let WHITELIST = "(min, max, abs, str, web::has, push, remove_at, clear, append, 
 
 // ---------------------------------------------------------------- state (reset by compile)
 
-var text: u8[>..];             // the source
+var text: u8[>..];
 var line_start: i64[>..<];     // offset of each line in text
 var line_end: i64[>..<];       // offset of its '\n' (or the end)
 var toks: Tok[>..<];
@@ -176,7 +161,6 @@ var ty_const = false;          // parse_type: the type started with const
 var ty_s = 0;                  // parse_type: its first token
 var ty_e = 0;                  // parse_type: the token after it
 
-// Markup state.
 struct Open { kind: u8, line: i64, mark: i64 }
 var opens: Open[>..<];
 var pend: u8[>..];             // markup text not yet written to the JS
@@ -282,7 +266,6 @@ fn is_alpha(c: u8) -> bool { (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
 fn is_dig(c: u8) -> bool { c >= '0' && c <= '9' }
 fn is_hexd(c: u8) -> bool { is_dig(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') }
 
-// Appends s as the inside of a Goose string literal.
 fn glit(out: u8[>..]&, s: const u8[:]) {
     let hex = "0123456789abcdef";
     for c in s {
@@ -360,7 +343,6 @@ fn int_value(i: i64) -> i64 {
     return v;
 }
 
-// The byte length of string literal token i.
 fn lit_bytes(i: i64) -> i64 {
     let t = toks[i];
     var n = 0;
@@ -382,8 +364,6 @@ fn push_tok(k: i64, s: i64, e: i64, line: i64, m: i64) {
     toks.push(Tok { k: k, s: s, e: e, line: line, m: m });
 }
 
-// Tokens of text[s..e], whose first line is line, ending with an EOF token.
-// Returns the index of the first.
 fn tokenize(s: i64, e: i64, line: i64) -> i64 {
     let first = toks.len;
     var i = s;
@@ -431,7 +411,7 @@ fn tokenize(s: i64, e: i64, line: i64) -> i64 {
                     continue;
                 }
             }
-            if i < e && is_alpha(text[i]) {      // a suffix, as in 5u8
+            if i < e && is_alpha(text[i]) {
                 while i < e && (is_alpha(text[i]) || is_dig(text[i])) { i += 1; }
                 push_tok(K_BAD, start, i, ln, 0);
                 continue;
@@ -508,18 +488,15 @@ fn new_node(k: i64, tok: i64) -> i64 {
     return nodes.len - 1;
 }
 
-// The source text of node n.
 fn span_s(n: i64) -> i64 { toks[nodes[n].t0].s }
 fn span_e(n: i64) -> i64 { toks[nodes[n].t1].e }
 
-// Reports the type at ty_s..ty_e as not available.
 fn type_bad() {
     var e = max(ty_e, ty_s + 1);
     bad_what(toks[ty_s].line, text[toks[ty_s].s..toks[e - 1].e]);
 }
 
-// A type at pos. Sets ty_ref, ty_const and the span; reports a type
-// outside the subset and returns T_ERR.
+// Sets ty_ref, ty_const and the span; a type outside the subset is reported and gives T_ERR.
 fn parse_type() -> Ty {
     var r = ty(T_ERR);
     ty_s = pos;
@@ -664,7 +641,6 @@ recursive fn parse_postfix(ns: bool) -> i64 {
     return e;
 }
 
-// The arguments of call n, after `last` (the receiver of a.f(...), or -1).
 recursive fn parse_args(n: i64, last0: i64, ns: bool) -> bool {
     pos += 1;
     var last = last0;
@@ -828,8 +804,6 @@ recursive fn parse_if_stmt() -> i64 {
     return n;
 }
 
-// for x[, i] in e[..e2]: the header, after `for`, into node n. Shared by
-// statements and {#for}.
 recursive fn parse_for_head(n: i64) -> bool {
     if is("&") { bad_tok(pos); return false; }
     if !at_k(K_ID) || is_keyword(pos) { bad_tok(pos); return false; }
@@ -852,7 +826,6 @@ recursive fn parse_for_head(n: i64) -> bool {
     return true;
 }
 
-// let/var x[: T] = e, after the keyword, into node n (no `;`).
 recursive fn parse_let_head(n: i64) -> bool {
     if !at_k(K_ID) || is_keyword(pos) { bad_tok(pos); return false; }
     nodes[n].tok = pos;
@@ -1040,7 +1013,6 @@ fn parse_fn() {
     fns[fi].body = b;
 }
 
-// After a declaration the parser stopped in: the token after it.
 fn skip_decl(start: i64) {
     var i = start + 1;
     while toks[i].k != K_EOF {
@@ -1060,8 +1032,6 @@ fn skip_decl(start: i64) {
     pos = i;
 }
 
-// The script lines first_line..close-1 (0-based; the <script goose> line is
-// before them) into structs and functions. False when it reported errors.
 fn parse_script(first_line: i64, close: i64) -> bool {
     let before = nerr;
     pos = tokenize(line_start[first_line], line_start[close], first_line + 1);
@@ -1083,7 +1053,6 @@ fn parse_script(first_line: i64, close: i64) -> bool {
 
 // ---------------------------------------------------------------- names
 
-// The compact name number idx: a-z, A-Z, then two characters.
 fn short_name(idx: i64) -> u8[..8] {
     let first = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     let rest = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$";
@@ -1110,7 +1079,7 @@ fn name_taken(c: const u8[:]) -> bool {
     return false;
 }
 
-// A pretty name for a local: the Goose name, or name$N when that is taken.
+// The Goose name, or name$N when that is taken.
 fn pick_name(base: const u8[:]) -> u8[..72] {
     var c: u8[..72] = "";
     c.append(base);
@@ -1131,7 +1100,6 @@ fn begin_fn() {
     tmp_count = 0;
 }
 
-// A new variable named by token tok, in scope until its block ends.
 fn declare(tok: i64, t: Ty) -> i64 {
     check_reserved(tok);
     var v = Var { name: tok_name(tok), ty: t, js: "" };
@@ -1141,7 +1109,6 @@ fn declare(tok: i64, t: Ty) -> i64 {
     return vars.len - 1;
 }
 
-// A JavaScript-only temporary (a loop bound).
 fn temp_name() -> u8[..72] {
     var r: u8[..72] = "";
     if compact { r.append(next_short()); return r; }
@@ -1161,7 +1128,6 @@ fn lookup(tok: i64) -> i64 {
     return -1;
 }
 
-// Names for the helpers, render, zero and every function.
 fn assign_module_names() {
     for h in 9 {
         helper_js[h].clear();
@@ -1209,7 +1175,6 @@ fn arg_t(n: i64, i: i64) -> i64 {
     return if a < 0 { -1 } else { nodes[a].ty.t };
 }
 
-// Whitelisted function number for name token i, or B_NONE.
 fn builtin_of(i: i64) -> i64 {
     if tok_is(i, "min") { return B_MIN; }
     if tok_is(i, "max") { return B_MAX; }
@@ -1222,7 +1187,6 @@ fn builtin_of(i: i64) -> i64 {
     return B_NONE;
 }
 
-// Sets the type of call n from its arguments' types.
 fn type_call(n: i64) {
     let line = nodes[n].line;
     let r = nodes[n].ref;
@@ -1405,7 +1369,6 @@ recursive fn check_expr(n: i64) {
     cannot_type(line);
 }
 
-// A value the program reads: an error unless it has a type.
 fn want_value(n: i64) -> bool {
     let t = nodes[n].ty.t;
     if t == T_ERR { return false; }
@@ -1418,7 +1381,6 @@ fn is_lvalue(n: i64) -> bool {
     return k == E_NAME || k == E_FIELD || k == E_INDEX;
 }
 
-// The variables of a for header in node n (statement or {#for}).
 fn check_for_head(n: i64) {
     let it = nodes[n].a;
     check_expr(it);
@@ -1541,19 +1503,15 @@ fn check_fn(fi: i64) {
 
 fn w(s: const u8[:]) { js.append(s); }
 
-// Closes a block; compact mode drops the `;` before it.
 fn close_brace() {
     if compact && js.len > 0 && js[js.len - 1] == ';' { js.pop(); }
     w("}");
 }
 
-// true and false (compact: !0 and !1).
 fn w_bool(v: bool) {
     if compact { w(if v { "!0" } else { "!1" }); } else { w(if v { "true" } else { "false" }); }
 }
 
-// An operator or separator with spaces in pretty mode, without in compact.
-// In compact mode a space stays only between two name characters.
 fn wo(s: const u8[:]) {
     if !compact { js.append(s); return; }
     for c, i in s {
@@ -1579,7 +1537,6 @@ fn w_tok(i: i64) { js.append(text[toks[i].s..toks[i].e]); }
 
 fn w_var(v: i64) { js.append(vars[v].js); }
 
-// A JavaScript string literal for s.
 fn js_str(s: const u8[:]) {
     let hex = "0123456789abcdef";
     js.push('"');
@@ -1595,8 +1552,7 @@ fn js_str(s: const u8[:]) {
     js.push('"');
 }
 
-// An expression. top: the context delimits it, so a binary operation needs
-// no parentheses of its own.
+// top: the context delimits the expression, so a binary operation needs no parentheses.
 recursive fn emit_expr(n: i64, top: bool) {
     let k = nodes[n].k;
     if k == E_INT || k == E_STR { w_tok(nodes[n].tok); return; }
@@ -1769,7 +1725,6 @@ recursive fn emit_val(n: i64, target: Ty) {
     emit_expr(n, true);
 }
 
-// The header of a for loop, through its `{`.
 fn emit_for_head(n: i64) {
     let x = nodes[n].ref;
     let it = nodes[n].a;
@@ -1934,7 +1889,6 @@ recursive fn emit_stmt(n: i64) {
     }
 }
 
-// push, remove_at, clear and append, which change their first argument.
 recursive fn emit_builtin_stmt(n: i64) {
     let r = nodes[n].ref;
     let a = arg_at(n, 0);
@@ -1985,7 +1939,6 @@ recursive fn emit_builtin_stmt(n: i64) {
     }
 }
 
-// A comment naming the source line, above each function in pretty mode.
 fn emit_line_note(line: i64) {
     if compact { return; }
     js.append("\n// ");
@@ -1993,7 +1946,6 @@ fn emit_line_note(line: i64) {
     format(js, ":", line, "\n");
 }
 
-// One parsed function.
 fn emit_js_fn(i: i64) {
     let f = fns[i];
     emit_line_note(f.line);
@@ -2009,7 +1961,7 @@ fn emit_js_fn(i: i64) {
     if !compact { w("\n"); }
 }
 
-// zero(): the state every field at its default, as State { .. } gives it.
+// Every field at its default, as State { .. } gives it.
 recursive fn zero_obj(si: i64, depth: i64) {
     w("{");
     let first = structs[si].first;
@@ -2051,7 +2003,6 @@ fn emit_zero() {
     if !compact { w("\n"); }
 }
 
-// component("Name", { render, zero, handlers: {...}, tests: {...} });
 fn emit_component_call() {
     if !compact { w("\n"); }
     helper(H_COMPONENT);
@@ -2086,13 +2037,11 @@ fn emit_component_call() {
 
 // ---------------------------------------------------------------- markup
 
-// Markup text for both outputs.
 fn mtext(s: const u8[:]) {
     gtext.append(s);
     pend.append(s);
 }
 
-// Goose: writes pending text, then code.
 fn g_flush() {
     if gtext.len > 0 {
         gline.append("out.append(\"");
@@ -2107,7 +2056,6 @@ fn g_code(s: const u8[:]) {
     gline.append(s);
 }
 
-// JavaScript: `o += piece + piece ...;`
 fn cat_start() {
     if cat_open { return; }
     nl();
@@ -2135,8 +2083,7 @@ fn cat_close() {
     if cat_open { w(";"); cat_open = false; }
 }
 
-// Before an expression piece. A raw piece first in the statement is
-// prefixed with "" so + concatenates.
+// A raw piece first in the statement is prefixed with "" so + concatenates.
 fn cat_expr(raw: bool) {
     cat_pend();
     cat_start();
@@ -2144,14 +2091,12 @@ fn cat_expr(raw: bool) {
     cat_plus();
 }
 
-// One gw_check line, tagged with its source line so gweb can map a
-// compiler error in it back to the markup.
+// Tagged with the source line so gweb can map a compiler error back to the markup.
 fn chk_line(s: const u8[:], line: i64) {
     chk.append(s);
     format(chk, "   // gw:line ", line, "\n");
 }
 
-// Tokenizes and parses the expression text[s..e]; -1 after an error.
 fn parse_tag_expr(s: i64, e: i64, line: i64) -> i64 {
     pos = tokenize(s, e, line);
     perr = false;
@@ -2161,7 +2106,6 @@ fn parse_tag_expr(s: i64, e: i64, line: i64) -> i64 {
     return n;
 }
 
-// {e} (raw: {#raw e}).
 fn m_expr(s: i64, e: i64, line: i64, raw: bool) {
     g_flush();
     format(gline, if raw { "web::raw(out, " } else { "web::put(out, " }, text[s..e], "); ");
@@ -2185,7 +2129,6 @@ fn open_tag(kind: u8, line: i64) {
     opens.push(Open { kind: kind, line: line, mark: scope.len });
 }
 
-// {#if c} and {#else if c}.
 fn m_if(s: i64, e: i64, line: i64, else_if: bool) {
     g_flush();
     var head: u8[>..] = [];
@@ -2290,7 +2233,6 @@ fn m_let(s: i64, e: i64, line: i64) {
     w(";");
 }
 
-// on:EVENT="name" or on:EVENT="name(a, b)"; value text[vs..ve].
 fn m_on(event: const u8[:], vs: i64, ve: i64, line: i64) {
     let n = parse_tag_expr(vs, ve, line);
     if n < 0 { return; }
@@ -2344,7 +2286,6 @@ fn m_on(event: const u8[:], vs: i64, ve: i64, line: i64) {
     chk_line(call, line);
 }
 
-// bind:value="field" or bind:checked="field".
 fn m_bind(what: const u8[:], vs: i64, ve: i64, line: i64) {
     let field = trim(text[vs..ve]);
     let fi = find_field(find_struct("State"), field);
@@ -2379,7 +2320,6 @@ fn m_bind(what: const u8[:], vs: i64, ve: i64, line: i64) {
         mtext(t);
         return;
     }
-    // checked: {#if s.field}checked{/if} data-bind="field"
     format(code, "if s.", field, " { ");
     g_code(code);
     gtext.append("checked");
@@ -2402,7 +2342,6 @@ fn m_bind(what: const u8[:], vs: i64, ve: i64, line: i64) {
     mtext(t);
 }
 
-// The first on: or bind: attribute in text[p..e] that follows white space.
 fn next_attr(p: i64, e: i64) -> i64 {
     for i in p..e {
         if i == 0 { continue; }
@@ -2413,9 +2352,7 @@ fn next_attr(p: i64, e: i64) -> i64 {
     return -1;
 }
 
-// Markup text text[s..e] with its on: and bind: attributes rewritten. The value
-// takes double or single quotes, so on:click='say("x")' works; there is no
-// escape syntax, and the output attributes are always double-quoted.
+// Attribute values take double or single quotes; there is no escape syntax, and output attributes are always double-quoted.
 fn m_text(s: i64, e: i64, line: i64) {
     var p = s;
     while p < e {
@@ -2449,7 +2386,6 @@ fn m_text(s: i64, e: i64, line: i64) {
     }
 }
 
-// The trimmed text[s..e].
 fn trim_s(s: i64, e: i64) -> i64 {
     var a = s;
     while a < e && (text[a] == ' ' || text[a] == '\t') { a += 1; }
@@ -2462,7 +2398,6 @@ fn trim_e(s: i64, e: i64) -> i64 {
     return b;
 }
 
-// One markup line (0-based li); writes its Goose line.
 fn markup_line(li: i64, last: bool, goose_out: u8[>..]&) {
     let ln = li + 1;
     let base = line_start[li];
@@ -2538,8 +2473,6 @@ fn markup_line(li: i64, last: bool, goose_out: u8[>..]&) {
     if !compact { cat_close(); }
 }
 
-// The markup lines first_line.. (0-based) into render: Goose lines, the JS
-// render function, and gw_check's body in chk.
 fn compile_markup(first_line: i64, render_line: i64, goose_out: u8[>..]&) {
     begin_fn();
     var st = ty(T_STRUCT);
@@ -2599,7 +2532,6 @@ fn compile_markup(first_line: i64, render_line: i64, goose_out: u8[>..]&) {
     if !compact { w("\n"); }
 }
 
-// gw_json: one overload per struct, the fields in declaration order.
 fn emit_json_writer(out: u8[>..]&) {
     for sd in structs {
         format(out, "fn gw_json(out: u8[>..]&, s: const ", sd.name, "&) { ");
@@ -2618,7 +2550,6 @@ fn emit_json_writer(out: u8[>..]&) {
     }
 }
 
-// Structural rules: State exists, and holds the only array, last.
 fn check_structs() {
     let si = find_struct("State");
     if si < 0 { report(1, "a component needs struct State { ... } in its <script goose> block"); }
@@ -2631,8 +2562,7 @@ fn check_structs() {
     }
 }
 
-// The parity tests (test_* functions) of the component compile() last read,
-// one name per line.
+// The parity tests of the component compile() last read, one name per line.
 fn test_names() -> u8[>..] {
     var r: u8[>..] = [];
     for f in fns { if f.test && f.body >= 0 { r.append(f.name); r.push('\n'); } }
@@ -2667,10 +2597,8 @@ fn reset() {
     cat_open = false;
 }
 
-// Translates components/Name.gshtml (src, at path). compact picks the
-// production JavaScript. Errors go to errs as `path:LINE: error: MSG`
-// lines; false when there were any. goose_out is written even then, so the
-// Goose compiler can report its own errors too.
+// Errors go to errs as `path:LINE: error: MSG` lines; false when there were any.
+// goose_out is written even then, so the Goose compiler can report its own errors.
 fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: bool,
            goose_out: u8[>..]&, js_out: u8[>..]&, errs: u8[>..]&) -> bool {
     reset();
@@ -2703,7 +2631,6 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
         errs.append(errs_buf);
         return false;
     }
-    // Goose: header, the script as it is, render's header.
     format(goose_out, "namespace ", name, "; import std; import json; import web; import web.template;\n");
     for li in 1..close {
         goose_out.append(text[line_start[li]..line_end[li]]);
@@ -2725,7 +2652,6 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
     if close + 1 >= nlines { goose_out.append("}\n"); }
     emit_zero();
     emit_component_call();
-    // The generated tail.
     goose_out.append("fn gw_check(s: const State&) { var gw_w = State { .. };\n");
     goose_out.append(chk);
     goose_out.append("}\n");
@@ -2733,7 +2659,6 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
     format(goose_out, "fn component(out: u8[>..]&, s: const State&) { out.append(\"<div data-component=\\\"", name,
            "\\\">\"); render(out, s); out.append(\"</div><script type=\\\"application/json\\\">\"); gw_json(out, s); ",
            "out.append(\"</script><script type=\\\"module\\\" src=\\\"/_gw/", name, ".js\\\"></script>\"); }\n");
-    // JavaScript: the import line, then the body.
     if compact {
         js_out.append("import{");
         var first = true;

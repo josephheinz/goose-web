@@ -1,8 +1,5 @@
-/* The transport between goose-web workers and the state owner (main).
-   One AF_UNIX SOCK_STREAM socketpair per worker, made before the workers
-   start. A frame is a 4-byte little-endian length and the payload (a
-   to_bytes image). The owner poll()s every pair and serves ready requests
-   round robin; each worker blocks for its own reply. */
+/* Transport between goose-web workers and the state owner. One AF_UNIX socketpair per worker;
+   a frame is a 4-byte little-endian length and the payload. */
 #include "goose.h"
 
 #include <stdint.h>
@@ -69,7 +66,6 @@ int32_t gweb_chans_worker_fd(uint64_t h, int32_t i) {
     return (i >= 0 && i < c->n) ? c->worker[i] : -1;
 }
 
-/* Sends one frame. 1 on success. */
 int32_t gweb_send_frame(int32_t fd, gweb_bytes payload) {
     uint8_t len[4] = { (uint8_t)payload.len, (uint8_t)(payload.len >> 8),
                        (uint8_t)(payload.len >> 16), (uint8_t)(payload.len >> 24) };
@@ -91,14 +87,12 @@ int32_t gweb_recv_frame(int32_t fd, gs_rref out) {
     return ok;
 }
 
-/* Receive timeout for a worker's end, in milliseconds. */
 void gweb_set_recv_timeout(int32_t fd, int64_t ms) {
     struct timeval tv = { (time_t)(ms / 1000), (suseconds_t)((ms % 1000) * 1000) };
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
 }
 
-/* The owner waits for the next request from any worker, round robin, and
-   appends its payload to out. Returns the worker index, or -1 on an error. */
+/* Blocks for the next request from any worker, round robin. Returns the worker index, or -1 on an error. */
 int32_t gweb_owner_next(uint64_t h, gs_rref out) {
     gweb_chans *c = (gweb_chans *)(uintptr_t)h;
     for (;;) {
