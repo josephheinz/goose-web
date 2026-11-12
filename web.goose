@@ -5,7 +5,7 @@ namespace web;
 
 import std;
 import os;
-import net from "../goose-net";
+import net;   // the root file declares it: import net from "OWNER/goose-net@<tag>";
 import net.http;
 import json;
 

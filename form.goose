@@ -3,7 +3,7 @@
 namespace web;
 
 import std;
-import net from "../goose-net";
+import net;
 import net.http;
 import web;
 
