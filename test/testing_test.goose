@@ -58,22 +58,22 @@ fn main() {
 
     // status and body
     let r1 = send(t, "POST", "/echo", "hello");
-    web::expect_status(t, r1, 200);
+    web::expect_status(t, copy(r1), 200);
     web::expect_contains(t, r1.body, "POST:hello");
     check_eq(r1.body, "POST:hello", "echo body");
-    web::expect_header(t, r1, "content-type", "text/plain; charset=utf-8");
+    web::expect_header(t, copy(r1), "content-type", "text/plain; charset=utf-8");
     let r404 = send(t, "GET", "/nope", "");
-    web::expect_status(t, r404, 404);
+    web::expect_status(t, copy(r404), 404);
 
     // HEAD has an empty body
     let rh = send(t, "HEAD", "/who", "");
-    web::expect_status(t, rh, 200);
+    web::expect_status(t, copy(rh), 200);
     check(rh.body.len == 0, "HEAD body empty");
 
     // trailing slash
     let rs = send(t, "GET", "/echo/?a=1", "");
-    web::expect_status(t, rs, 308);
-    web::expect_header(t, rs, "Location", "/echo?a=1");
+    web::expect_status(t, copy(rs), 308);
+    web::expect_header(t, copy(rs), "Location", "/echo?a=1");
 
     // the jar keeps a cookie, sends it, and Max-Age=0 removes it
     var t2 = web::Tester { .. };
@@ -93,7 +93,7 @@ fn main() {
     var t3 = web::Tester { .. };
     t3.name.append("csrf");
     let rg = send(t3, "POST", "/guard", "x=1");
-    web::expect_status(t3, rg, 200);
+    web::expect_status(t3, copy(rg), 200);
     check_eq(rg.body, "guarded", "guarded body");
     check_eq(t3.cookies, "gw_csrf=00000000000000000000000000000000", "fixed token in the jar");
     var t4 = web::Tester { .. };
@@ -111,7 +111,7 @@ fn main() {
 
     // static index
     let rst = send(t, "GET", "/static", "");
-    web::expect_status(t, rst, 200);
+    web::expect_status(t, copy(rst), 200);
     check_eq(rst.body, "STATIC", "static bytes");
     check(send(t, "HEAD", "/static", "").body.len == 0, "HEAD static body empty");
 
@@ -133,9 +133,9 @@ fn main() {
     tf.name.append("expected-failure");
     web::expect(tf, true, "fine");
     web::expect(tf, false, "deliberate");
-    web::expect_status(tf, r1, 500);
+    web::expect_status(tf, copy(r1), 500);
     web::expect_contains(tf, "abc", "zzz");
-    web::expect_header(tf, r1, "x-none", "v");
+    web::expect_header(tf, copy(r1), "x-none", "v");
     check(tf.checks == 5 && tf.failures == 4, "failing expects count");
 
     failures += t.failures + t2.failures + t3.failures + t4.failures;

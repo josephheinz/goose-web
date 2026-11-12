@@ -102,7 +102,7 @@ fn parse_q(s: const u8[:]) -> i64 {
     var i = 2;
     while i < s.len {
         if s[i] < '0' || s[i] > '9' { return -1; }
-        q += (s[i] - '0') as i64 * scale;
+        q += (s[i] - '0') * scale;
         scale = scale / 10;
         i += 1;
     }
