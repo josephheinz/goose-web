@@ -6,7 +6,7 @@ project into one native binary that serves on every core.
 
 ```
 gweb new mysite && cd mysite
-GOOSE=/path/to/goose gweb dev          # rebuilds and restarts on every change
+GOOSE=/path/to/goose gweb dev          # http://localhost:60053, rebuilds and restarts on every change
 ```
 
 The design is in [DESIGN.md](DESIGN.md). [DESIGN-ADDENDUM-1.md](DESIGN-ADDENDUM-1.md)
@@ -86,7 +86,7 @@ gweb [-C dir] new <dir>      a starter project
 gweb gen                     write .gooseweb/ only
 gweb build [--debug]         gen, then goose build to .gooseweb/server
 gweb start [flags]           build and run (--port N --workers N --log --idle-ms N --max-body N)
-gweb dev [flags]             build, run with --log on 2 workers, rebuild on change
+gweb dev [flags]             build, run with --log on 2 workers and port 60053 (unless --port), rebuild on change
 gweb routes                  the route table (GET,POST and a frag line for each fragment)
 gweb test                    component parity: test_* functions as Goose and as JavaScript
 ```

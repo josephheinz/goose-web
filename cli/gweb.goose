@@ -1790,8 +1790,14 @@ fn server_cmd(extra: u8[:][:], dev: bool) -> u8[>..] {
     cmd.append("./.gooseweb/server");
     if dev {
         var has_workers = false;
-        for a in extra { if a == "--workers" { has_workers = true; } }
+        var has_port = false;
+        for a in extra {
+            if a == "--workers" { has_workers = true; }
+            if a == "--port" { has_port = true; }
+        }
         if !has_workers { cmd.append(" --workers 2"); }
+        // gweb dev's default port; gweb start and the server keep 3000.
+        if !has_port { cmd.append(" --port 60053"); }
         cmd.append(" --log");
         // A fresh build id per spawn: open pages poll it and reload when it changes.
         format(cmd, " --dev-id ", (time() * 1000.0) as i64);
@@ -1953,7 +1959,7 @@ usage: gweb [-C dir] <command>
   gen               write .gooseweb/ only
   build [--debug]   gen, then goose build to .gooseweb/server
   start [flags]     build, then run the server (flags go to it: --port N --workers N --log ...)
-  dev [flags]       build, run, and rebuild on every change under app/, lib/, public/
+  dev [flags]       build, run on port 60053 (unless --port), and rebuild on every change under app/, lib/, public/, components/
   routes            print the route table
   test              run each component's test_* functions as Goose and as JavaScript; they must match
 
