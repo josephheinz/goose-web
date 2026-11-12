@@ -1,6 +1,12 @@
-gweb
-test/manual
-test/owner_test
-test/cookie_test
+/gweb
+test/*
+!test/*.*
+!test/*/
 .gooseweb/
+.gooseweb.dev/
 *.o
+*.dSYM/
+*.db-journal
+*.db-wal
+*.db-shm
+.DS_Store
