@@ -6,7 +6,7 @@
 # 1. Each client/*.min.js carries the FNV-1a hash of its source in its banner
 #    (client/build.sh writes it), so a stale minified file fails.
 # 2. Each existing .min.js is under its byte ceiling.
-# 3. test/morph.sh passes.
+# 3. test/morph.sh and test/reactive.sh pass.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(dirname "$HERE")
@@ -43,6 +43,7 @@ pass=$((pass + nok))
 fail=$((fail + nfail))
 
 if sh "$HERE/morph.sh"; then ok; else bad "test/morph.sh"; fi
+if sh "$HERE/reactive.sh"; then ok; else bad "test/reactive.sh"; fi
 
 echo "runtime: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
