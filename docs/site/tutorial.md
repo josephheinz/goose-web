@@ -19,7 +19,7 @@ GOOSE=/path/to/goose gweb dev
 
 Open <http://localhost:60053>. `gweb dev` rebuilds and restarts on every
 change. The starter has a home page, a hello page, a time route and a
-404 page. We replace the home page and the layout, and leave the rest.
+404 page. Delete everything under `app/`; the steps below write it again.
 
 ## 2. A layout
 
