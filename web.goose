@@ -14,7 +14,7 @@ import json;
 struct Params { n: i64, names: u8[..32][8], values: u8[..256][8],
                 rest_name: u8[..32] = "", rest: u8[..1024] = "" }   // the catch-all tail has its own, larger field
 
-enum Outcome { Continue, NotFound, Redirect }
+enum Outcome { Continue, NotFound, Redirect, Error }
 
 // Ctx holds no references or slices, so a handler may shrink res while it still reads req and ctx.
 struct Ctx {
@@ -31,7 +31,10 @@ struct Ctx {
     status: i64 = 0,          // a page's status override; 0 = none (set_status, unprocessable)
     spool: u8[..256] = "",    // the spool file of an Event.Spooled request; "" otherwise. run_worker deletes it after the reply
     uploads: Upload[..8] = [],        // the files multipart_begin wrote; run_worker deletes the unsaved ones after the reply
-    upload_dir: u8[..256] = ""        // where multipart_begin puts them (Config.upload_dir); set by run_worker
+    upload_dir: u8[..256] = "",       // where multipart_begin puts them (Config.upload_dir); set by run_worker
+    route: i64 = -1,                  // the dispatcher's matched dir index; finish picks the nearest error.html with it
+    error_status: i64 = 0,            // web::fail's status and message, read by the generated error_reply
+    error_message: u8[..512] = ""
 }
 
 // A file of a multipart post (web::upload). Lives here because Ctx holds it.
@@ -335,6 +338,10 @@ extern fn c_up_mkdir(path: const u8[:]) -> i32 = "gweb_up_mkdir";
 extern fn c_up_sweep(dir: const u8[:]) -> i64 = "gweb_up_sweep";
 extern fn c_up_unlink(path: const u8[:]) -> i32 = "gweb_up_unlink";
 
+extern fn c_if_set_loop(slot: i64, handle: u64) = "gweb_inflight_set_loop";
+extern fn c_if_begin(slot: i64, fd: i32, raw: const u8[:]) = "gweb_inflight_begin";
+extern fn c_if_end(slot: i64) = "gweb_inflight_end";
+
 extern fn c_performance_cores() -> i64 = "gweb_performance_cores";
 
 // min(performance cores, 4); hardware threads where cores are unknown.
@@ -398,6 +405,8 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
     } else {
         print("warning: cannot create upload dir ", cfg.upload_dir, "; uploads are limited to --max-body");
     }
+    // D12: the supervisor frees this loop, and answers the request in flight, if the worker aborts.
+    c_if_set_loop(slot, lp.handle);
     var raw: u8[>..] = [];
     loop {
         raw.clear();
@@ -414,6 +423,7 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                     if sp.len > ctx.spool.cap { c_up_unlink(sp); spool_ok = false; } else { ctx.spool.append(sp); }
                 }
                 let req, parsed = http::parse_request(raw);
+                c_if_begin(slot, conn.fd, raw);
                 var keep = false;
                 var static_index = -1;
                 var dev_request = false;
@@ -450,6 +460,7 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                 };
                 if cfg.log && !dev_request { print("[", slot, "] ", req.method_text, " ", req.target, " -> ", res.status); }
                 if !sent || !keep { lp.close_connection(conn); }
+                c_if_end(slot);
                 // The reply is out: delete the spool file and every upload not saved (a saved one is gone, so its unlink fails harmlessly).
                 if ctx.spool.len > 0 { c_up_unlink(ctx.spool); }
                 for i in ctx.uploads.len {
@@ -500,6 +511,9 @@ fn dev_inject(res: http::Response&, dev_id: i64) {
     res.body.append("""if(box.textContent!==t)box.textContent=t}""");
     res.body.push('\n');
     res.body.append("""addEventListener("gw:error",function(e){isl+=(isl?"\n":"page error (click to dismiss)\n\n")+e.detail;draw()});""");
+    res.body.push('\n');
+    // A server error page carries its detail (errors.goose, D13) in <script type="application/json" id="gw-dev-error">.
+    res.body.append("""addEventListener("load",function(){var s=document.getElementById("gw-dev-error");if(s){try{isl="server error (click to dismiss)\n\n"+JSON.parse(s.textContent)}catch(x){}draw()}});""");
     res.body.push('\n');
     res.body.append("""setInterval(function(){fetch("/__gweb/id",{cache:"no-store"}).then(function(r){return r.text()}).then(function(t){fails=0;var n=t.indexOf("\n"),cur=n<0?t:t.slice(0,n),errs=n<0?"":t.slice(n+1);if(cur!==id){location.reload();return}sys=errs.trim()?"build failed\n\n"+errs:"";draw()}).catch(function(){if(++fails>=4){sys="gweb dev: the server is not responding";draw()}})},500)})();</script>""");
 }

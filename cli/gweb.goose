@@ -37,7 +37,8 @@ struct Dir {
     frags: u8[..600],      // the page's fragment names, space-separated
     route_ns: u8[..200], page_ns: u8[..200], layout_ns: u8[..32], mw_ns: u8[..32],
     page_csrf: bool = false, layout_csrf: bool = false, csrf_const: bool = false,   // csrf_const: route.goose declares const CSRF
-    max_upload: bool = false      // page.goose or route.goose declares const MAX_UPLOAD
+    max_upload: bool = false,     // page.goose or route.goose declares const MAX_UPLOAD
+    error_html: bool = false, error_ns: u8[..32] = "", error_csrf: bool = false   // error.html in this folder (DESIGN-ADDENDUM-14, D10)
 }
 
 struct Static { url: u8[..512], file: u8[..512], ctype: u8[..64], etag: u8[..24] }
@@ -48,6 +49,7 @@ struct Target { path: u8[..512], line: i64, url: u8[..512], name: u8[..64], post
 let K_PAGE = 0;
 let K_LAYOUT = 1;
 let K_NOT_FOUND = 2;
+let K_ERROR = 3;
 
 let METHODS =["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
 let VARIANTS = ["Get", "Head", "Post", "Put", "Patch", "Delete", "Options"];
@@ -212,6 +214,7 @@ fn scan_dir(rel: const u8[:], todo: u8[..512][>..]&) {
         else if name == "page.goose" { d.page_goose = true; }
         else if name == "layout.html" { d.layout = true; }
         else if name == "middleware.goose" { d.middleware = true; }
+        else if name == "error.html" { d.error_html = true; }
         else if name == "not-found.html" {
             if rel.len == 0 { has_not_found = true; } else { err(full, 0, "not-found.html belongs in app/ only"); }
         }
@@ -229,6 +232,7 @@ fn scan_dir(rel: const u8[:], todo: u8[..512][>..]&) {
     if d.page_html { n.clear(); format(n, "p", i); if sl.len > 0 { format(n, "_", sl); } d.page_ns.append(n[..min(n.len, 200)]); }
     if d.layout { n.clear(); format(n, "l", i); d.layout_ns.append(n); }
     if d.middleware { n.clear(); format(n, "m", i); d.mw_ns.append(n); }
+    if d.error_html { n.clear(); format(n, "e", i); d.error_ns.append(n); }
     dirs.push(d);
     // Children go on the stack last-first, so they come off in sorted order.
     let subs = split(subdirs, '\n');
@@ -603,7 +607,7 @@ fn imports_of(src: const u8[:], out: u8[>..]&) {
 }
 
 fn add_default_imports(imports: u8[>..]&) {
-    for imp in ["import std;", "import net.http;", "import web;", "import web.template;"] {
+    for imp in ["import std;", "import net.http;", "import web;", "import web.template;", "import web.valid;"] {
         if find(imports, imp) < 0 { imports.append(imp); imports.push(' '); }
     }
     for n in component_names {
@@ -1144,8 +1148,8 @@ fn middleware_after(m: u8[>..]&, d: const Dir&, rq: const u8[:]) {
 // DESIGN-ADDENDUM-14 D9: the MAX_UPLOAD check, then multipart turned into a plain form in r.
 fn gen_upload_prelude(m: u8[>..]&, ns: const u8[:], max_upload: bool) {
     if max_upload {
-        // step 5: web::fail(ctx, 413, "The upload is too large.") replaces the http::text call.
-        format(m, "    if ", ns, "::MAX_UPLOAD > 0 && web::content_length(req) > ", ns, "::MAX_UPLOAD { http::text(res, http::Status.PayloadTooLarge, \"413 the upload is too large\\n\"); return; }\n");
+        // The dispatcher calls finish after this function returns, and finish answers the Error outcome.
+        format(m, "    if ", ns, "::MAX_UPLOAD > 0 && web::content_length(req) > ", ns, "::MAX_UPLOAD { web::fail(ctx, 413, \"The upload is too large.\"); return; }\n");
     }
     m.append("    var mp: u8[>..] = [];\n    var r = req;\n");
     m.append("    if web::is_multipart(req) { if !web::multipart_begin(req, ctx, res, mp) { return; } r.body = mp; }\n");
@@ -1355,7 +1359,7 @@ fn gen_dispatch(m: u8[>..]&) {
             }
             let call_kind = if d.route { "route_" } else { "page_" };
             var call: u8[>..] = [];
-            format(call, call_kind, i, "(req, ctx, res);");
+            format(call, "ctx.route = ", i, "; web::inflight_route(ctx.worker, ", i, "); ", call_kind, i, "(req, ctx, res);");
             var body: u8[>..] = [];
             if params.len > 0 { format(body, "if ", params, " { ", call, " } else { web::not_found(ctx); } finish(req, ctx, res); return -1;"); }
             else { format(body, call, " finish(req, ctx, res); return -1;"); }
@@ -1419,7 +1423,73 @@ fn gen_finish(m: u8[>..]&) {
     } else {
         m.append("            res.body.clear();\n            web::plain_not_found(res);\n");
     }
-    m.append("        },\n        Redirect => web::apply_redirect(ctx, res),\n    }\n}\n");
+    m.append("        },\n        Redirect => web::apply_redirect(ctx, res),\n");
+    // Phase 1: a crash while this renders makes the supervisor start at attempt 2 (D12).
+    m.append("        Error => { web::inflight_phase(ctx.worker, 1); error_reply(ctx.route, 1, req, ctx, res, \"\"); },\n    }\n}\n");
+}
+
+// The dir index of the error.html a page or route in rel uses (D10): the nearest at or above its folder; -1 for none.
+fn nearest_error(rel: const u8[:]) -> i64 {
+    var best = -1;
+    var best_len = -1;
+    for o, k in dirs {
+        if o.error_html && is_ancestor(o.rel, rel) && o.rel.len > best_len { best = k; best_len = o.rel.len; }
+    }
+    return best;
+}
+
+// error_reply: attempt 1 renders the nearest error.html inside the layouts at or above the error file's folder;
+// attempt 2 (after a crash in attempt 1) renders it bare. No error.html: the built-in page. A route.goose dir: JSON.
+// why is the abort text of a crash, "" for a web::fail.
+fn gen_error_reply(m: u8[>..]&) {
+    let root = nearest_error("");
+    m.append("var gw_dev = false;\n\n");
+    m.append("fn error_at(route: i64) -> i64 {\n    match route {\n");
+    for d, i in dirs {
+        if !d.route && !d.page_html { continue; }
+        let e = nearest_error(d.rel);
+        if e >= 0 && e != root { format(m, "        ", i, " => { return ", e, "; },\n"); }
+    }
+    format(m, "        _ => {},\n    }\n    return ", root, ";\n}\n\n");
+    m.append("fn error_reply(route: i64, attempt: i64, req: const http::Request&, ctx: web::Ctx&, res: http::Response&, why: const u8[:]) {\n");
+    m.append("    let crashed = !(ctx.outcome == web::Outcome.Error);\n");
+    m.append("    var status: i64 = 500;\n    var message: u8[..512] = \"Internal Server Error\";\n");
+    m.append("    if !crashed { status = ctx.error_status; message.clear(); message.append(ctx.error_message); }\n");
+    m.append("    var info = web::new_error(status, message, crashed);\n");
+    m.append("    if why.len > 0 { web::log_error(info, req, why); } else { web::log_error(info, req, message); }\n");
+    m.append("    if gw_dev { web::dev_detail(info, req, why); }\n");
+    m.append("    res.headers.clear();\n");
+    var api: u8[>..] = [];
+    for d, i in dirs {
+        if !d.route { continue; }
+        if api.len > 0 { api.append(" || "); }
+        format(api, "route == ", i);
+    }
+    if api.len > 0 { format(m, "    if ", api, " { web::error_json(res, info); return; }\n"); }
+    m.append("    ctx.title.clear();\n    web::error_start(res, info);\n");
+    m.append("    match error_at(route) {\n");
+    for e, k in dirs {
+        if !e.error_html { continue; }
+        var csrf = e.error_csrf;
+        var wrapped: u8[>..] = [];
+        var closes = 0;
+        for o in dirs {
+            if o.layout && is_ancestor(o.rel, e.rel) {
+                format(wrapped, o.layout_ns, "::render(res.body, req, ctx) { ");
+                closes += 1;
+                if o.layout_csrf { csrf = true; }
+            }
+        }
+        format(wrapped, e.error_ns, "::render(res.body, req, ctx, info);");
+        for c in closes { wrapped.append(" };"); }
+        format(m, "        ", k, " => {\n            ");
+        if csrf { m.append("if web::csrf_begin(req, ctx, res) { "); }
+        if closes > 0 { format(m, "if attempt == 1 { ", wrapped, " } else { ", e.error_ns, "::render(res.body, req, ctx, info); }"); }
+        else { format(m, e.error_ns, "::render(res.body, req, ctx, info);"); }
+        m.append(if csrf { " }\n        },\n" } else { "\n        },\n" });
+    }
+    m.append("        _ => web::builtin_page(res.body, info),\n    }\n");
+    m.append("    if gw_dev { web::dev_error_script(res.body, info); }\n}\n");
 }
 
 fn gen_main() -> u8[>..] {
@@ -1429,12 +1499,13 @@ fn gen_main() -> u8[>..] {
     m.append("import web from \""); lit(m, pkg_source(0)); m.append("\";\n");
     m.append("import net from \""); lit(m, pkg_source(1)); m.append("\";\n");
     if uses_sqlite { m.append("import sqlite from \""); lit(m, pkg_source(2)); m.append("\";\n"); }
-    m.append("import net.http;\nimport web.template;\nimport web.static;\nimport web.owner;\nimport web.form;\nimport web.csrf;\nimport web.valid;\nimport web.upload;\n");
+    m.append("import net.http;\nimport web.template;\nimport web.static;\nimport web.owner;\nimport web.form;\nimport web.csrf;\nimport web.valid;\nimport web.upload;\nimport web.errors;\n");
     for d in dirs {
         if d.route { format(m, "import ", d.route_ns, ";\n"); }
         if d.page_html { format(m, "import ", d.page_ns, "_html;\n"); if d.page_goose { format(m, "import ", d.page_ns, ";\n"); } }
         if d.layout { format(m, "import ", d.layout_ns, ";\n"); }
         if d.middleware { format(m, "import ", d.mw_ns, ";\n"); }
+        if d.error_html { format(m, "import ", d.error_ns, ";\n"); }
     }
     if has_not_found { m.append("import nf;\n"); }
     if has_state {
@@ -1450,6 +1521,8 @@ fn gen_main() -> u8[>..] {
         if d.page_html { gen_page_fn(m, d, i); }
     }
     m.append("\n");
+    gen_error_reply(m);
+    m.append("\n");
     gen_finish(m);
     m.append("\n");
     gen_dispatch(m);
@@ -1458,10 +1531,44 @@ thread_fn worker(slot: i64, server: net::Socket, owner_fd: i32, cfg: web::Config
     web::run_worker(slot, server, owner_fd, cfg, dispatch, static_bytes);
 }
 
+// D12: answers the request the dead worker held. Runs contained, so a crash here only costs this attempt.
+// The head buffer lives as long as the Request parsed from it. Returning normally means the reply is sent.
+thread_fn crash_reply(slot: i64, cfg: web::Config, attempt: i64) {
+    var head: u8[>..] = [];
+    var abort_text: u8[>..] = [];
+    web::crash_info(slot, head, abort_text);
+    let req, parsed = http::parse_request(head);
+    match parsed {
+        Ready => {
+            var ctx = web::new_ctx(slot, -1);
+            var res = http::new_response();
+            error_reply(web::inflight_route_of(slot), attempt, req, ctx, res, abort_text);
+            web::apply_cookies(ctx, res);
+            web::dev_inject(res, cfg.dev_id);
+            http::send_response(web::inflight_conn(slot), res, req.method == http::Method.Head, false);
+        },
+        _ => web::plain_500(slot),
+    }
+}
+
+// After an abort with a request in flight: attempt 1, then 2, then a fixed plain 500; a crash during a web::fail
+// render (phase 1) skips attempt 1. Then the dead worker's loop is freed, which closes its connections.
 thread_fn supervisor(slot: i64, server: net::Socket, owner_fd: i32, cfg: web::Config) {
     var why: u8[>..] = [];
     while !thread_wait(thread_spawn_contained(worker, slot, server, owner_fd, cfg), why) {
         print("goose-web: worker ", slot, " stopped: ", why, "; restarting it");
+        if web::inflight_pending(slot) {
+            web::inflight_set_why(slot, why);
+            var attempt = if web::inflight_phase_of(slot) == 1 { 2 } else { 1 };
+            var answered = false;
+            while attempt <= 2 && !answered {
+                var attempt_why: u8[>..] = [];
+                answered = thread_wait(thread_spawn_contained(crash_reply, slot, cfg, attempt), attempt_why);
+                attempt += 1;
+            }
+            if !answered { web::plain_500(slot); }
+        }
+        web::inflight_release(slot);
         why.clear();
     }
 }
@@ -1470,6 +1577,8 @@ fn main() {
     let cfg = web::config_from_args();
     let server = net::listen(cfg.port, cfg.host, 1024);
     guard server.ok() else { print("goose-web: cannot listen on port ", cfg.port, ": ", net::last_error()); exit(1); }
+    gw_dev = cfg.dev_id != 0;
+    web::inflight_init(cfg.workers);
 
 """);
     if has_state {
@@ -1674,6 +1783,18 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
             add_default_imports(imports);
             gen_template(src, d.layout_ns, d.layout_ns,
                          "fn render<F>(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&)", imports, K_LAYOUT, -1, frags);
+        }
+        if d.error_html {
+            var src: u8[>..] = [];
+            app_path(src, d.rel, "error.html");
+            var imports: u8[>..] = [];
+            var frags: u8[>..] = [];
+            var text: u8[>..] = [];
+            if read_file(src, text) { d.error_csrf = mentions_csrf(text); }
+            add_default_imports(imports);
+            imports.append("import web.errors; ");
+            gen_template(src, d.error_ns, d.error_ns,
+                         "fn render(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&, err: const web::ErrorInfo&)", imports, K_ERROR, -1, frags);
         }
         if d.page_html {
             var imports: u8[>..] = [];
