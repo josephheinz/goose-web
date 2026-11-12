@@ -94,13 +94,13 @@ fn parse_part_head(h: const u8[:], name: u8[>..]&, filename: u8[>..]&, ctype: u8
 
 struct Part {
     is_file: bool, name: u8[..256], filename: u8[..128], ctype: u8[..96],
-    text: u8[>..],             // a text field's value so far
     fd: i32, size: i64, path: u8[..256],   // a file part's temp file
-    count: i64                 // parts begun
+    count: i64,                // parts begun
+    text: u8[>..]              // a text field's value so far (last: resizable)
 }
 
 fn new_part() -> Part {
-    Part { is_file: false, name: "", filename: "", ctype: "", text: [], fd: -1, size: 0, path: "", count: 0 }
+    Part { is_file: false, name: "", filename: "", ctype: "", fd: -1, size: 0, path: "", count: 0, text: [] }
 }
 
 // Closes and deletes the file of a part that failed.
