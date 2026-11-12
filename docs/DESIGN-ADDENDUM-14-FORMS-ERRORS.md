@@ -279,6 +279,15 @@ In `gweb dev` (`cfg.dev_id != 0`):
 
 In production `detail` is always empty; the abort text goes only to the log line with the error id.
 
+
+### D14. A page `fn POST` may end the reply itself (added after review)
+
+Found by the auth-security architect: a page `fn POST(req, ctx) -> Props` has no `res`, so a 429 or a custom 500 it wants cannot stop the page render. Two changes:
+- `Outcome` gains `Done`. `web::done(ctx)` sets it. The generated code skips rendering, and `finish` leaves `res` as the handler wrote it.
+- `fn POST` and `fn load` in `page.goose` may take a third parameter, `res: http::Response&`. gweb sees `http::Response` in the `fn POST(` or `fn load(` line and passes `res`. Without `res`, `web::fail(ctx, 429, "...")` already ends the reply with the error page (D11).
+
+**Why.** `fail` covers the common case through `error.html`; `Done` covers a handler that writes its own body or headers (a `Retry-After`, a JSON reply to a fetch). **Rejected:** making every loader take `res`, which breaks every existing page.
+
 ## 4. `loading.html`
 
 - Any app folder may hold `loading.html`, compiled to `fn render(out, req, ctx)` (no props, no fragments, no `@slot()`).
@@ -351,6 +360,10 @@ Every step: work only in the named worktree; commit locally, never push. Find `g
 - Files: new `errors.goose` (`ErrorInfo`, `fail`, error id, dev detail builder, default page, JSON error); new `src/inflight.c`; `web.build`; `web.goose` (`Outcome.Error`, `Ctx.route`, `error_status`, `error_message`, inflight calls in `run_worker`, the dev script reads `gw-dev-error`); `cli/gweb.goose` (scan `error.html` in any folder, `K_ERROR` with no fragments or slot, `error_reply` choosing the nearest file and its layouts, the `finish` arm, `ctx.route` and `inflight_route` in the dispatcher, the `crash_reply` thread and the new supervisor body). New `test/errors/site` (pages that `fail` with 503, that index out of bounds, a crash inside a nested folder with its own `error.html`, a crashing layout, a crashing `error.html`, an API route that crashes) and `test/errors.sh`; new `test/inflight_c_test.c`.
 - Tests: each case's status, body and `Connection: close`; the next request on a new connection succeeds (worker respawned); nested `error.html` wins; a crashing layout falls back to attempt 2; a crashing `error.html` gives the plain 500; API errors are JSON; with `--dev-id` the reply has `gw-dev-error` with a source excerpt (if E1 allows), without it no detail; the log line has the id. Benchmark: plaintext requests per second before and after, on the same machine.
 - Done: tests pass under goose, or are marked untested; the benchmark result is in the build log (or marked not run).
+
+### Step 5b: `Outcome.Done` and `res` for page handlers (goose-web; after step 5)
+- Files: `web.goose` (`Outcome.Done`, `web::done`), `cli/gweb.goose` (detect `http::Response` in the `fn POST(` / `fn load(` line, pass `res`; skip render on `Done`; `finish` arm), `test/errors/site` (a page POST that writes a 429 with `Retry-After` and calls `done`), `test/errors.sh`.
+- Done: generated code passes `res` only where declared; tests written; untested without goose.
 
 ### Step 6: `loading.html` and `gwi.js` (goose-web; `gwi.js` part can run beside step 3)
 - Files: `client/gwi.js` (422, FormData for multipart forms, loading), `client/gwi.min.js` via `client/build.sh`; `cli/gweb.goose` (scan `loading.html`, compile it, append the template in the whole-page render); new `test/frag_test.mjs` and `test/frag.sh` (jsdom, with `fetch` stubbed: 422 with echo morphs; 500 does not; multipart form sends `FormData`; a reply in 50 ms shows no loading; 300 ms shows it then the reply; a failure restores the old children; `gw-loading="none"`; a form without `gw-loading` shows none).
