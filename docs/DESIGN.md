@@ -289,7 +289,7 @@ goose-web/
   test/
 ```
 
-`web.goose` carries `import net from "../goose-net";`, which fixes the sibling layout.
+`web.goose` imports `net` by name; the root file declares where it comes from.
 
 goose-net changes:
 1. **Loop accept limit (required):** `connection_loop(server, idle_ms, max_request, accept_max = 0)`; goose-web passes 1 so each worker takes one connection per poll pass.

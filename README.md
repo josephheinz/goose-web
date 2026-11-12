@@ -9,8 +9,8 @@ gweb new mysite && cd mysite
 GOOSE=/path/to/goose gweb dev          # http://localhost:60053, rebuilds and restarts on every change
 ```
 
-The design is in [DESIGN.md](DESIGN.md). [DESIGN-ADDENDUM-1.md](DESIGN-ADDENDUM-1.md)
-replaces its handler API (section 4). [DESIGN-ADDENDUM-2.md](DESIGN-ADDENDUM-2.md)
+The design is in [DESIGN.md](docs/DESIGN.md). [DESIGN-ADDENDUM-1.md](docs/DESIGN-ADDENDUM-1.md)
+replaces its handler API (section 4). [DESIGN-ADDENDUM-2.md](docs/DESIGN-ADDENDUM-2.md)
 sets the worker default, the accept rules and SQLite. All came from the
 goose-architect agent.
 
