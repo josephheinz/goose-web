@@ -39,12 +39,15 @@ struct Ctx {
     set_cookies: u8[..2048],  // pending Set-Cookie lines; run_worker moves them to res
     auth: AuthConfig = AuthConfig { .. }, // copied from Config by run_worker; the keys live here so handlers need no globals
     session: Session = Session { .. },
-    conn_fd: i32 = -1         // the worker's connection, for rate::client_ip
+    conn_fd: i32 = -1,        // the worker's connection, for rate::client_ip
+    default_headers: bool = true,   // false: the handler writes its own frame and sniffing headers
+    nonce: u8[..24] = ""      // the CSP nonce; "" until run_worker or web::csp_begin makes it
 }
 
 struct Config { port: i64, host: u8[..64], workers: i64, log: bool, idle_ms: i64, max_body: i64,
                 dev_id: i64,    // 0 = off
-                auth: AuthConfig }
+                auth: AuthConfig,
+                security_headers: bool, hsts: i64, csp: i64 }   // csp: 0 off, 1 on, 2 report-only
 
 fn no_params() -> Params { Params { n: 0, names: [""; 8], values: [""; 8] } }
 
@@ -331,12 +334,14 @@ fn default_workers() -> i64 {
 
 fn default_config() -> Config {
     Config { port: 3000, host: "0.0.0.0", workers: default_workers(), log: false,
-             idle_ms: 5000, max_body: 1048576, dev_id: 0, auth: AuthConfig { .. } }
+             idle_ms: 5000, max_body: 1048576, dev_id: 0, auth: AuthConfig { .. },
+             security_headers: true, hsts: 0, csp: 0 }
 }
 
 // Reads --port N, --host H, --workers N, --log, --idle-ms N, --max-body N,
-// and the PORT, WEB_WORKERS, WEB_SECRET, WEB_SESSION_IDLE, WEB_SESSION_MAX and WEB_TRUST_PROXY environment variables
-// (flags win), after loading the .env files. Exits with status 2 on a bad .env file, secret or session lifetime.
+// --csp, and the PORT, WEB_WORKERS, WEB_SECRET, WEB_SESSION_IDLE, WEB_SESSION_MAX, WEB_TRUST_PROXY,
+// WEB_SECURITY_HEADERS, WEB_HSTS and WEB_CSP environment variables (flags win), after loading the .env files.
+// Exits with status 2 on a bad .env file, secret, session lifetime, WEB_HSTS or WEB_CSP.
 fn config_from_args() -> Config {
     var cfg = default_config();
     var envname: u8[>..] = [];
@@ -351,11 +356,13 @@ fn config_from_args() -> Config {
     e.clear();
     if env("WEB_WORKERS", e) { let w, ok = parse_int(trim(e)); if ok && w > 0 { cfg.workers = w; } }
     let a = args();
+    var csp_flag = false;
     var i = 1;
     while i < a.len {
         let flag = a[i];
         let has_value = i + 1 < a.len;
         if flag == "--log" { cfg.log = true; i += 1; continue; }
+        if flag == "--csp" { csp_flag = true; i += 1; continue; }
         if has_value {
             let v = a[i + 1];
             let n, ok = parse_int(v);
@@ -367,7 +374,7 @@ fn config_from_args() -> Config {
             if flag == "--host" { cfg.host.clear(); cfg.host.append(v[..min(v.len, 64)]); i += 2; continue; }
         }
         print("unknown or incomplete flag: ", flag);
-        print("flags: --port N --host H --workers N --log --idle-ms N --max-body N (--dev-id N: gweb dev only)");
+        print("flags: --port N --host H --workers N --log --idle-ms N --max-body N --csp (--dev-id N: gweb dev only)");
         exit(2);
     }
     var secret_err: u8[>..] = [];
@@ -380,6 +387,10 @@ fn config_from_args() -> Config {
     cfg.auth.idle = env_positive("WEB_SESSION_IDLE", cfg.auth.idle);
     cfg.auth.max = env_positive("WEB_SESSION_MAX", cfg.auth.max);
     cfg.auth.trust_proxy = env_bool("WEB_TRUST_PROXY", false);
+    cfg.security_headers = env_bool("WEB_SECURITY_HEADERS", true);
+    cfg.hsts = env_nonneg("WEB_HSTS", 0);
+    cfg.csp = env_csp("WEB_CSP");
+    if csp_flag { cfg.csp = 1; }
     return cfg;
 }
 
@@ -475,6 +486,30 @@ fn env_positive(name: const u8[:], fallback: i64) -> i64 {
     print(name, " must be a positive whole number of seconds");
     exit(2);
     return fallback;
+}
+
+// Like env_positive, but 0 is allowed.
+fn env_nonneg(name: const u8[:], fallback: i64) -> i64 {
+    var e: u8[>..] = [];
+    if !env(name, e) || trim(e).len == 0 { return fallback; }
+    let n, ok = parse_int(trim(e));
+    if ok && n >= 0 { return n; }
+    print(name, " must be a whole number of seconds, 0 or more");
+    exit(2);
+    return fallback;
+}
+
+// 1 for 1/true/yes/on, 2 for report-only, 0 for unset, empty or 0/false/no/off; anything else is a startup error.
+fn env_csp(name: const u8[:]) -> i64 {
+    var e: u8[>..] = [];
+    if !env(name, e) || trim(e).len == 0 { return 0; }
+    let t = trim(e);
+    if lower_is(t, "report-only") { return 2; }
+    for w in ["1", "true", "yes", "on"] { if lower_is(t, w) { return 1; } }
+    for w in ["0", "false", "no", "off"] { if lower_is(t, w) { return 0; } }
+    print(name, " must be 1, 0 or report-only");
+    exit(2);
+    return 0;
 }
 
 fn env_name_start(c: u8) -> bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
@@ -583,6 +618,45 @@ fn dev_secret(keys: Keys&, err: u8[>..]&) -> bool {
     return parse_secret(hex, keys, err);
 }
 
+// ---- security headers and CSP (DESIGN-ADDENDUM-13)
+
+// 16 random bytes as 22 b64url bytes in ctx.nonce; true without change when already set. False when entropy fails.
+fn make_nonce(ctx: Ctx&) -> bool {
+    if ctx.nonce.len > 0 { return true; }
+    var raw: u8[..16] = [0; 16];
+    if c_entropy(raw) == 0 { return false; }
+    var enc: u8[>..] = [];
+    b64url(enc, raw);
+    ctx.nonce.append(enc);
+    return true;
+}
+
+// For a subtree's `before`: turns the CSP on for this request even when WEB_CSP is off.
+fn csp_begin(ctx: Ctx&) -> bool { return make_nonce(ctx); }
+
+// Appends the default security headers, HSTS and CSP; false, with a bare 500, when they do not fit beside res.headers.
+fn apply_security(ctx: Ctx&, res: http::Response&, cfg: const Config&) -> bool {
+    var block: u8[>..] = [];
+    if cfg.security_headers && ctx.default_headers {
+        block.append("X-Content-Type-Options: nosniff\r\n");
+        block.append("Referrer-Policy: strict-origin-when-cross-origin\r\n");
+        block.append("X-Frame-Options: SAMEORIGIN\r\n");
+    }
+    if cfg.hsts > 0 { format(block, "Strict-Transport-Security: max-age=", cfg.hsts, "; includeSubDomains\r\n"); }
+    if ctx.nonce.len > 0 && starts_with(res.content_type, "text/html") {
+        // csp_begin with WEB_CSP off asks for enforcement.
+        block.append(if cfg.csp == 2 { "Content-Security-Policy-Report-Only: " } else { "Content-Security-Policy: " });
+        format(block, "script-src 'self' 'nonce-", ctx.nonce, "'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'\r\n");
+    }
+    if block.len > res.headers.cap - res.headers.len {
+        res.headers.clear();
+        http::json_error(res, http::Status.InternalServerError, "response headers too large");
+        return false;
+    }
+    res.headers.append(block);
+    return true;
+}
+
 // ---------------------------------------------------------------- the worker loop
 
 // D, the generated dispatcher, returns the index of a static file to send, or -1; S gives its bytes, sent without a copy. Never returns.
@@ -618,9 +692,14 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                             var ctx = new_ctx(slot, owner_fd);
                             ctx.auth = cfg.auth;
                             ctx.conn_fd = conn.fd;
-                            static_index = D(req, ctx, res);
-                            if !apply_cookies(ctx, res) { static_index = -1; }
-                            if !ctx.fragment { dev_inject(res, cfg.dev_id); }
+                            if cfg.csp != 0 && !make_nonce(ctx) {
+                                http::json_error(res, http::Status.InternalServerError, "csp nonce unavailable");
+                            } else {
+                                static_index = D(req, ctx, res);
+                                if !apply_cookies(ctx, res) { static_index = -1; }
+                                if !apply_security(ctx, res, cfg) { static_index = -1; }
+                                if !ctx.fragment { dev_inject(res, cfg.dev_id, ctx.nonce); }
+                            }
                         }
                     },
                     Reject r => http::json_error(res, r.status, http::reason(r.status)),
@@ -668,9 +747,10 @@ fn dev_status(res: http::Response&, dev_id: i64) {
 // Appends the dev script that polls /__gweb/id: reload on a new id, error overlay otherwise.
 // Two overlay slots: sys (build failed or server down; the poll sets and clears it) and isl
 // (page errors; cleared by a click or reload). sys shows first.
-fn dev_inject(res: http::Response&, dev_id: i64) {
+fn dev_inject(res: http::Response&, dev_id: i64, nonce: const u8[:]) {
     if dev_id == 0 || !starts_with(res.content_type, "text/html") { return; }
-    format(res.body, "<script>(function(){var id=\"", dev_id, "\",fails=0,box,sys=\"\",isl=\"\";\n");
+    if nonce.len > 0 { format(res.body, "<script nonce=\"", nonce, "\">"); } else { res.body.append("<script>"); }
+    format(res.body, "(function(){var id=\"", dev_id, "\",fails=0,box,sys=\"\",isl=\"\";\n");
     res.body.append("""function draw(){var t=sys||isl;if(!t){if(box){box.remove();box=null}return}""");
     res.body.push('\n');
     res.body.append("""if(!box){box=document.createElement("pre");box.style.cssText="position:fixed;inset:0;margin:0;padding:24px;background:rgba(20,0,0,.92);color:#fff;font:13px/1.5 monospace;white-space:pre-wrap;overflow:auto;z-index:2147483647";box.onclick=function(){isl="";draw()};document.body.appendChild(box)}""");

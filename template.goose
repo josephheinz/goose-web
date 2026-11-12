@@ -86,3 +86,6 @@ fn csrf_token(ctx: const Ctx&) -> const u8[:] { return ctx.csrf; }
 fn user_id(ctx: const Ctx&) -> i64 { return if ctx.session.state == SessionState.Valid { ctx.session.uid } else { 0 }; }
 
 fn logged_in(ctx: const Ctx&) -> bool { return ctx.session.state == SessionState.Valid; }
+
+// The CSP nonce for <script nonce="...">; "" when CSP is off for this request.
+fn nonce(ctx: const Ctx&) -> const u8[:] { return ctx.nonce; }
