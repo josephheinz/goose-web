@@ -38,13 +38,24 @@ struct Dir {
     route: bool, page_html: bool, page_goose: bool, layout: bool, middleware: bool,
     methods: i64,          // bit i set: METHODS[i] is defined in route.goose
     has_load: bool, has_before: bool, has_after: bool,
+    has_post: bool,        // page.goose defines fn POST( (DESIGN-ADDENDUM-4)
+    frags: u8[..600],      // the page's fragment names, space-separated
     route_ns: u8[..200], page_ns: u8[..200], layout_ns: u8[..32], mw_ns: u8[..32]
 }
 
 // One file under public/.
 struct Static { url: u8[..512], file: u8[..512], ctype: u8[..64], etag: u8[..24] }
 
-let METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
+// One gw-target attribute, recorded by scan_targets. own is the dir index of
+// the page that holds it, or -1 in a layout, not-found.html or a component.
+struct Target { path: u8[..512], line: i64, url: u8[..512], name: u8[..64], post: bool, own: i64 }
+
+// The kind of a template.
+let K_PAGE = 0;
+let K_LAYOUT = 1;
+let K_NOT_FOUND = 2;
+
+let METHODS =["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
 let VARIANTS = ["Get", "Head", "Post", "Put", "Patch", "Delete", "Options"];
 
 var dirs: Dir[>..<];
@@ -58,6 +69,9 @@ var map_text: u8[>..];
 var component_names: u8[..64][>..<];   // components/Name.gshtml, sorted
 var component_lines: i64[>..<];        // each component's source line count
 var component_errors = 0;              // translator errors of this gen; the build still runs goose
+var uses_fragments = false;            // some template has a gw-target (DESIGN-ADDENDUM-4)
+var targets: Target[>..<];             // every gw-target found, checked by check_targets
+var tpl_script = false;                // the template being compiled has gw-target="
 var last_errors: u8[>..];      // what this build printed as errors, for the dev overlay (max 16 KB)
 
 fn note_errors(text: const u8[:]) {
@@ -153,7 +167,7 @@ fn scan_dir(rel: const u8[:], todo: u8[..512][>..]&) {
     var names: u8[>..] = [];
     if !list_dir(path, names) { return; }
     var d = Dir { rel: "", route: false, page_html: false, page_goose: false, layout: false, middleware: false,
-                  methods: 0, has_load: false, has_before: false, has_after: false,
+                  methods: 0, has_load: false, has_before: false, has_after: false, has_post: false, frags: "",
                   route_ns: "", page_ns: "", layout_ns: "", mw_ns: "" };
     if rel.len >= 512 { err(path, 0, "path too long"); return; }
     d.rel.append(rel);
@@ -416,9 +430,89 @@ fn add_default_imports(imports: u8[>..]&) {
 
 // ---------------------------------------------------------------- templates
 
-// One tag's inside, inner (trimmed), at line ln: its Goose code.
-fn template_tag(path: const u8[:], ln: i64, inner: const u8[:], stack: u8[>..]&, stack_lines: i64[>..]&, out: u8[>..]&) {
-    if starts_with(inner, "#if ") {
+// A fragment name: [A-Za-z][A-Za-z0-9_-]*, at most 64 bytes.
+fn frag_name_ok(s: const u8[:]) -> bool {
+    if s.len == 0 || s.len > 64 { return false; }
+    for c, i in s {
+        let alpha = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+        let more = (c >= '0' && c <= '9') || c == '_' || c == '-';
+        if !alpha && !(more && i > 0) { return false; }
+    }
+    return true;
+}
+
+// How many names are in a space-separated list.
+fn count_names(names: const u8[:]) -> i64 {
+    if names.len == 0 { return 0; }
+    var n = 1;
+    for c in names { if c == ' ' { n += 1; } }
+    return n;
+}
+
+fn has_name(names: const u8[:], name: const u8[:]) -> bool {
+    if names.len == 0 { return false; }
+    for n in split(names, ' ') { if n == name { return true; } }
+    return false;
+}
+
+// {#fragment NAME} at line[at..] (DESIGN-ADDENDUM-4, section 2). Each rule is
+// an error at the tag's line. The tag closes the page's gw_part == 0 block
+// and opens the block for part K.
+fn template_fragment_open(path: const u8[:], ln: i64, name: const u8[:], line: const u8[:], at: i64, kind: i64,
+                          stack: u8[>..]&, stack_lines: i64[>..]&, frags: u8[>..]&, out: u8[>..]&) {
+    let k = count_names(frags) + 1;
+    if kind != K_PAGE { err(path, ln, "{#fragment} is for page.html only"); }
+    else if !frag_name_ok(name) { err(path, ln, "a fragment name is [A-Za-z][A-Za-z0-9_-]*, at most 64 bytes"); }
+    else {
+        if stack.len > 0 { err(path, ln, "{#fragment} cannot be inside {#if}, {#for} or another {#fragment}"); }
+        // The text before the tag ends with the opening tag that has id="NAME".
+        var ok = false;
+        let before = line[..at];
+        if before.len > 0 && before[before.len - 1] == '>' {
+            var lt = before.len - 1;
+            while lt > 0 && before[lt] != '<' { lt -= 1; }
+            var want: u8[>..] = [];
+            format(want, "id=\"", name, "\"");
+            ok = before[lt] == '<' && find(before[lt..], want) >= 0;
+        }
+        if !ok {
+            var m: u8[>..] = [];
+            format(m, "{#fragment ", name, "} goes right after the opening tag that has id=\"", name, "\", on the same line");
+            err(path, ln, m);
+        }
+        if has_name(frags, name) {
+            var m: u8[>..] = [];
+            format(m, "two fragments named ", name);
+            err(path, ln, m);
+        } else if k > 8 { err(path, ln, "a page has at most 8 fragments"); }
+        else { if frags.len > 0 { frags.push(' '); } frags.append(name); }
+    }
+    stack.push('g'); stack_lines.push(ln);
+    format(out, "} if gw_part == 0 || gw_part == ", k, " { ");
+}
+
+// {/fragment}; rest is the text after it on the line.
+fn template_fragment_close(path: const u8[:], ln: i64, rest: const u8[:], kind: i64,
+                           stack: u8[>..]&, stack_lines: i64[>..]&, out: u8[>..]&) {
+    if kind != K_PAGE { err(path, ln, "{#fragment} is for page.html only"); }
+    else if stack.len == 0 || stack[stack.len - 1] != 'g' { err(path, ln, "{/fragment} does not close an open {#fragment}"); }
+    else {
+        stack.pop(); stack_lines.pop();
+        if !starts_with(rest, "</") { err(path, ln, "{/fragment} goes right before the closing tag of the element"); }
+    }
+    out.append("} if gw_part == 0 { ");
+}
+
+// One tag's inside, inner (trimmed), at line ln: its Goose code. line and at
+// are the whole line and the tag's '{'; end is its '}' (fragment tags look at
+// the text around them).
+fn template_tag(path: const u8[:], ln: i64, inner: const u8[:], line: const u8[:], at: i64, end: i64, kind: i64,
+                stack: u8[>..]&, stack_lines: i64[>..]&, frags: u8[>..]&, out: u8[>..]&) {
+    if inner == "#fragment" || starts_with(inner, "#fragment ") {
+        template_fragment_open(path, ln, trim(inner[9..]), line, at, kind, stack, stack_lines, frags, out);
+    } else if inner == "/fragment" {
+        template_fragment_close(path, ln, line[end + 1..], kind, stack, stack_lines, out);
+    } else if starts_with(inner, "#if ") {
         format(out, "if ", trim(inner[4..]), " { ");
         stack.push('i'); stack_lines.push(ln);
     } else if starts_with(inner, "#else if ") {
@@ -458,13 +552,26 @@ fn template_tag(path: const u8[:], ln: i64, inner: const u8[:], stack: u8[>..]&,
     }
 }
 
+// The runtime's script tag, added to a template that has a gw-target.
+let GW_SCRIPT = "<script type=\"module\" src=\"/_gw/gwi.js\"></script>";
+
+fn script_tag(out: u8[>..]&) {
+    out.append("out.append(\""); lit(out, GW_SCRIPT); out.append("\"); ");
+}
+
 // @name(args): slot, a component, or a function that writes to out.
-fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:], layout: bool, out: u8[>..]&) {
+fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:], kind: i64, in_frag: bool, out: u8[>..]&) {
     if name == "slot" {
-        if !layout { err(path, ln, "@slot() is for layout.html only"); }
+        if kind != K_LAYOUT { err(path, ln, "@slot() is for layout.html only"); }
         if args.len > 0 { err(path, ln, "@slot() takes no arguments"); }
+        if kind == K_LAYOUT && tpl_script { script_tag(out); }
         out.append("F(); ");
     } else if name[0] >= 'A' && name[0] <= 'Z' && find(name, "::") < 0 {
+        if in_frag {
+            var m: u8[>..] = [];
+            format(m, "@", name, "() cannot be inside {#fragment} (fragments v1)");
+            err(path, ln, m);
+        }
         if !has_component(name) {
             var m: u8[>..] = [];
             format(m, "no component named ", name, " (there is no components/", name, ".gshtml); for a literal @ write &#64;");
@@ -476,10 +583,18 @@ fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:
 
 // Compiles a template. header ends with `{ `; every HTML line becomes one
 // Goose line, so errors keep their line numbers. False on a template error.
-fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], layout: bool, out: u8[>..]&) -> bool {
+// kind is K_PAGE, K_LAYOUT or K_NOT_FOUND. wrap is true for a page with
+// fragments (DESIGN-ADDENDUM-4, section 4): the page's text goes in
+// `if gw_part == 0 { }` blocks, and each fragment's text in the block of its
+// number. The fragment names go to frags, space-separated.
+fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], kind: i64, wrap: bool,
+                    frags: u8[>..]&, out: u8[>..]&) -> bool {
     let before = errors;
+    tpl_script = find(src, "gw-target=\"") >= 0;
     out.append(header);
-    var stack: u8[>..] = [];      // 'i' for if, 'f' for for
+    if wrap { out.append("if gw_part == 0 { "); }
+    if tpl_script && kind != K_LAYOUT { script_tag(out); }
+    var stack: u8[>..] = [];      // 'i' for if, 'f' for for, 'g' for fragment
     var stack_lines: i64[>..] = [];
     var raw = tscan::MARKUP;      // <script> and <style> text holds no tags
     var slots = 0;
@@ -510,7 +625,9 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], la
                 if close < 0 { err(path, ln, "@name( needs its ) on the same line; for a literal @ write &#64;"); return false; }
                 let name = line[at + 1..open];
                 if name == "slot" { slots += 1; }
-                template_call(path, ln, name, trim(line[open + 1..close]), layout, out);
+                var in_frag = false;
+                for c in stack { if c == 'g' { in_frag = true; } }
+                template_call(path, ln, name, trim(line[open + 1..close]), kind, in_frag, out);
                 pos = close + 1;
                 continue;
             }
@@ -523,36 +640,296 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], la
             }
             let e = tscan::brace_end(line, at);
             if e < 0 { err(path, ln, "{ needs } on the same line; for a literal brace write &#123;"); return false; }
-            template_tag(path, ln, trim(line[at + 1..e]), stack, stack_lines, out);
+            template_tag(path, ln, trim(line[at + 1..e]), line, at, e, kind, stack, stack_lines, frags, out);
             pos = e + 1;
         }
         if raw == tscan::MARKUP { raw_line = 0; } else if raw_line == 0 { raw_line = ln; }
         if !last { text.push('\n'); }
         if text.len > 0 { out.append("out.append(\""); lit(out, text); out.append("\"); "); }
-        if last { out.append("}"); }
+        if last { out.append(if wrap { "} }" } else { "}" }); }
         out.push('\n');
     }
     if stack.len > 0 {
-        let what = if stack[stack.len - 1] == 'i' { "{#if} is never closed with {/if}" } else { "{#for} is never closed with {/for}" };
+        let top = stack[stack.len - 1];
+        let what = if top == 'i' { "{#if} is never closed with {/if}" }
+                   else if top == 'f' { "{#for} is never closed with {/for}" }
+                   else { "{#fragment} is never closed with {/fragment}" };
         err(path, stack_lines[stack_lines.len - 1], what);
     }
     if tscan::unclosed(raw).len > 0 { err(path, raw_line, tscan::unclosed(raw)); }
-    if layout && slots == 0 { err(path, 0, "a layout needs @slot() where the page goes"); }
+    if kind == K_LAYOUT && slots == 0 { err(path, 0, "a layout needs @slot() where the page goes"); }
     return errors == before;
 }
 
+// own is the page's dir index, or -1. frags gets the page's fragment names.
 fn gen_template(src_path: const u8[:], ns: const u8[:], file_base: const u8[:], signature: const u8[:],
-                imports: const u8[:], layout: bool) {
+                imports: const u8[:], kind: i64, own: i64, frags: u8[>..]&) {
     var src: u8[>..] = [];
     if !read(src_path, src) { return; }
-    var header: u8[>..] = [];
-    format(header, "namespace ", ns, "; ", imports, signature, " { ");
+    scan_targets(src_path, src, own);
+    // A page with {#fragment gets a last parameter gw_part. The pre-scan is a
+    // guess; the compile says which names there really are, and a wrong guess
+    // is compiled again.
+    var wrap = kind == K_PAGE && find(src, "{#fragment ") >= 0;
     var out: u8[>..] = [];
-    if !compile_template(src_path, src, header, layout, out) { return; }
+    var tries = 0;
+    while tries < 2 {
+        tries += 1;
+        frags.clear();
+        out.clear();
+        var sig: u8[>..] = [];
+        if wrap { format(sig, signature[..signature.len - 1], ", gw_part: i64)"); } else { sig.append(signature); }
+        var header: u8[>..] = [];
+        format(header, "namespace ", ns, "; ", imports, sig, " { ");
+        if !compile_template(src_path, src, header, kind, wrap, frags, out) { return; }
+        if wrap == (frags.len > 0) { break; }
+        wrap = frags.len > 0;
+    }
     var dst: u8[>..] = [];
     format(dst, ".gooseweb/", file_base, ".goose");
     write(dst, out);
     format(map_text, file_base, ".goose\t", src_path, "\n");
+}
+
+// ---------------------------------------------------------------- gw-target (DESIGN-ADDENDUM-4, section 5)
+
+fn lower_eq(a: const u8[:], b: const u8[:]) -> bool {
+    if a.len != b.len { return false; }
+    for c, i in a {
+        var x = c;
+        var y = b[i];
+        if x >= 'A' && x <= 'Z' { x += 32; }
+        if y >= 'A' && y <= 'Z' { y += 32; }
+        if x != y { return false; }
+    }
+    return true;
+}
+
+fn ws(c: u8) -> bool { return c == ' ' || c == '\t' || c == '\r'; }
+
+// Walks the opening tag whose '<' is line[lt]: attribute names, and values
+// that are quoted, bare or hold {...} spans. Returns the index of the tag's
+// '>' or -1 when it does not end on this line. When the attribute want is
+// there, its raw value goes to val and found is set.
+fn walk_tag(line: const u8[:], lt: i64, want: const u8[:], val: u8[>..]&, found: bool&) -> i64 {
+    let n = line.len;
+    var i = lt + 1;
+    while i < n && !ws(line[i]) && line[i] != '>' && line[i] != '/' { i += 1; }
+    while i < n {
+        let c = line[i];
+        if c == '>' { return i; }
+        if ws(c) || c == '/' { i += 1; continue; }
+        if c == '{' {
+            let e = tscan::brace_end(line, i);
+            if e < 0 { return -1; }
+            i = e + 1;
+            continue;
+        }
+        let ns = i;
+        while i < n && !ws(line[i]) && line[i] != '>' && line[i] != '=' && line[i] != '/' && line[i] != '{' { i += 1; }
+        let an = line[ns..i];
+        var vs = i;
+        var ve = i;
+        if i < n && line[i] == '=' {
+            i += 1;
+            if i < n && (line[i] == '"' || line[i] == '\'') {
+                let q = line[i];
+                i += 1;
+                vs = i;
+                while i < n && line[i] != q {
+                    if line[i] == '{' {
+                        let e = tscan::brace_end(line, i);
+                        if e < 0 { return -1; }
+                        i = e + 1;
+                    } else { i += 1; }
+                }
+                if i >= n { return -1; }
+                ve = i;
+                i += 1;
+            } else {
+                vs = i;
+                while i < n && !ws(line[i]) && line[i] != '>' {
+                    if line[i] == '{' {
+                        let e = tscan::brace_end(line, i);
+                        if e < 0 { return -1; }
+                        i = e + 1;
+                    } else { i += 1; }
+                }
+                ve = i;
+            }
+        }
+        if want.len > 0 && !found && lower_eq(an, want) { val.append(line[vs..ve]); found = true; }
+    }
+    return -1;
+}
+
+// Records every gw-target="..." of one template (DESIGN-ADDENDUM-4, section
+// 5), on the raw text. own is the page's dir index, or -1.
+fn scan_targets(path: const u8[:], src: const u8[:], own: i64) {
+    for line, li in split(src, '\n') {
+        let ln = li + 1;
+        var from = 0;
+        while from < line.len {
+            let k = find(line[from..], "gw-target=\"");
+            if k < 0 { break; }
+            let at = from + k;
+            from = at + 11;
+            var lt = at;
+            while lt > 0 && line[lt] != '<' { lt -= 1; }
+            var tag_ok = line[lt] == '<';
+            var end = -1;
+            var unused: u8[>..] = [];
+            var seen = false;
+            if tag_ok { end = walk_tag(line, lt, "", unused, seen); }
+            if end < at { tag_ok = false; }
+            var tname = lt + 1;
+            if tag_ok { while tname < line.len && !ws(line[tname]) && line[tname] != '>' && line[tname] != '/' { tname += 1; } }
+            let el = if tag_ok { line[lt + 1..tname] } else { "" };
+            let is_a = lower_eq(el, "a");
+            let is_form = lower_eq(el, "form");
+            if !is_a && !is_form {
+                err(path, ln, "gw-target goes on <a href=\"...\"> or <form>, with the whole opening tag on one line");
+                continue;
+            }
+            // The name: literal text up to the closing quote.
+            let close = find(line[at + 11..], "\"");
+            let name = if close < 0 { "" } else { line[at + 11..at + 11 + close] };
+            if !frag_name_ok(name) {
+                var m: u8[>..] = [];
+                format(m, "gw-target=\"", name, "\" takes a fragment name");
+                err(path, ln, m);
+                continue;
+            }
+            var url: u8[>..] = [];
+            var has_url = false;
+            walk_tag(line, lt, if is_a { "href" } else { "action" }, url, has_url);
+            var method: u8[>..] = [];
+            var has_method = false;
+            if is_form { walk_tag(line, lt, "method", method, has_method); }
+            var post = false;
+            if is_form && has_method {
+                if lower_eq(trim(method), "post") { post = true; }
+                else if !lower_eq(trim(method), "get") {
+                    err(path, ln, "gw-target: a form's method is get or post");
+                    continue;
+                }
+            }
+            let u = trim(url);
+            if u.len > 0 && u[0] != '/' && u[0] != '?' {
+                err(path, ln, "a gw-target URL starts with / (or is empty or starts with ? for the page itself)");
+                continue;
+            }
+            var t = Target { path: "", line: ln, url: "", name: "", post: post, own: own };
+            if path.len >= 512 || u.len >= 512 { err(path, ln, "gw-target: the path or URL is too long"); continue; }
+            t.path.append(path);
+            t.url.append(u);
+            t.name.append(name);
+            targets.push(t);
+            uses_fragments = true;
+        }
+    }
+}
+
+// The dirs with a route or page of count segments, in the dispatcher's order:
+// a literal segment before a dynamic one.
+fn dispatch_order(count: i64, order: i64[>..]&) {
+    for d, i in dirs {
+        if (d.route || d.page_html) && seg_count(d.rel) == count {
+            var at = order.len;
+            let mine: u8[..512] = d.rel;
+            for k in order.len {
+                let other: u8[..512] = dirs[order[k]].rel;
+                if route_before(mine, other) { at = k; break; }
+            }
+            order.push(i);
+            var j = order.len - 1;
+            while j > at { order[j] = order[j - 1]; j -= 1; }
+            order[at] = i;
+        }
+    }
+}
+
+// The first dir the dispatcher would send url to, or -1. The URL's segments
+// are cut at the first ? or #; a segment with a { is a wildcard that fits a
+// [name] folder only.
+fn match_url(url: const u8[:]) -> i64 {
+    var cut = url.len;
+    for c, i in url { if c == '?' || c == '#' { cut = i; break; } }
+    let p = url[1..cut];
+    var starts: i64[>..] = [];
+    var ends: i64[>..] = [];
+    if p.len > 0 {
+        var s = 0;
+        var i = 0;
+        while i < p.len {
+            if p[i] == '{' {
+                let e = tscan::brace_end(p, i);
+                if e < 0 { return -1; }
+                i = e + 1;
+            } else if p[i] == '/' { starts.push(s); ends.push(i); s = i + 1; i += 1; }
+            else { i += 1; }
+        }
+        starts.push(s);
+        ends.push(p.len);
+    }
+    if starts.len > 16 { return -1; }
+    var order: i64[>..] = [];
+    dispatch_order(starts.len, order);
+    for di in order {
+        let dd = dirs[di];
+        let segs = split(dd.rel, '/');
+        var fits = true;
+        for k in starts.len {
+            let seg = p[starts[k]..ends[k]];
+            let dyn = segs[k].len > 0 && segs[k][0] == '[';
+            if find(seg, "{") >= 0 { if !dyn { fits = false; } }
+            else if !dyn && segs[k] != seg { fits = false; }
+        }
+        if fits { return di; }
+    }
+    return -1;
+}
+
+// Checks every recorded gw-target against the pages: called after every
+// page's fragments and POST flag are known.
+fn check_targets() {
+    for t in targets {
+        let url: u8[..512] = t.url;
+        var di = -1;
+        if url.len == 0 || url[0] == '?' {
+            if t.own < 0 { err(t.path, t.line, "gw-target here needs a path starting with /"); continue; }
+            di = t.own;
+        } else {
+            di = match_url(url);
+            if di < 0 {
+                var m: u8[>..] = [];
+                format(m, "gw-target: no page matches ", url);
+                err(t.path, t.line, m);
+                continue;
+            }
+        }
+        let d = dirs[di];
+        if d.route {
+            var m: u8[>..] = [];
+            format(m, "gw-target: ", url, " is a route.goose; fragments come from pages");
+            err(t.path, t.line, m);
+            continue;
+        }
+        var page: u8[>..] = [];
+        app_path(page, d.rel, "page.html");
+        if !has_name(d.frags, t.name) {
+            var m: u8[>..] = [];
+            format(m, "gw-target: ", page, " has no {#fragment ", t.name, "}");
+            err(t.path, t.line, m);
+        }
+        if t.post && !d.has_post {
+            var goose: u8[>..] = [];
+            app_path(goose, d.rel, "page.goose");
+            var m: u8[>..] = [];
+            format(m, "gw-target: method=\"post\" needs fn POST( in ", goose);
+            err(t.path, t.line, m);
+        }
+    }
 }
 
 // ---------------------------------------------------------------- main.goose
@@ -607,24 +984,60 @@ fn gen_route_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     m.append("}\n");
 }
 
-fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
-    format(m, "fn page_", i, SIG, " {   // app/", d.rel, if d.rel.len > 0 { "/" } else { "" }, "page.html\n");
-    m.append("    match req.method {\n");
-    m.append("        Get, Head => {},\n");
-    m.append("        Options => { web::options(res, \"GET, HEAD, OPTIONS\"); return; },\n");
-    m.append("        _ => { web::method_not_allowed(res, \"GET, HEAD, OPTIONS\"); return; },\n");
-    m.append("    }\n");
-    middleware_before(m, d);
-    m.append("    web::html(res, http::Status.Ok);\n");
-    if d.has_load { format(m, "    let props = ", d.page_ns, "::load(req, ctx);\n"); }
-    m.append("    if ctx.outcome == web::Outcome.Continue {\n        ");
+// The statement that renders a page inside its layouts. part is the extra
+// argument of a page with fragments ("0" or "part"), or "" for none.
+fn gen_render_stmt(m: u8[>..]&, d: const Dir&, props: bool, part: const u8[:]) {
     var closes = 0;
     for o in dirs {
         if o.layout && is_ancestor(o.rel, d.rel) { format(m, o.layout_ns, "::render(res.body, req, ctx) { "); closes += 1; }
     }
-    format(m, d.page_ns, "::render(res.body, req, ctx", if d.has_load { ", props" } else { "" }, ");");
+    format(m, d.page_ns, "::render(res.body, req, ctx", if props { ", props" } else { "" }, if part.len > 0 { ", " } else { "" }, part, ");");
     for c in closes { m.append(" };"); }
-    m.append("\n    }\n");
+}
+
+// What follows the loader or POST of a page: the whole page, or with
+// fragments, the fragment the request asks for (DESIGN-ADDENDUM-4, section 4).
+fn gen_page_reply(m: u8[>..]&, d: const Dir&, props: bool, indent: const u8[:]) {
+    format(m, indent, "if ctx.outcome == web::Outcome.Continue {\n", indent, "    ");
+    if d.frags.len == 0 { gen_render_stmt(m, d, props, ""); }
+    else {
+        m.append("if part > 0 { web::fragment_reply(req, ctx, res); ");
+        format(m, d.page_ns, "::render(res.body, req, ctx", if props { ", props" } else { "" }, ", part); }\n");
+        format(m, indent, "    else { ");
+        gen_render_stmt(m, d, props, "0");
+        m.append(" }");
+    }
+    format(m, "\n", indent, "}\n");
+}
+
+fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
+    let allow = if d.has_post { "GET, HEAD, POST, OPTIONS" } else { "GET, HEAD, OPTIONS" };
+    format(m, "fn page_", i, SIG, " {   // app/", d.rel, if d.rel.len > 0 { "/" } else { "" }, "page.html\n");
+    m.append("    match req.method {\n");
+    format(m, "        Get, Head", if d.has_post { ", Post" } else { "" }, " => {},\n");
+    format(m, "        Options => { web::options(res, \"", allow, "\"); return; },\n");
+    format(m, "        _ => { web::method_not_allowed(res, \"", allow, "\"); return; },\n");
+    m.append("    }\n");
+    middleware_before(m, d);
+    m.append("    web::html(res, http::Status.Ok);\n");
+    if d.frags.len > 0 {
+        m.append("    let part = web::fragment_index(req, [");
+        for n, k in split(d.frags, ' ') { if k > 0 { m.append(", "); } format(m, "\"", n, "\""); }
+        m.append("]);\n");
+    }
+    if d.has_post {
+        m.append("    if req.method == http::Method.Post {\n");
+        m.append("        if web::cross_site(req) { http::text(res, http::Status.Forbidden, \"cross-site POST refused\\n\"); return; }\n");
+        format(m, "        let props = ", d.page_ns, "::POST(req, ctx);\n");
+        gen_page_reply(m, d, true, "        ");
+        m.append("    } else {\n");
+        format(m, "        let props = ", d.page_ns, "::load(req, ctx);\n");
+        gen_page_reply(m, d, true, "        ");
+        m.append("    }\n");
+    } else {
+        if d.has_load { format(m, "    let props = ", d.page_ns, "::load(req, ctx);\n"); }
+        gen_page_reply(m, d, d.has_load, "    ");
+    }
     middleware_after(m, d);
     m.append("}\n");
 }
@@ -658,20 +1071,7 @@ fn gen_dispatch(m: u8[>..]&) {
     for count in 17 {
         // The routes with this many segments, literal-first.
         var order: i64[>..] = [];
-        for d, i in dirs {
-            if (d.route || d.page_html) && seg_count(d.rel) == count {
-                var at = order.len;
-                let mine: u8[..512] = d.rel;
-                for k in order.len {
-                    let other: u8[..512] = dirs[order[k]].rel;
-                    if route_before(mine, other) { at = k; break; }
-                }
-                order.push(i);
-                var j = order.len - 1;
-                while j > at { order[j] = order[j - 1]; j -= 1; }
-                order[at] = i;
-            }
-        }
+        dispatch_order(count, order);
         if order.len == 0 { continue; }
         format(m, "        ", count, " => {\n");
         for i in order {
@@ -764,7 +1164,7 @@ fn gen_main(home: const u8[:]) -> u8[>..] {
     m.append("import web from \""); lit(m, home); m.append("\";\n");
     m.append("import net from \""); lit(m, home); m.append("/../goose-net\";\n");
     if uses_sqlite { m.append("import sqlite from \""); lit(m, home); m.append("/../goose-sqlite\";\n"); }
-    m.append("import net.http;\nimport web.template;\nimport web.static;\nimport web.owner;\n");
+    m.append("import net.http;\nimport web.template;\nimport web.static;\nimport web.owner;\nimport web.form;\n");
     for d in dirs {
         if d.route { format(m, "import ", d.route_ns, ";\n"); }
         if d.page_html { format(m, "import ", d.page_ns, "_html;\n"); if d.page_goose { format(m, "import ", d.page_ns, ";\n"); } }
@@ -844,14 +1244,10 @@ fn push_gw_static(url: const u8[:], file: const u8[:], data: const u8[:]) {
     statics.push(s);
 }
 
-// Translates every component to .gooseweb/Name.goose and .gooseweb/_gw/Name.js,
-// copies the runtime to .gooseweb/_gw/gwi.js (client/gwi.js in dev,
-// client/gwi.min.js otherwise) and adds all of them to the static files.
-// Translator errors are printed and counted in component_errors; gen goes on,
-// so the Goose compiler reports its errors too.
-fn gen_components(dev: bool) {
-    component_lines.clear();
-    if component_names.len == 0 { return; }
+// Copies the runtime to .gooseweb/_gw/gwi.js (client/gwi.js in dev,
+// client/gwi.min.js otherwise) and adds it to the static files. Called when
+// the project has a component or a gw-target.
+fn gen_runtime(dev: bool) {
     make_dir(".gooseweb/_gw");
     var rt_path: u8[>..] = [];
     format(rt_path, goose_web_home(), if dev { "/client/gwi.js" } else { "/client/gwi.min.js" });
@@ -859,6 +1255,16 @@ fn gen_components(dev: bool) {
     if !read(rt_path, rt) { return; }
     write(".gooseweb/_gw/gwi.js", rt);
     push_gw_static("/_gw/gwi.js", ".gooseweb/_gw/gwi.js", rt);
+}
+
+// Translates every component to .gooseweb/Name.goose and .gooseweb/_gw/Name.js
+// and adds the scripts to the static files; gw-targets in their markup are
+// recorded too. Translator errors are printed and counted in
+// component_errors; gen goes on, so the Goose compiler reports its errors too.
+fn gen_components(dev: bool) {
+    component_lines.clear();
+    if component_names.len == 0 { return; }
+    make_dir(".gooseweb/_gw");
     for n in component_names {
         var path: u8[>..] = [];
         format(path, "components/", n, ".gshtml");
@@ -868,6 +1274,7 @@ fn gen_components(dev: bool) {
         var lines = 1;
         for c in src { if c == '\n' { lines += 1; } }
         component_lines[component_lines.len - 1] = lines;
+        scan_targets(path, src, -1);
         var g: u8[>..] = [];
         var j: u8[>..] = [];
         var e: u8[>..] = [];
@@ -900,10 +1307,12 @@ fn gen(dev: bool) -> bool {
     map_text.clear();
     uses_sqlite = false;
     component_errors = 0;
+    uses_fragments = false;
+    targets.clear();
     gen_components(dev);
     if is_dir("lib") { scan_lib_for_sqlite(); }
     if is_dir("lib") { c_symlink("../lib", ".gooseweb/lib"); }
-    for &d in dirs {
+    for &d, di in dirs {
         if d.route {
             var src: u8[>..] = [];
             app_path(src, d.rel, "route.goose");
@@ -927,9 +1336,10 @@ fn gen(dev: bool) -> bool {
             var src: u8[>..] = [];
             app_path(src, d.rel, "layout.html");
             var imports: u8[>..] = [];
+            var frags: u8[>..] = [];
             add_default_imports(imports);
             gen_template(src, d.layout_ns, d.layout_ns,
-                         "fn render<F>(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&)", imports, true);
+                         "fn render<F>(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&)", imports, K_LAYOUT, -1, frags);
         }
         if d.page_html {
             var imports: u8[>..] = [];
@@ -939,6 +1349,8 @@ fn gen(dev: bool) -> bool {
                 var code: u8[>..] = [];
                 if copy_prefixed(src, d.page_ns, code) {
                     d.has_load = defines(code, "load");
+                    d.has_post = defines(code, "POST");
+                    if d.has_post && !d.has_load { err(src, 0, "fn POST( needs fn load( beside it"); }
                     imports_of(code, imports);
                 }
             }
@@ -949,13 +1361,16 @@ fn gen(dev: bool) -> bool {
             format(base, d.page_ns, "_html");
             let sig = if d.has_load { "fn render<P>(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&, props: const P&)" }
                       else { "fn render(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&)" };
-            gen_template(src, d.page_ns, base, sig, imports, false);
+            var frags: u8[>..] = [];
+            gen_template(src, d.page_ns, base, sig, imports, K_PAGE, di, frags);
+            d.frags.append(frags);
         }
     }
     if has_not_found {
         var imports: u8[>..] = [];
         add_default_imports(imports);
-        gen_template("app/not-found.html", "nf", "nf", "fn render(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&)", imports, false);
+        var frags: u8[>..] = [];
+        gen_template("app/not-found.html", "nf", "nf", "fn render(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&)", imports, K_NOT_FOUND, -1, frags);
     }
     if has_state {
         var code: u8[>..] = [];
@@ -966,7 +1381,9 @@ fn gen(dev: bool) -> bool {
             if find(code, "struct Reply") < 0 && find(code, "enum Reply") < 0 { err("app/state.goose", 0, "state.goose needs a type named Reply"); }
         }
     }
+    check_targets();
     if errors > 0 { return false; }
+    if component_names.len > 0 || uses_fragments { gen_runtime(dev); }
     let home = goose_web_home();
     write(".gooseweb/main.goose", gen_main(home));
     write(".gooseweb/map.txt", map_text);
@@ -1308,11 +1725,35 @@ fn print_routes() {
         } else {
             var src: u8[>..] = [];
             app_path(src, d.rel, "page.html");
-            format(line, "  page   GET");
+            var goose: u8[>..] = [];
+            app_path(goose, d.rel, "page.goose");
+            codes.clear();
+            var has_post = false;
+            if d.page_goose && read_file(goose, codes) { has_post = defines(codes, "POST"); }
+            format(line, "  page   GET", if has_post { ",POST" } else { "" });
             while line.len < 30 { line.push(' '); }
             format(line, u);
             while line.len < 62 { line.push(' '); }
             format(line, src, "\n");
+            // A line for each {#fragment NAME} of the page.
+            var html: u8[>..] = [];
+            if read_file(src, html) {
+                var rest: const u8[:] = html;
+                while true {
+                    let k = find(rest, "{#fragment ");
+                    if k < 0 { break; }
+                    let e = find(rest[k..], "}");
+                    if e < 0 { break; }
+                    var fl: u8[>..] = [];
+                    format(fl, "  frag   ", trim(rest[k + 11..k + e]));
+                    while fl.len < 30 { fl.push(' '); }
+                    format(fl, u);
+                    while fl.len < 62 { fl.push(' '); }
+                    format(fl, src, "\n");
+                    line.append(fl);
+                    rest = rest[k + e..];
+                }
+            }
         }
         write_stdout(line);
     }

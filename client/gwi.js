@@ -61,6 +61,19 @@ function morph(from, to, force) {
   while (a) { b = a.nextSibling; a.remove(); a = b; }
 }
 
+// Reports an error: the console, and a gw:error event (gweb dev's overlay shows it).
+function oops(err) {
+  console.error(err);
+  dispatchEvent(new CustomEvent("gw:error", { detail: String(err) }));
+}
+
+// Morphs root's children to html.
+function swap(root, html, force) {
+  const tp = D.createElement("template");
+  tp.innerHTML = html;
+  morph(root, tp.content, force);
+}
+
 // One capture listener: the nearest component, the nearest element with a
 // handler for this event and (for input and change) the nearest bound one,
 // both only when inside the component. Bind, handler and render run in one try:
@@ -98,14 +111,10 @@ function on(type, binds) {
       // The changes are dropped: the state goes back to its copy, and the DOM
       // already shows that state.
       live.set(root, keep);
-      console.error(err);
-      dispatchEvent(new CustomEvent("gw:error", { detail: String(err) }));
-      return;
+      return oops(err);
     }
     if (k && s[k] !== before) force = 1;
-    const tp = D.createElement("template");
-    tp.innerHTML = html;
-    morph(root, tp.content, force);
+    swap(root, html, force);
   }, true);
 }
 
@@ -113,3 +122,39 @@ on("click");
 on("change", 1);
 on("input", 1);
 on("submit");
+
+// Fragments (DESIGN-ADDENDUM-4). A click on <a href gw-target="NAME"> or a
+// submit of <form gw-target="NAME"> fetches the URL with the header
+// GW-Fragment: NAME and morphs the reply into the element with id NAME. The
+// browser does its normal navigation instead when there is no such element,
+// it is inside a component, the event was already handled, or a modifier key
+// is down. A reply without the GW-Fragment echo (a redirect to another page)
+// becomes a normal navigation. The last request for a target wins.
+function frag(type, sel, attr, form) {
+  D.addEventListener(type, async (e) => {
+    const el = e.target.closest?.(sel);
+    const name = el && el.getAttribute("gw-target"), box = name && D.getElementById(name);
+    if (!box || box.closest("[data-component]") || e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    e.preventDefault();
+    const url = new URL(el.getAttribute(attr) || "", location.href);
+    const data = form && new URLSearchParams(new FormData(el, e.submitter));
+    const post = form && /^post$/i.test(el.getAttribute("method"));
+    if (data && !post) url.search = data;
+    const n = box.gw = -~box.gw;
+    box.setAttribute("aria-busy", "true");
+    try {
+      const r = await fetch(url, { method: post ? "POST" : "GET", body: post ? data : null, headers: { "GW-Fragment": name } });
+      if (!r.ok) throw Error("fragment " + name + ": " + r.status + " from " + url.pathname);
+      if (r.headers.get("GW-Fragment") != name) return location.assign(r.url);
+      const html = await r.text();
+      if (box.gw == n) swap(box, html, 1);
+    } catch (err) {
+      oops(err);
+    } finally {
+      if (box.gw == n) box.removeAttribute("aria-busy");
+    }
+  });
+}
+
+frag("click", "a[gw-target]", "href");
+frag("submit", "form[gw-target]", "action", 1);

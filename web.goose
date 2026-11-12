@@ -35,6 +35,7 @@ struct Ctx {
     worker: i64,              // 0..workers-1
     owner_fd: i32,            // this worker's channel to the state owner, -1 without app/state.goose
     outcome: Outcome,
+    fragment: bool = false,   // this reply is a fragment: no dev script (DESIGN-ADDENDUM-4)
     redirect_status: i64,
     location: u8[..1024],
     title: u8[..256],         // set by page loaders, read by layouts
@@ -369,7 +370,7 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                             var ctx = new_ctx(slot, owner_fd);
                             static_index = D(req, ctx, res);
                             if !apply_cookies(ctx, res) { static_index = -1; }
-                            dev_inject(res, cfg.dev_id);
+                            if !ctx.fragment { dev_inject(res, cfg.dev_id); }
                         }
                     },
                     Reject r => http::json_error(res, r.status, http::reason(r.status)),
@@ -418,7 +419,7 @@ fn dev_status(res: http::Response&, dev_id: i64) {
 // In gweb dev, appends a script to HTML replies that polls /__gweb/id: it
 // reloads the page when the id changes and shows errors in an overlay
 // (DESIGN-ADDENDUM-3, follow-up 3). Two slots: sys (build failed, or the
-// server stopped answering), which the poll sets and clears, and isl (component
+// server stopped answering), which the poll sets and clears, and isl (component and page
 // errors), which stays until a click on the overlay or a reload. sys shows
 // first. Nothing happens when dev_id is 0.
 fn dev_inject(res: http::Response&, dev_id: i64) {
@@ -430,7 +431,7 @@ fn dev_inject(res: http::Response&, dev_id: i64) {
     res.body.push('\n');
     res.body.append("""if(box.textContent!==t)box.textContent=t}""");
     res.body.push('\n');
-    res.body.append("""addEventListener("gw:error",function(e){isl+=(isl?"\n":"component error (click to dismiss)\n\n")+e.detail;draw()});""");
+    res.body.append("""addEventListener("gw:error",function(e){isl+=(isl?"\n":"page error (click to dismiss)\n\n")+e.detail;draw()});""");
     res.body.push('\n');
     res.body.append("""setInterval(function(){fetch("/__gweb/id",{cache:"no-store"}).then(function(r){return r.text()}).then(function(t){fails=0;var n=t.indexOf("\n"),cur=n<0?t:t.slice(0,n),errs=n<0?"":t.slice(n+1);if(cur!==id){location.reload();return}sys=errs.trim()?"build failed\n\n"+errs:"";draw()}).catch(function(){if(++fails>=4){sys="gweb dev: the server is not responding";draw()}})},500)})();</script>""");
 }
