@@ -69,6 +69,8 @@ let TEST_DIR = ".gooseweb.test";
 let BUILD_DIR = ".gooseweb";
 var component_names: u8[..64][>..<];
 var component_lines: i64[>..<];
+var component_reactive: i64[>..<];     // 1 for a component with @ declarations (parallel to component_names)
+var component_props: u8[>..];          // `Name\tprop\tdefault source\n` for each @prop of each reactive component
 var component_errors = 0;              // translator errors of this gen; the build still runs goose
 var uses_fragments = false;
 var targets: Target[>..<];
@@ -519,6 +521,16 @@ fn scan_components() {
     for t in found { component_names.push(t); }
 }
 
+fn component_index(name: const u8[:]) -> i64 {
+    for n, i in component_names { if n == name { return i; } }
+    return -1;
+}
+
+fn is_reactive_component(name: const u8[:]) -> bool {
+    let i = component_index(name);
+    return i >= 0 && i < component_reactive.len && component_reactive[i] == 1;
+}
+
 fn has_component(name: const u8[:]) -> bool {
     for n in component_names { if n == name { return true; } }
     return false;
@@ -779,6 +791,126 @@ fn script_tag(out: u8[>..]&) {
     out.append("out.append(\""); lit(out, GW_SCRIPT); out.append("\"); ");
 }
 
+// The start and end of each argument of a call: the pieces between its top-level commas.
+fn split_call_args(args: const u8[:], starts: i64[>..]&, ends: i64[>..]&) {
+    var depth = 0;
+    var from = 0;
+    var i = 0;
+    while i < args.len {
+        let c = args[i];
+        if c == '"' || c == '\'' {
+            let j = tscan::skip_literal(args, i);
+            if j > i { i = j; continue; }
+        }
+        if c == '(' || c == '[' || c == '{' { depth += 1; }
+        else if c == ')' || c == ']' || c == '}' { depth -= 1; }
+        else if c == ',' && depth == 0 {
+            starts.push(from);
+            ends.push(i);
+            from = i + 1;
+        }
+        i += 1;
+    }
+    starts.push(from);
+    ends.push(args.len);
+}
+
+// The length of a leading `name:` (one colon, not ::) in arg, or 0 when arg is not a named argument.
+fn named_arg_len(arg: const u8[:]) -> i64 {
+    var i = 0;
+    if arg.len == 0 || !tscan::ident_start(arg[0]) { return 0; }
+    while i < arg.len && tscan::ident_char(arg[i]) { i += 1; }
+    let n = i;
+    while i < arg.len && (arg[i] == ' ' || arg[i] == '\t') { i += 1; }
+    if i < arg.len && arg[i] == ':' && !(i + 1 < arg.len && arg[i + 1] == ':') { return n; }
+    return 0;
+}
+
+// @Name(a: e1, b: e2) for a reactive component: Name::component(out, Name::Props { a: e1, b: e2, c: DEFAULT });
+fn reactive_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:], out: u8[>..]&) {
+    var mine: u8[>..] = [];                 // `prop\tdefault\n` for this component, in declaration order
+    for l in split(component_props, '\n') {
+        if l.len <= name.len + 1 || !starts_with(l, name) || l[name.len] != '\t' { continue; }
+        mine.append(l[name.len + 1..]);
+        mine.push('\n');
+    }
+    let props = split(mine, '\n');
+    var np = 0;
+    for l in props { if l.len > 0 { np += 1; } }
+    var vals: u8[>..] = [];                 // the values given, one after the other
+    var vs: i64[>..] = [];                  // where each prop's value starts and ends in vals, or -1
+    var ve: i64[>..] = [];
+    for k in np { vs.push(-1); ve.push(-1); }
+    var starts: i64[>..] = [];
+    var ends: i64[>..] = [];
+    split_call_args(args, starts, ends);
+    let before = errors;
+    for pi in starts.len {
+        let part = args[starts[pi]..ends[pi]];
+        let arg = trim(part);
+        if arg.len == 0 {
+            if starts.len > 1 && pi + 1 < starts.len { err(path, ln, "an empty argument; write @Name(a: 1, b: 2)"); }
+            continue;
+        }
+        let nlen = named_arg_len(arg);
+        if nlen == 0 {
+            var m: u8[>..] = [];
+            var first: u8[>..] = [];
+            if np > 0 { first.append(props[0][..find(props[0], "\t")]); } else { first.append("x"); }
+            format(m, "@", name, " takes named props: @", name, "(", first, ": 3)");
+            err(path, ln, m);
+            return;
+        }
+        let pname = arg[..nlen];
+        var found = -1;
+        for k in np {
+            let l = props[k];
+            if l[..find(l, "\t")] == pname { found = k; }
+        }
+        var m: u8[>..] = [];
+        if found < 0 {
+            format(m, name, " has no prop ", pname);
+            err(path, ln, m);
+            continue;
+        }
+        if vs[found] >= 0 {
+            format(m, "@", name, " passes prop ", pname, " twice");
+            err(path, ln, m);
+            continue;
+        }
+        let colon = find(arg, ":");
+        let value = trim(arg[colon + 1..]);
+        if value.len == 0 {
+            format(m, "@", name, " prop ", pname, " needs a value");
+            err(path, ln, m);
+            continue;
+        }
+        vs[found] = vals.len;
+        vals.append(value);
+        ve[found] = vals.len;
+    }
+    var call: u8[>..] = [];
+    format(call, name, "::component(out, ", name, "::Props { ");
+    for k in np {
+        let l = props[k];
+        let tab = find(l, "\t");
+        let pname = l[..tab];
+        let dflt = l[tab + 1..];
+        if k > 0 { call.append(", "); }
+        if vs[k] >= 0 { format(call, pname, ": ", vals[vs[k]..ve[k]]); }
+        else if dflt.len > 0 { format(call, pname, ": ", dflt); }
+        else {
+            var m: u8[>..] = [];
+            format(m, "@", name, " needs prop ", pname);
+            err(path, ln, m);
+            format(call, pname, ": 0");
+        }
+    }
+    if np == 0 { call.append(".. "); }
+    call.append("}); ");
+    if errors == before { out.append(call); }
+}
+
 fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:], kind: i64, in_frag: bool, out: u8[>..]&) {
     if name == "slot" {
         if kind != K_LAYOUT { err(path, ln, "@slot() is for layout.html only"); }
@@ -795,6 +927,8 @@ fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:
             var m: u8[>..] = [];
             format(m, "no component named ", name, " (there is no components/", name, ".gshtml); for a literal @ write &#64;");
             err(path, ln, m);
+        } else if is_reactive_component(name) {
+            reactive_call(path, ln, name, args, out);
         } else { format(out, name, "::component(out, ", args, "); "); }
     } else if args.len == 0 { format(out, name, "(out); "); }
     else { format(out, name, "(out, ", args, "); "); }
@@ -1612,6 +1746,8 @@ fn gen_runtime(dev: bool) {
 // gen goes on after translator errors, so the Goose compiler reports its errors too.
 fn gen_components(dev: bool) {
     component_lines.clear();
+    component_reactive.clear();
+    component_props.clear();
     if component_names.len == 0 { return; }
     var gw_dir: u8[>..] = [];
     format(gw_dir, gen_root, "/_gw");
@@ -1621,6 +1757,7 @@ fn gen_components(dev: bool) {
         format(path, "components/", n, ".gshtml");
         var src: u8[>..] = [];
         component_lines.push(0);
+        component_reactive.push(0);
         if !read(path, src) { continue; }
         var lines = 1;
         for c in src { if c == '\n' { lines += 1; } }
@@ -1631,6 +1768,13 @@ fn gen_components(dev: bool) {
         var e: u8[>..] = [];
         var w: u8[>..] = [];
         let compiled = component::compile(n, path, src, !dev, g, j, e, w);
+        if component::is_reactive() {
+            component_reactive[component_reactive.len - 1] = 1;
+            let props = component::props_of();
+            for l in split(props, '\n') {
+                if l.len > 0 { format(component_props, n, "\t", l, "\n"); }
+            }
+        }
         emit_component_warnings(w);
         if !compiled {
             print_compiler(e);
@@ -1939,9 +2083,23 @@ fn test_cmd() -> bool {
             if mjs_components.len > 0 { mjs_components.push(','); }
             format(mjs_components, "\"", n, "\"");
             let tests = component::test_names();
-            for t in concat(split("zero\n", '\n')[..1], split(tests, '\n')) {
+            let test_takes = component::test_args();
+            let takes = split(test_takes, '\n');
+            let reactive = component::is_reactive();
+            for t, ti in concat(split("zero\n", '\n')[..1], split(tests, '\n')) {
                 if t.len == 0 { continue; }
                 cases += 1;
+                if reactive {
+                    // Props are zero here; a test that neither reads nor writes takes no arguments.
+                    format(main, "    { var p = ", n, "::Props { .. }; var s = ", n, "::gw_init(p); ");
+                    if t != "zero" {
+                        if takes[ti - 1] == "1" { format(main, n, "::", t, "(p, s); "); } else { format(main, n, "::", t, "(); "); }
+                        format(main, n, "::gw_flush(p, s); ");
+                    }
+                    format(main, "out.append(\"== ", n, " ", t, "\\n\"); ", n, "::gw_json(out, p, s); out.push('\\n'); ",
+                           n, "::render(out, p, s); out.append(\"\\n== end\\n\"); }\n");
+                    continue;
+                }
                 format(main, "    { var s = ", n, "::State { .. }; ");
                 if t != "zero" { format(main, n, "::", t, "(s); "); }
                 format(main, "out.append(\"== ", n, " ", t, "\\n\"); ", n, "::gw_json(out, s); out.push('\\n'); ",

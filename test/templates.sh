@@ -112,6 +112,11 @@ expect_fail $P '@slot()' 2 "@slot() is for layout.html only"
 expect_fail app/layout.html '@slot(1)' 2 "@slot() takes no arguments"
 expect_fail bare:app/layout.html '<main>x</main>' 0 "a layout needs @slot() where the page goes"
 expect_fail components/C.gshtml '@C(s)' 5 "'@C()' is not available in client code (components v1)"
+# Reactive components (Addendum 12 section 3.1): named props.
+expect_fail $P '@RCounter(stat: 1, label: "x")' 2 "RCounter has no prop stat"
+expect_fail $P '@RCounter(label: "x")' 2 "@RCounter needs prop start"
+expect_fail $P '@RCounter(start: 1, label: "x", start: 2)' 2 "@RCounter passes prop start twice"
+expect_fail $P '@RCounter(3, "x")' 2 "@RCounter takes named props: @RCounter(start: 3)"
 # Section 5: an empty tag word, an element that never closes.
 expect_fail $P '{#raw }' 2 "{#raw e} needs an expression"
 expect_fail $P '<script>var a = 1;' 2 "<script> is never closed with </script>"

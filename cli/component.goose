@@ -55,16 +55,17 @@ let RO = 1;
 // init: the default (@prop, -1 when required), the initializer (@state, @computed), or -1;
 // an array @state has init -1 (its initializer is []). r: the bits the initializer reads, through calls.
 // order: for a computed, its place in rorder.
+// ts, te: the type's text in the source (offsets), as the Goose structs write it.
 struct RDecl { kind: i64, name: u8[..64], tok: i64, line: i64, ty: Ty, keyword_tok: i64, init: i64,
-               bit: i64, mask: i64, r: i64, order: i64 }
+               bit: i64, mask: i64, r: i64, order: i64, ts: i64, te: i64 }
 
 let RB_WATCH = 0;
 let RB_MOUNT = 1;
 let RB_UNMOUNT = 2;
 let RB_EVERY = 3;
 
-// @watch, @mount, @unmount or @every(ms) with its block. r and w as for a function.
-struct RBlock { kind: i64, tok: i64, line: i64, ms: i64, body: i64, r: i64, w: i64, is_async: bool }
+// @watch, @mount, @unmount or @every(ms) with its block. r and w as for a function. lb: the block's `{` token.
+struct RBlock { kind: i64, tok: i64, line: i64, ms: i64, body: i64, r: i64, w: i64, is_async: bool, lb: i64 }
 
 struct RUse { name: u8[..64], line: i64 }
 
@@ -78,6 +79,10 @@ let RM_BIND = 6;
 
 // A markup expression: the bits it reads and writes (bind: writes), by line.
 struct RMk { kind: i64, line: i64, r: i64, w: i64 }
+
+// A rewrite of the Goose output: text[at..at + len] becomes `text` (an insertion when len is 0).
+// An edit never spans a line break (edit_range splits one that does).
+struct Edit { at: i64, len: i64, text: u8[..512] }
 
 // Tokens: offsets into text.
 let K_EOF = 0;
@@ -226,6 +231,8 @@ var rw_rep = false;            // the walker reports errors (the last pass only)
 var rw_ctx = 0;                // 0 function or block, 1 computed, 2 @state initializer, 3 markup
 var rw_ctx_name: u8[..64];
 var warns_buf: u8[>..];        // reactive warnings, in the warns format
+var edits: Edit[>..<];         // the Goose rewrites of 3.1, in the order they were recorded
+var props_buf: u8[>..];        // `name\tdefault source\n` for each @prop, for gweb
 
 // ---------------------------------------------------------------- errors
 
@@ -1135,7 +1142,7 @@ fn parse_rdecl(kind: i64) {
     var mask = 1;
     for k in min(di, 62) { mask *= 2; }
     rdecls.push(RDecl { kind: kind, name: tok_name(nt), tok: nt, line: line, ty: ty(T_ERR), keyword_tok: kw,
-                        init: -1, bit: di, mask: mask, r: 0, order: -1 });
+                        init: -1, bit: di, mask: mask, r: 0, order: -1, ts: 0, te: 0 });
     let name = tok_name(nt);
     let mk = rmark(kind);
     check_reserved(nt);
@@ -1180,6 +1187,8 @@ fn parse_rdecl(kind: i64) {
         return;
     }
     rdecls[di].ty = t;
+    rdecls[di].ts = toks[ty_s].s;
+    rdecls[di].te = toks[ty_e - 1].e;
     if kind == R_STATE && t.t == T_ARRAY {
         for j in di {
             if rdecls[j].kind == R_STATE && rdecls[j].ty.t == T_ARRAY { report(line, "a component may hold one array @state"); }
@@ -1250,9 +1259,10 @@ fn parse_rblock() {
         while !at_k(K_EOF) && !is("{") && !is(";") { pos += 1; }
     }
     if !is("{") { bad_tok(pos); return; }
+    let lb = pos;
     let b = parse_block();
     if perr { return; }
-    rblocks.push(RBlock { kind: kind, tok: tk, line: line, ms: ms, body: b, r: 0, w: 0, is_async: false });
+    rblocks.push(RBlock { kind: kind, tok: tk, line: line, ms: ms, body: b, r: 0, w: 0, is_async: false, lb: lb });
 }
 
 // @event fn name(params);  pos is at the word after @.
@@ -2080,6 +2090,8 @@ fn rw_mark(n: i64, line: i64, kind: i64) {
 fn check_rmodel() {
     let si = find_struct("State");
     if si >= 0 { report(structs[si].line, "a component uses either @ declarations or struct State, not both"); }
+    let pi = find_struct("Props");
+    if pi >= 0 { report(structs[pi].line, "a reactive component cannot declare struct Props; gweb writes it from the @prop lines"); }
     for i in rdecls.len {
         let t = rdecls[i].ty;
         if (t.t == T_STRUCT || t.t == T_ARRAY) && find_struct(t.name) < 0 {
@@ -2093,6 +2105,174 @@ fn check_rmodel() {
     for &f in fns {
         f.test = starts_with(f.name, "test_") && f.n == 0 && !f.event;
         f.handler = !f.test && !f.event;
+    }
+}
+
+// ---------------------------------------------------------------- Goose rewrites (Addendum 12, section 3.1)
+
+fn takes_state(fi: i64) -> bool { (fns[fi].r | fns[fi].w) != 0 }
+
+fn add_edit(at: i64, len: i64, repl: const u8[:]) {
+    var e = Edit { at: at, len: len, text: "" };
+    e.text.append(repl);
+    edits.push(e);
+}
+
+// text[s..e] becomes repl. The pieces on later lines become empty, so the line count stays.
+fn edit_range(s: i64, e: i64, repl: const u8[:]) {
+    var a = s;
+    var first = true;
+    for p in s..e + 1 {
+        if p < e && text[p] != '\n' { continue; }
+        if first { add_edit(a, p - a, repl); first = false; }
+        else if p > a { add_edit(a, p - a, ""); }
+        a = p + 1;
+    }
+}
+
+// text[s..e] with the edits inside it applied, in the order of their offsets.
+fn rewrite(s: i64, e: i64) -> u8[>..] {
+    var out: u8[>..] = [];
+    var idx: i64[>..] = [];
+    for i in edits.len {
+        if edits[i].at >= s && edits[i].at + edits[i].len <= e { idx.push(i); }
+    }
+    // An insertion sort keeps edits at one offset in the order they were recorded.
+    var q = 1;
+    while q < idx.len {
+        let x = idx[q];
+        var j = q - 1;
+        while j >= 0 && edits[idx[j]].at > edits[x].at {
+            idx[j + 1] = idx[j];
+            j -= 1;
+        }
+        idx[j + 1] = x;
+        q += 1;
+    }
+    var cur = s;
+    for k in idx.len {
+        let ed = edits[idx[k]];
+        if ed.at > cur { out.append(text[cur..ed.at]); }
+        out.append(ed.text);
+        cur = max(cur, ed.at + ed.len);
+    }
+    out.append(text[cur..e]);
+    return out;
+}
+
+// The token index of the `;` that ends the declaration holding token t, or -1.
+fn semi_after(t: i64) -> i64 {
+    var i = t;
+    while toks[i].k != K_EOF {
+        if tok_is(i, ";") { return i; }
+        i += 1;
+    }
+    return -1;
+}
+
+// Names that resolve to a prop or to state get gw_p. or gw_s.; calls of state-taking functions get gw_p, gw_s.
+recursive fn rec_expr(n: i64) {
+    if n < 0 { return; }
+    let k = nodes[n].k;
+    if k == E_NAME {
+        let d = nodes[n].ref2;
+        if d >= 0 { add_edit(toks[nodes[n].tok].s, 0, if rdecls[d].kind == R_PROP { "gw_p." } else { "gw_s." }); }
+        return;
+    }
+    if k == E_FIELD || k == E_UN { rec_expr(nodes[n].a); return; }
+    if k == E_INDEX || k == E_BIN { rec_expr(nodes[n].a); rec_expr(nodes[n].b); return; }
+    if k == E_IF { rec_expr(nodes[n].a); rec_expr(nodes[n].b); rec_expr(nodes[n].c); return; }
+    if k == E_SLIT {
+        var f = nodes[n].a;
+        while f >= 0 { rec_expr(nodes[f].a); f = nodes[f].next; }
+        return;
+    }
+    if k != E_CALL { return; }
+    let r = nodes[n].ref;
+    if r >= 0 && takes_state(r) {
+        add_edit(toks[nodes[n].tok + 1].e, 0, if nodes[n].a >= 0 { "gw_p, gw_s, " } else { "gw_p, gw_s" });
+    }
+    var a = nodes[n].a;
+    while a >= 0 { rec_expr(a); a = nodes[a].next; }
+}
+
+recursive fn rec_stmt(n: i64) {
+    let k = nodes[n].k;
+    if k == S_LET || k == S_RETURN || k == S_RESULT || k == S_EXPR { rec_expr(nodes[n].a); return; }
+    if k == S_ASSIGN { rec_expr(nodes[n].a); rec_expr(nodes[n].b); return; }
+    if k == S_INCDEC { rec_expr(nodes[n].a); return; }
+    if k == S_IF {
+        rec_expr(nodes[n].a);
+        rec_block(nodes[n].b);
+        let e = nodes[n].c;
+        if e >= 0 {
+            if nodes[e].k == S_IF { rec_stmt(e); } else { rec_block(e); }
+        }
+        return;
+    }
+    if k == S_FOR {
+        rec_expr(nodes[n].a);
+        rec_expr(nodes[n].b);
+        rec_block(nodes[n].c);
+        return;
+    }
+    if k == S_WHILE { rec_expr(nodes[n].a); rec_block(nodes[n].c); }
+}
+
+recursive fn rec_block(n: i64) {
+    if n < 0 { return; }
+    var s = nodes[n].a;
+    while s >= 0 {
+        rec_stmt(s);
+        s = nodes[s].next;
+    }
+}
+
+// Has this declaration a Goose function (gw_i_x, gw_c_x) for its initializer?
+fn has_init_fn(d: RDecl) -> bool {
+    return d.kind != R_PROP && d.ty.t != T_ERR && d.ty.t != T_ARRAY && d.init >= 0;
+}
+
+// After check_reactive: the edits of the script lines. Markup edits are recorded as the markup is compiled.
+fn rec_script() {
+    for i in rdecls.len {
+        let d = rdecls[i];
+        let semi = semi_after(d.tok);
+        if semi < 0 { continue; }
+        let from = toks[d.keyword_tok - 2].s;
+        if !has_init_fn(d) { edit_range(from, toks[semi].e, ""); continue; }
+        var pre: u8[>..] = [];
+        format(pre, "fn gw_", if d.kind == R_STATE { "i_" } else { "c_" }, d.name,
+               "(gw_p: const Props&, gw_s: const State&) -> ", text[d.ts..d.te], " { return ");
+        edit_range(from, span_s(d.init), pre);
+        edit_range(span_e(d.init), toks[semi].e, "; }");
+        rec_expr(d.init);
+    }
+    for i in rblocks.len {
+        let b = rblocks[i];
+        var h: u8[>..] = [];
+        format(h, "fn gw_w", i, "(gw_p: const Props&, gw_s: ", if b.w != 0 { "" } else { "const " }, "State&) ");
+        edit_range(toks[b.tok - 1].s, toks[b.lb].s, h);
+        rec_block(b.body);
+    }
+    for i in fns.len {
+        let f = fns[i];
+        if f.event {
+            // `@event fn change(v: i64);` becomes `fn change(v: i64) {}`.
+            let semi = semi_after(f.tok);
+            if semi < 0 { continue; }
+            edit_range(toks[f.tok - 3].s, toks[f.tok - 1].s, "");
+            edit_range(toks[semi].s, toks[semi].e, " {}");
+            continue;
+        }
+        if f.body < 0 { continue; }
+        if takes_state(i) {
+            var h: u8[>..] = [];
+            h.append(if f.w != 0 { "gw_p: const Props&, gw_s: State&" } else { "gw_p: const Props&, gw_s: const State&" });
+            if f.n > 0 { h.append(", "); }
+            add_edit(toks[f.tok + 1].e, 0, h);
+        }
+        rec_block(f.body);
     }
 }
 
@@ -2710,11 +2890,13 @@ fn parse_tag_expr(s: i64, e: i64, line: i64) -> i64 {
 
 fn m_expr(s: i64, e: i64, line: i64, raw: bool) {
     g_flush();
-    format(gline, if raw { "web::raw(out, " } else { "web::put(out, " }, text[s..e], "); ");
     let n = parse_tag_expr(s, e, line);
+    if n >= 0 {
+        check_expr(n);
+        if reactive { rw_mark(n, line, if raw { RM_RAW } else { RM_TEXT }); rec_expr(n); }
+    }
+    format(gline, if raw { "web::raw(out, " } else { "web::put(out, " }, rewrite(s, e), "); ");
     if n < 0 { return; }
-    check_expr(n);
-    if reactive { rw_mark(n, line, if raw { RM_RAW } else { RM_TEXT }); }
     let t = nodes[n].ty.t;
     if t == T_ERR { return; }
     if t != T_INT && t != T_BOOL && t != T_STR { cannot_type(line); return; }
@@ -2732,16 +2914,24 @@ fn open_tag(kind: u8, line: i64) {
     opens.push(Open { kind: kind, line: line, mark: scope.len });
 }
 
-fn m_if(s: i64, e: i64, line: i64, else_if: bool) {
-    g_flush();
+// The Goose line and gw_check get the condition as rewritten for reactive names.
+fn if_head(s: i64, e: i64, line: i64, else_if: bool) {
     var head: u8[>..] = [];
-    format(head, if else_if { "} else if " } else { "if " }, text[s..e], " {");
+    format(head, if else_if { "} else if " } else { "if " }, rewrite(s, e), " {");
     gline.append(head);
     gline.push(' ');
     chk_line(head, line);
+}
+
+fn m_if(s: i64, e: i64, line: i64, else_if: bool) {
+    g_flush();
     cat_close();
     if else_if {
-        if opens.len == 0 || opens[opens.len - 1].kind != 'i' { report(line, "{#else if} outside {#if}"); return; }
+        if opens.len == 0 || opens[opens.len - 1].kind != 'i' {
+            if_head(s, e, line, else_if);
+            report(line, "{#else if} outside {#if}");
+            return;
+        }
         scope.resize(opens[opens.len - 1].mark);
         ind -= 1;
     } else {
@@ -2752,11 +2942,12 @@ fn m_if(s: i64, e: i64, line: i64, else_if: bool) {
     let n = parse_tag_expr(s, e, line);
     if n >= 0 {
         check_expr(n);
-        if reactive { rw_mark(n, line, RM_IF); }
+        if reactive { rw_mark(n, line, RM_IF); rec_expr(n); }
         let t = nodes[n].ty.t;
         if t != T_ERR && t != T_BOOL { cannot_type(line); }
         else if t == T_BOOL { emit_expr(n, true); }
     }
+    if_head(s, e, line, else_if);
     wo(") {");
     ind += 1;
 }
@@ -2790,11 +2981,6 @@ fn m_close(want: u8, line: i64) {
 
 fn m_for(s: i64, e: i64, line: i64) {
     g_flush();
-    var head: u8[>..] = [];
-    format(head, "for ", text[s..e], " {");
-    gline.append(head);
-    gline.push(' ');
-    chk_line(head, line);
     cat_close();
     open_tag('f', line);
     pos = tokenize(s, e, line);
@@ -2809,21 +2995,23 @@ fn m_for(s: i64, e: i64, line: i64) {
         if reactive {
             rw_mark(nodes[n].a, line, RM_FOR);
             rw_mark(nodes[n].b, line, RM_FOR);
+            rec_expr(nodes[n].a);
+            rec_expr(nodes[n].b);
         }
         emit_for_head(n);
     } else {
         wo("for (;;) {");
     }
     ind += 1;
+    var head: u8[>..] = [];
+    format(head, "for ", rewrite(s, e), " {");
+    gline.append(head);
+    gline.push(' ');
+    chk_line(head, line);
 }
 
 fn m_let(s: i64, e: i64, line: i64) {
     g_flush();
-    var head: u8[>..] = [];
-    format(head, "let ", text[s..e], ";");
-    gline.append(head);
-    gline.push(' ');
-    chk_line(head, line);
     cat_close();
     pos = tokenize(s, e, line);
     perr = false;
@@ -2831,9 +3019,16 @@ fn m_let(s: i64, e: i64, line: i64) {
     var ok = parse_let_head(n);
     if ok && !at_k(K_EOF) { bad_tok(pos); ok = false; }
     perr = false;
+    if ok {
+        check_let(n);
+        if reactive { rw_mark(nodes[n].a, line, RM_LET); rec_expr(nodes[n].a); }
+    }
+    var head: u8[>..] = [];
+    format(head, "let ", rewrite(s, e), ";");
+    gline.append(head);
+    gline.push(' ');
+    chk_line(head, line);
     if !ok { return; }
-    check_let(n);
-    if reactive { rw_mark(nodes[n].a, line, RM_LET); }
     nl();
     w("let ");
     w_var(nodes[n].ref);
@@ -2872,24 +3067,41 @@ fn m_on_r(event: const u8[:], vs: i64, ve: i64, line: i64) {
         report(line, m);
         return;
     }
+    var t: u8[>..] = [];
+    format(t, "data-on-", event, "=\"", shown, "\"");
+    mtext(t);
+    // gw_check calls the handler as the Goose compiler will see it: name(gw_p, gw_w, args) or name(args).
+    var call: u8[>..] = [];
+    format(call, shown, "(");
+    if takes_state(fi) {
+        call.append("gw_p, gw_w");
+        if na > 0 { call.append(", "); }
+    }
+    if na > 0 { mtext(" data-args=\"["); }
     var a = nodes[n].a;
     if nodes[n].k != E_CALL { a = -1; }
     var i = 0;
     while a >= 0 {
         check_expr(a);
         rw_mark(a, line, RM_ON);
+        rec_expr(a);
         let at = nodes[a].ty.t;
         if at != T_ERR && at != params[fns[fi].first + i].ty.t {
             m.clear();
             format(m, "on:", event, " handler '", shown, "': argument ", i + 1, " has the wrong type");
             report(line, m);
         }
+        let src = rewrite(span_s(a), span_e(a));
+        if i > 0 { mtext(","); call.append(", "); }
+        call.append(src);
+        g_flush();
+        format(gline, "web::arg(out, ", src, "); ");
         i += 1;
         a = nodes[a].next;
     }
-    var t: u8[>..] = [];
-    format(t, "data-on-", event, "=\"", shown, "\"");
-    mtext(t);
+    if na > 0 { mtext("]\""); }
+    call.append(");");
+    chk_line(call, line);
 }
 
 fn m_on(event: const u8[:], vs: i64, ve: i64, line: i64) {
@@ -2973,6 +3185,24 @@ fn m_bind_r(what: const u8[:], vs: i64, ve: i64, line: i64) {
     }
     rmarks.push(RMk { kind: RM_BIND, line: line, r: rdecls[d].mask, w: rdecls[d].mask });
     mk_r = mk_r | rdecls[d].mask;
+    // The Goose side only; step 5 adds the JavaScript.
+    var code: u8[>..] = [];
+    var tail: u8[>..] = [];
+    if what == "value" {
+        mtext("value=\"");
+        format(code, "web::put(out, gw_s.", field, "); ");
+        g_code(code);
+        format(tail, "\" data-bind=\"", field, "\"");
+        if t.t == T_STR { format(tail, " data-cap=\"", t.cap, "\""); }
+        mtext(tail);
+        return;
+    }
+    format(code, "if gw_s.", field, " { ");
+    g_code(code);
+    gtext.append("checked");
+    g_code("} ");
+    format(tail, " data-bind=\"", field, "\"");
+    mtext(tail);
 }
 
 fn m_bind(what: const u8[:], vs: i64, ve: i64, line: i64) {
@@ -3241,7 +3471,100 @@ fn emit_json_writer(out: u8[>..]&) {
             }
         }
         out.append(if sd.n == 0 { "out.append(\"{}\"); }\n" } else { "out.push('}'); }\n" });
+        // Reactive components also write a slice of structs (routes, step 6).
+        if reactive {
+            format(out, "fn gw_json(out: u8[>..]&, v: const ", sd.name, "[:]) { out.push('['); ",
+                   "for gw_x, gw_i in v { if gw_i > 0 { out.push(','); } gw_json(out, gw_x); } out.push(']'); }\n");
+        }
     }
+}
+
+// ---------------------------------------------------------------- the reactive tail (section 3.1)
+
+// A declaration's type as the Goose structs write it: as in the source, with const on u8[:] and S[:] props.
+fn decl_type(d: RDecl) -> u8[>..] {
+    var r: u8[>..] = [];
+    if (d.ty.t == T_STR && d.ty.cap == 0) || (d.ty.t == T_ARRAY && d.ty.cap == RO) { r.append("const "); }
+    r.append(text[d.ts..d.te]);
+    return r;
+}
+
+// State holds @state, then @computed, in declaration order, and the array @state last.
+fn in_state(d: RDecl, pass: i64) -> bool {
+    if pass == 0 { return d.kind == R_STATE && d.ty.t != T_ARRAY; }
+    if pass == 1 { return d.kind == R_COMPUTED; }
+    return d.kind == R_STATE && d.ty.t == T_ARRAY;
+}
+
+// The writer of one field: owner is "gw_p." or "gw_s.".
+fn json_field(out: u8[>..]&, d: RDecl, owner: const u8[:], first: bool) {
+    format(out, "out.append(\"", if first { "{" } else { "," }, "\\\"", d.name, "\\\":\"); ");
+    let t = d.ty.t;
+    if t == T_INT || t == T_BOOL { format(out, "format(out, ", owner, d.name, "); "); }
+    else if t == T_STR { format(out, "web::json_text(out, ", owner, d.name, "); "); }
+    else if t == T_STRUCT { format(out, "gw_json(out, ", owner, d.name, "); "); }
+    else {
+        format(out, "out.push('['); for gw_x, gw_i in ", owner, d.name,
+               " { if gw_i > 0 { out.push(','); } gw_json(out, gw_x); } out.push(']'); ");
+    }
+}
+
+fn emit_reactive_tail(name: const u8[:], out: u8[>..]&) {
+    out.append("struct Props {");
+    var first = true;
+    for d in rdecls {
+        if d.kind != R_PROP { continue; }
+        format(out, if first { " " } else { ", " }, d.name, ": ", decl_type(d));
+        first = false;
+    }
+    out.append(if first { "}\n" } else { " }\n" });
+    out.append("struct State {");
+    first = true;
+    for pass in 3 {
+        for d in rdecls {
+            if !in_state(d, pass) { continue; }
+            format(out, if first { " " } else { ", " }, d.name, ": ", decl_type(d));
+            first = false;
+        }
+    }
+    out.append(if first { "}\n" } else { " }\n" });
+    out.append("fn gw_init(gw_p: const Props&) -> State { var gw_s = State { .. }; ");
+    for d in rdecls {
+        if d.kind == R_STATE && has_init_fn(d) { format(out, "gw_s.", d.name, " = gw_i_", d.name, "(gw_p, gw_s); "); }
+    }
+    for k in rorder.len {
+        let d = rdecls[rorder[k]];
+        if has_init_fn(d) { format(out, "gw_s.", d.name, " = gw_c_", d.name, "(gw_p, gw_s); "); }
+    }
+    out.append("return gw_s; }\n");
+    out.append("fn gw_flush(gw_p: const Props&, gw_s: State&) { ");
+    for k in rorder.len {
+        let d = rdecls[rorder[k]];
+        if has_init_fn(d) { format(out, "gw_s.", d.name, " = gw_c_", d.name, "(gw_p, gw_s); "); }
+    }
+    out.append("}\n");
+    out.append("fn gw_check(gw_p: const Props&, gw_s: const State&) { var gw_w = State { .. };\n");
+    out.append(chk);
+    out.append("}\n");
+    emit_json_writer(out);
+    out.append("fn gw_json(out: u8[>..]&, gw_p: const Props&, gw_s: const State&) { ");
+    first = true;
+    for d in rdecls {
+        if d.kind != R_PROP { continue; }
+        json_field(out, d, "gw_p.", first);
+        first = false;
+    }
+    for pass in 3 {
+        for d in rdecls {
+            if !in_state(d, pass) { continue; }
+            json_field(out, d, "gw_s.", first);
+            first = false;
+        }
+    }
+    out.append(if first { "out.append(\"{}\"); }\n" } else { "out.push('}'); }\n" });
+    format(out, "fn component(out: u8[>..]&, gw_p: const Props&) { let gw_s = gw_init(gw_p); out.append(\"<div data-component=\\\"", name,
+           "\\\">\"); render(out, gw_p, gw_s); out.append(\"</div><script type=\\\"application/json\\\">\"); gw_json(out, gw_p, gw_s); ",
+           "out.append(\"</script><script type=\\\"module\\\" src=\\\"/_gw/", name, ".js\\\"></script>\"); }\n");
 }
 
 fn check_structs() {
@@ -3360,6 +3683,26 @@ fn test_names() -> u8[>..] {
     return r;
 }
 
+// The @props of the component compile() last read: `name\tdefault source or empty\n` each.
+fn props_of() -> u8[>..] {
+    var r: u8[>..] = [];
+    r.append(props_buf);
+    return r;
+}
+
+fn is_reactive() -> bool { return reactive; }
+
+// For each test of test_names, in its order: 1 when it is called test(gw_p, gw_s), 0 when with no arguments.
+fn test_args() -> u8[>..] {
+    var r: u8[>..] = [];
+    for i in fns.len {
+        if !fns[i].test || fns[i].body < 0 { continue; }
+        r.append(if reactive && takes_state(i) { "1" } else { "0" });
+        r.push('\n');
+    }
+    return r;
+}
+
 fn reset() {
     text.clear();
     line_start.clear();
@@ -3398,6 +3741,8 @@ fn reset() {
     rw_rep = false;
     rw_ctx = 0;
     warns_buf.clear();
+    edits.clear();
+    props_buf.clear();
 }
 
 // Errors go to errs as `path:LINE: error: MSG` lines; false when there were any.
@@ -3436,11 +3781,6 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
         return false;
     }
     format(goose_out, "namespace ", name, "; import std; import json; import web; import web.template;\n");
-    for li in 1..close {
-        goose_out.append(text[line_start[li]..line_end[li]]);
-        goose_out.push('\n');
-    }
-    goose_out.append("fn render(out: u8[>..]&, s: const State&) {\n");
     parse_script(1, close);
     if reactive { check_rmodel(); } else { check_structs(); }
     for &f in fns {
@@ -3451,7 +3791,23 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
     }
     assign_module_names();
     for i in fns.len { check_fn(i); }
-    if reactive { check_reactive(); }
+    if reactive { check_reactive(); rec_script(); }
+    // The script lines, line for line; a reactive component's are rewritten (section 3.1).
+    for li in 1..close {
+        if reactive { goose_out.append(rewrite(line_start[li], line_end[li])); }
+        else { goose_out.append(text[line_start[li]..line_end[li]]); }
+        goose_out.push('\n');
+    }
+    if reactive { goose_out.append("fn render(out: u8[>..]&, gw_p: const Props&, gw_s: const State&) {\n"); }
+    else { goose_out.append("fn render(out: u8[>..]&, s: const State&) {\n"); }
+    if reactive {
+        for d in rdecls {
+            if d.kind != R_PROP { continue; }
+            format(props_buf, d.name, "\t");
+            if d.init >= 0 { props_buf.append(text[span_s(d.init)..span_e(d.init)]); }
+            props_buf.push('\n');
+        }
+    }
     if !reactive { for i in fns.len { if fns[i].body >= 0 { emit_js_fn(i); } } }
     compile_markup(close + 1, close + 1, goose_out);
     if close + 1 >= nlines { goose_out.append("}\n"); }
@@ -3459,15 +3815,19 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
         emit_zero();
         emit_component_call();
     }
-    goose_out.append("fn gw_check(s: const State&) { var gw_w = State { .. };\n");
-    goose_out.append(chk);
-    goose_out.append("}\n");
-    emit_json_writer(goose_out);
-    format(goose_out, "fn component(out: u8[>..]&, s: const State&) { out.append(\"<div data-component=\\\"", name,
-           "\\\">\"); render(out, s); out.append(\"</div><script type=\\\"application/json\\\">\"); gw_json(out, s); ",
-           "out.append(\"</script><script type=\\\"module\\\" src=\\\"/_gw/", name, ".js\\\"></script>\"); }\n");
     if reactive {
-        // Step 5 writes the module; the Goose output waits for step 4b.
+        emit_reactive_tail(name, goose_out);
+    } else {
+        goose_out.append("fn gw_check(s: const State&) { var gw_w = State { .. };\n");
+        goose_out.append(chk);
+        goose_out.append("}\n");
+        emit_json_writer(goose_out);
+        format(goose_out, "fn component(out: u8[>..]&, s: const State&) { out.append(\"<div data-component=\\\"", name,
+               "\\\">\"); render(out, s); out.append(\"</div><script type=\\\"application/json\\\">\"); gw_json(out, s); ",
+               "out.append(\"</script><script type=\\\"module\\\" src=\\\"/_gw/", name, ".js\\\"></script>\"); }\n");
+    }
+    if reactive {
+        // Step 5 writes the module.
         js_out.append("// reactive JS: Addendum 12 step 5\n");
     } else if compact {
         js_out.append("import{");
