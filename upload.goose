@@ -270,6 +270,12 @@ fn parse_multipart(fd: i32, mem: const u8[:], boundary: const u8[:], ctx: Ctx&, 
 
 // ---------------------------------------------------------------- the API
 
+// Called once by main() before the workers start: makes the upload directory and deletes files an earlier run left
+// (names gnet-* and gw-*). Prints nothing; run_worker reports an unusable directory.
+fn prepare_uploads(cfg: Config) {
+    if cfg.upload_dir.len > 0 && c_up_mkdir(cfg.upload_dir) != 0 { c_up_sweep(cfg.upload_dir); }
+}
+
 fn is_multipart(req: const http::Request&) -> bool {
     let ct, has = http::header(req, "content-type");
     if !has { return false; }

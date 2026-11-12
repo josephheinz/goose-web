@@ -1,0 +1,9 @@
+<h1>Quick</h1>
+<div id="form">{#fragment form}
+<form method="post" action="/quick" gw-target="form">@web::csrf_field(ctx)
+{#if props.done}<p id="done">Thanks {props.form.email}</p>{/if}
+<p><label>Email <input name="email" value="@web::field_value(req, "email", props.form.email)"@web::invalid(props.errs, "email")></label>@web::field_error(props.errs, "email")</p>
+<p><label>Name <input name="name" value="@web::field_value(req, "name", props.form.name)"></label></p>
+<button>Send</button>
+</form>
+{/fragment}</div>

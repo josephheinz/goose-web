@@ -389,10 +389,9 @@ fn config_from_args() -> Config {
 fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) {
     // One worker takes every waiting connection per pass; several take one each, so a burst spreads.
     let lp = net::connection_loop(server, cfg.idle_ms, cfg.max_body, if cfg.workers == 1 { 0 } else { 1 });
-    // Uploads: make the directory, let slot 0 delete files an earlier run left (names gnet-* and gw-*), then opt in.
+    // Uploads: make the directory, then opt in. main() calls web::prepare_uploads once first, which deletes files an earlier run left (names gnet-* and gw-*).
     // Without a usable directory a multipart body stays in memory, up to --max-body.
     if cfg.upload_dir.len > 0 && c_up_mkdir(cfg.upload_dir) != 0 {
-        if slot == 0 { c_up_sweep(cfg.upload_dir); }
         if !lp.set_uploads(cfg.max_upload, cfg.spool_over, cfg.upload_dir) {
             print("warning: cannot use upload dir ", cfg.upload_dir, "; uploads are limited to --max-body");
         }
