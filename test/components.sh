@@ -5,11 +5,13 @@
 #
 # 1. client/gwi.min.js must carry the FNV-1a hash of client/gwi.js in its
 #    banner (client/build.sh writes it), so a stale minified runtime fails.
-# 2. Every test/components/*.gshtml not named Fail* goes into one project, and
+# 2. Every test/components/*.gshtml not named Fail* or Warn* goes into one project, and
 #    gweb test runs its test_* functions as Goose and as JavaScript, pretty
 #    and compact.
 # 3. Each test/components/Fail*.gshtml, alone in a project, must fail gweb build
 #    with the line its `// expect: ` comment gives.
+# 3b. Each Warn*.gshtml, alone in a project, warns but builds; --strict fails it;
+#    --diagnostics json prints one JSON object per line. 3c: the parity project is warning-free.
 # 4. gweb test leaves .gooseweb/ alone: the built server and main.goose keep
 #    their checksums across a test run.
 #
@@ -34,7 +36,7 @@ if [ "$want" = "$have" ]; then ok; else bad "client/gwi.min.js is stale (banner 
 mkdir -p "$WORK/ok/app" "$WORK/ok/components"
 echo '<p>components suite</p>' > "$WORK/ok/app/page.html"
 for f in "$HERE"/components/*.gshtml; do
-  case "$(basename "$f")" in Fail*) ;; *) cp "$f" "$WORK/ok/components/" ;; esac
+  case "$(basename "$f")" in Fail*|Warn*) ;; *) cp "$f" "$WORK/ok/components/" ;; esac
 done
 if out=$("$GWEB" -C "$WORK/ok" test 2>&1); then ok; echo "$out"; else bad "gweb test"; echo "$out"; fi
 
@@ -55,6 +57,37 @@ for f in "$HERE"/components/Fail*.gshtml; do
     esac
   fi
 done
+
+# 3b. Each Warn*.gshtml, alone in a project, builds with its `// warn: ` line on stderr;
+# --strict fails it; --diagnostics json prints JSON Lines, one with code unkeyed-for.
+for f in "$HERE"/components/Warn*.gshtml; do
+  name=$(basename "$f")
+  want=$(sed -n 's|^// warn: ||p' "$f")
+  dir="$WORK/${name%.gshtml}"
+  mkdir -p "$dir/app" "$dir/components"
+  echo '<p>x</p>' > "$dir/app/page.html"
+  cp "$f" "$dir/components/"
+  if out=$("$GWEB" -C "$dir" build 2>&1 >/dev/null); then
+    case "$out" in *"$want"*) ok ;; *) bad "$name: wanted '$want', got:"; echo "$out" | sed 's/^/    /' ;; esac
+  else
+    bad "$name: gweb build failed on a warning"; echo "$out" | sed 's/^/    /'
+  fi
+  if "$GWEB" -C "$dir" build --strict >/dev/null 2>&1; then bad "$name: gweb build --strict succeeded"; else ok; fi
+  "$GWEB" -C "$dir" build --diagnostics json >/dev/null 2>"$WORK/diag.jsonl"
+  if node -e '
+    const ls = require("fs").readFileSync(process.argv[1], "utf8").split("\n").filter(Boolean);
+    let hit = false;
+    for (const l of ls) {
+      const o = JSON.parse(l);
+      for (const k of ["severity", "file", "line", "code", "message"]) if (!(k in o)) throw new Error("no " + k);
+      if (o.code === "unkeyed-for") hit = true;
+    }
+    process.exit(hit ? 0 : 1);
+  ' "$WORK/diag.jsonl"; then ok; else bad "$name: --diagnostics json"; sed 's/^/    /' "$WORK/diag.jsonl"; fi
+done
+
+# 3c. The parity project builds clean under --strict.
+if out=$("$GWEB" -C "$WORK/ok" build --strict 2>&1); then ok; else bad "parity project: gweb build --strict"; echo "$out" | sed 's/^/    /'; fi
 
 # 4. gweb test leaves .gooseweb/ alone.
 mkdir -p "$WORK/keep"

@@ -6,6 +6,9 @@
 //   gweb [-C dir] dev [server flags...]
 //   gweb [-C dir] test
 //   gweb version
+//
+// gen, build, start and test also take --strict (any warning fails the run) and
+// --diagnostics json (stderr as JSON Lines: severity, file, line, code, message[, detail]).
 
 import std;
 import os;
@@ -71,20 +74,187 @@ var uses_fragments = false;
 var targets: Target[>..<];
 var tpl_script = false;
 var last_errors: u8[>..];
+var warnings = 0;
+var last_warnings: u8[>..];
+var strict = false;                    // --strict: warnings fail the run
+var json_diag = false;                 // --diagnostics json
+var debug_flag = false;                // build --debug
 
 fn note_errors(text: const u8[:]) {
     let room = 16384 - last_errors.len;
     if room > 0 { last_errors.append(text[..min(text.len, room)]); }
 }
 
+fn note_warnings(text: const u8[:]) {
+    let room = 16384 - last_warnings.len;
+    if room > 0 { last_warnings.append(text[..min(text.len, room)]); }
+}
+
 // ---------------------------------------------------------------- small helpers
 
-fn err(path: const u8[:], line: i64, msg: const u8[:]) {
+// One diagnostic: sev is "error" or "warning". Text mode prints path:line: sev: msg; json mode
+// one JSON object. dev reads the text form from last_errors and last_warnings.
+fn diag(sev: const u8[:], path: const u8[:], line: i64, code: const u8[:], msg: const u8[:]) {
     var s: u8[>..] = [];
-    if line > 0 { format(s, path, ":", line, ": error: ", msg, "\n"); } else { format(s, path, ": error: ", msg, "\n"); }
-    write_stderr(s);
-    note_errors(s);
-    errors += 1;
+    if line > 0 { format(s, path, ":", line, ": ", sev, ": ", msg, "\n"); } else { format(s, path, ": ", sev, ": ", msg, "\n"); }
+    if json_diag {
+        var j: u8[>..] = [];
+        json_head(j, sev, path, line, code, msg);
+        j.append("}\n");
+        write_stderr(j);
+    } else {
+        write_stderr(s);
+    }
+    if sev == "error" { note_errors(s); errors += 1; } else { note_warnings(s); warnings += 1; }
+}
+
+fn err(path: const u8[:], line: i64, msg: const u8[:]) { diag("error", path, line, "", msg); }
+
+fn warn(path: const u8[:], line: i64, code: const u8[:], msg: const u8[:]) { diag("warning", path, line, code, msg); }
+
+// A gweb line that is not about a file: text as is, a JSON object with an empty file in json mode. Not counted.
+fn say_error(msg: const u8[:]) {
+    if !json_diag { write_stderr(msg); write_stderr("\n"); return; }
+    var j: u8[>..] = [];
+    json_head(j, "error", "", 0, "", msg);
+    j.append("}\n");
+    write_stderr(j);
+}
+
+fn json_str(out: u8[>..]&, s: const u8[:]) {
+    let hex = "0123456789abcdef";
+    out.push('"');
+    for c in s {
+        if c == '"' { out.append("\\\""); }
+        else if c == '\\' { out.append("\\\\"); }
+        else if c == '\n' { out.append("\\n"); }
+        else if c == '\t' { out.append("\\t"); }
+        else if c == '\r' { out.append("\\r"); }
+        else if c < 32 { out.append("\\u00"); out.push(hex[c >> 4]); out.push(hex[c & 15]); }
+        else { out.push(c); }
+    }
+    out.push('"');
+}
+
+// The object up to and including "message"; the caller adds "detail" and the closing brace.
+fn json_head(out: u8[>..]&, sev: const u8[:], path: const u8[:], line: i64, code: const u8[:], msg: const u8[:]) {
+    format(out, "{\"severity\":\"", sev, "\",\"file\":");
+    json_str(out, path);
+    format(out, ",\"line\":", line, ",\"code\":");
+    json_str(out, code);
+    out.append(",\"message\":");
+    json_str(out, msg);
+}
+
+fn last_colon(s: const u8[:]) -> i64 {
+    var i = s.len;
+    while i > 0 { i -= 1; if s[i] == ':' { return i; } }
+    return -1;
+}
+
+// Splits `path:line[:col]: (error|warning): message`; false when line is not of that shape.
+fn split_diag(line: const u8[:], path: u8[>..]&, ln: i64&, is_err: bool&, msg: u8[>..]&) -> bool {
+    let ke = find(line, ": error: ");
+    let kw = find(line, ": warning: ");
+    var k = ke;
+    var klen = 9;
+    var e = true;
+    if kw >= 0 && (ke < 0 || kw < ke) { k = kw; klen = 11; e = false; }
+    if k < 0 { return false; }
+    let head = line[..k];
+    var lnum = 0;
+    var hp = head;
+    let a = last_colon(head);
+    if a >= 0 {
+        let n1, ok1 = parse_int(head[a + 1..]);
+        if ok1 {
+            lnum = n1;
+            hp = head[..a];
+            let b = last_colon(hp);
+            if b >= 0 {
+                let n2, ok2 = parse_int(hp[b + 1..]);
+                if ok2 { lnum = n2; hp = hp[..b]; }
+            }
+        }
+    }
+    path.append(hp);
+    ln = lnum;
+    is_err = e;
+    msg.append(line[k + klen..]);
+    return true;
+}
+
+fn flush_diag(out: u8[>..]&, head: u8[>..]&, detail: u8[>..]&) {
+    if head.len == 0 { return; }
+    out.append(head);
+    if detail.len > 0 { out.append(",\"detail\":"); json_str(out, detail); }
+    out.append("}\n");
+    head.clear();
+    detail.clear();
+}
+
+// Compiler output (Goose's or the component translator's) to stderr: as is, or as JSON Lines in
+// json mode, where a line that is not a diagnostic goes into the previous object's "detail".
+fn print_compiler(text: const u8[:]) {
+    if !json_diag { write_stderr(text); return; }
+    var out: u8[>..] = [];
+    var head: u8[>..] = [];
+    var detail: u8[>..] = [];
+    for line in split(text, '\n') {
+        if line.len == 0 { continue; }
+        var path: u8[>..] = [];
+        var msg: u8[>..] = [];
+        var ln = 0;
+        var is_err = true;
+        if split_diag(line, path, ln, is_err, msg) {
+            flush_diag(out, head, detail);
+            json_head(head, if is_err { "error" } else { "warning" }, path, ln, "", msg);
+        } else if head.len == 0 {
+            json_head(head, "error", "", 0, "", line);
+        } else {
+            if detail.len > 0 { detail.push('\n'); }
+            detail.append(line);
+        }
+    }
+    flush_diag(out, head, detail);
+    write_stderr(out);
+}
+
+// Component warnings: `code\tpath:LINE: warning: MSG` lines.
+fn emit_component_warnings(w: const u8[:]) {
+    for line in split(w, '\n') {
+        let code, rest, ok = split_once(line, '\t');
+        if !ok { continue; }
+        var path: u8[>..] = [];
+        var msg: u8[>..] = [];
+        var ln = 0;
+        var is_err = false;
+        if split_diag(rest, path, ln, is_err, msg) { warn(path, ln, code, msg); }
+    }
+}
+
+// Takes gweb's own flags out of rest; the rest of rest is not looked at.
+fn parse_flags(rest: u8[:][:], allow_debug: bool) {
+    var i = 0;
+    while i < rest.len {
+        if rest[i] == "--strict" { strict = true; }
+        else if rest[i] == "--debug" && allow_debug { debug_flag = true; }
+        else if rest[i] == "--diagnostics" {
+            if i + 1 >= rest.len || rest[i + 1] != "json" { say_error("gweb: --diagnostics takes json"); exit(2); }
+            json_diag = true;
+            i += 1;
+        }
+        i += 1;
+    }
+}
+
+// After everything is printed: under --strict, warnings fail the run.
+fn strict_ok() -> bool {
+    if !strict || warnings == 0 { return true; }
+    var m: u8[>..] = [];
+    format(m, "gweb: --strict: ", warnings, " warnings stop the build");
+    say_error(m);
+    return false;
 }
 
 fn is_ident(s: const u8[:]) -> bool {
@@ -1447,8 +1617,11 @@ fn gen_components(dev: bool) {
         var g: u8[>..] = [];
         var j: u8[>..] = [];
         var e: u8[>..] = [];
-        if !component::compile(n, path, src, !dev, g, j, e) {
-            write_stderr(e);
+        var w: u8[>..] = [];
+        let compiled = component::compile(n, path, src, !dev, g, j, e, w);
+        emit_component_warnings(w);
+        if !compiled {
+            print_compiler(e);
             note_errors(e);
             for c in e { if c == '\n' { component_errors += 1; } }
             if e.len == 0 { component_errors += 1; }
@@ -1658,6 +1831,8 @@ fn component_lines_back(text: const u8[:]) -> u8[>..] {
 fn build(debug: bool, dev: bool) -> bool {
     let t0 = clock();
     last_errors.clear();
+    last_warnings.clear();
+    warnings = 0;
     if !gen(dev, BUILD_DIR) { return false; }
     var cwd: u8[>..] = [];
     c_cwd(cwd);
@@ -1677,16 +1852,16 @@ fn build(debug: bool, dev: bool) -> bool {
     let status = c_run(cmd, out);
     let shown = rewrite_errors(out, cwd);
     if status != 0 {
-        write_stderr(shown);
+        print_compiler(shown);
         note_errors(shown);
         if shown.len == 0 {
-            write_stderr("gweb: goose build failed; is goose on PATH, or GOOSE set?\n");
+            say_error("gweb: goose build failed; is goose on PATH, or GOOSE set?");
             note_errors("gweb: goose build failed; is goose on PATH, or GOOSE set?\n");
         }
         return false;
     }
     if component_errors > 0 {
-        write_stderr("gweb: the component errors above stop the build\n");
+        say_error("gweb: the component errors above stop the build");
         return false;
     }
     var routes = 0;
@@ -1694,7 +1869,9 @@ fn build(debug: bool, dev: bool) -> bool {
     for d in dirs { if d.route { routes += 1; } if d.page_html { pages += 1; } }
     var msg: u8[>..] = [];
     format(msg, "gweb: built .gooseweb/server: ", routes, " routes, ", pages, " pages, ", statics.len, " static files (",
-           ((clock() - t0) * 10.0) as i64 as f64 / 10.0, " s)\n");
+           ((clock() - t0) * 10.0) as i64 as f64 / 10.0, " s)");
+    if warnings > 0 { format(msg, " (", warnings, " warnings)"); }
+    msg.push('\n');
     write_stdout(msg);
     return true;
 }
@@ -1703,7 +1880,7 @@ fn build(debug: bool, dev: bool) -> bool {
 
 fn test_cmd() -> bool {
     if !gen(false, TEST_DIR) { return false; }
-    if component_errors > 0 { write_stderr("gweb test: fix the component errors above\n"); return false; }
+    if component_errors > 0 { say_error("gweb test: fix the component errors above"); return false; }
     if component_names.len == 0 { write_stdout("gweb test: no components/*.gshtml here\n"); return true; }
     var probe: u8[>..] = [];
     if c_run("command -v node", probe) != 0 { write_stderr("gweb test needs node\n"); return false; }
@@ -1741,7 +1918,8 @@ fn test_cmd() -> bool {
             var g: u8[>..] = [];
             var j: u8[>..] = [];
             var e: u8[>..] = [];
-            component::compile(n, path, src, compact, g, j, e);
+            var w: u8[>..] = [];
+            component::compile(n, path, src, compact, g, j, e, w);
             p.clear();
             format(p, dir, "/", n, ".js");
             write(p, j);
@@ -1982,7 +2160,15 @@ fn server_cmd(extra: u8[:][:], dev: bool) -> u8[>..] {
         // A fresh build id per spawn: open pages poll it and reload when it changes.
         format(cmd, " --dev-id ", (time() * 1000.0) as i64);
     }
-    for a in extra { cmd.push(' '); shq(cmd, a); }
+    // gweb's own flags stay out of the server's command line.
+    var skip = false;
+    for a in extra {
+        if skip { skip = false; continue; }
+        if a == "--strict" { continue; }
+        if a == "--diagnostics" { skip = true; continue; }
+        cmd.push(' ');
+        shq(cmd, a);
+    }
     return cmd;
 }
 
@@ -1999,11 +2185,19 @@ fn write_dev_errors(text: const u8[:]) {
     write_file(".gooseweb.dev/errors.txt", text);
 }
 
+fn write_dev_warnings(text: const u8[:]) {
+    make_dir(".gooseweb.dev");
+    write_file(".gooseweb.dev/warnings.txt", text);
+}
+
 fn dev(extra: u8[:][:]) {
     var pid: i64 = -1;
     var last = stamp();
     write_dev_errors("");
-    if build(false, true) {
+    write_dev_warnings("");
+    let first_ok = build(false, true);
+    write_dev_warnings(last_warnings);
+    if first_ok {
         pid = c_spawn(server_cmd(extra, true));
     } else {
         write_dev_errors(last_errors);
@@ -2020,7 +2214,9 @@ fn dev(extra: u8[:][:]) {
         sleep_ms(50);          // let an editor finish writing
         last = stamp();
         write_stdout("gweb dev: change seen, rebuilding\n");
-        if !build(false, true) {
+        let built = build(false, true);
+        write_dev_warnings(last_warnings);
+        if !built {
             write_dev_errors(last_errors);
             write_stderr("gweb dev: build failed; the old server keeps running\n");
             continue;
@@ -2136,6 +2332,8 @@ usage: gweb [-C dir] <command>
   new <dir>         make a starter project
   gen               write .gooseweb/ only
   build [--debug]   gen, then goose build to .gooseweb/server
+                    gen, build, start and test also take --strict (warnings fail the run)
+                    and --diagnostics json (stderr as JSON Lines)
   start [flags]     build, then run the server (flags go to it: --port N --workers N --log ...)
   dev [flags]       build, run on port 60053 (unless --port), and rebuild on every change under app/, lib/, public/, components/
   routes            print the route table
@@ -2159,12 +2357,19 @@ fn main() {
     if cmd == "version" { print_version(); return; }
     check_version();
     if cmd == "new" { if rest.len != 1 { usage(); } scaffold(rest[0]); return; }
-    if cmd == "gen" { if !gen(false, BUILD_DIR) || component_errors > 0 { exit(1); } write_stdout("gweb: wrote .gooseweb/\n"); return; }
-    if cmd == "test" { if !test_cmd() { exit(1); } return; }
-    if cmd == "build" { if !build(rest.len > 0 && rest[0] == "--debug", false) { exit(1); } return; }
+    if cmd == "gen" {
+        parse_flags(rest, false);
+        if !gen(false, BUILD_DIR) || component_errors > 0 { exit(1); }
+        write_stdout("gweb: wrote .gooseweb/\n");
+        if !strict_ok() { exit(1); }
+        return;
+    }
+    if cmd == "test" { parse_flags(rest, false); if !test_cmd() || !strict_ok() { exit(1); } return; }
+    if cmd == "build" { parse_flags(rest, true); if !build(debug_flag, false) || !strict_ok() { exit(1); } return; }
     if cmd == "routes" { print_routes(); return; }
     if cmd == "start" {
-        if !build(false, false) { exit(1); }
+        parse_flags(rest, false);
+        if !build(false, false) || !strict_ok() { exit(1); }
         c_exec(server_cmd(rest, false));
         write_stderr("gweb: could not start .gooseweb/server\n");
         exit(1);

@@ -70,5 +70,5 @@ fn test_empty(s: State&) {
 <p>{s.n} {s.flag} {s.text} {s.log}</p>
 <p>{#raw s.text}{twice(s.n)}{#raw s.n}</p>
 {-- a comment --}
-{#for r in s.rows}<i>{r.id}:{r.name}:{r.on}:{r.at.x},{r.at.y} {norm(r.at)}</i>{/for}
+{#for r in s.rows}<i gw-key="{r.id}">{r.id}:{r.name}:{r.on}:{r.at.x},{r.at.y} {norm(r.at)}</i>{/for}
 <b>{if s.flag { "yes" } else { "no" }} {str(s.n, "/", s.flag)} {-s.n} {!s.flag}</b>

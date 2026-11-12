@@ -160,6 +160,9 @@ gweb test                    component parity: test_* functions as Goose and as 
 gweb version                 the gweb version and the package sources it declares
 ```
 
+`gen`, `build`, `start` and `test` take `--strict`: any warning fails the run (`gweb: --strict: 2 warnings stop the build`).
+They also take `--diagnostics json`: stderr becomes JSON Lines, one `{"severity","file","line","code","message"}` object per diagnostic, plus `"detail"` for extra compiler lines.
+
 `gweb` finds the compiler in `$GOOSE`, else `goose` on `PATH`, and finds this
 package beside its own binary (or `$GOOSE_WEB_HOME`). A checkout older than
 the binary, or newer, stops with "rebuild gweb". Build `gweb` with:

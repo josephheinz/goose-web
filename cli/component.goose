@@ -2562,6 +2562,103 @@ fn check_structs() {
     }
 }
 
+// ---------------------------------------------------------------- warnings
+
+fn id_ch(c: u8) -> bool { return is_alpha(c) || (c >= '0' && c <= '9'); }
+
+// Does code write the array field f other than by push and clear: `.f.remove_at(`, `.f[i] = ...` or `.f = ...`?
+fn writes_array(code: const u8[:], f: const u8[:]) -> bool {
+    var pat: u8[>..] = [];
+    format(pat, ".", f);
+    var p = 0;
+    while p < code.len {
+        let k = find(code[p..], pat);
+        if k < 0 { return false; }
+        var q = p + k + pat.len;
+        p = q;
+        if q < code.len && id_ch(code[q]) { continue; }
+        if starts_with(code[q..], ".remove_at(") { return true; }
+        if q < code.len && code[q] == '[' {
+            var depth = 0;
+            while q < code.len {
+                if code[q] == '[' { depth += 1; }
+                if code[q] == ']' { depth -= 1; if depth == 0 { q += 1; break; } }
+                q += 1;
+            }
+        }
+        while q < code.len && (code[q] == ' ' || code[q] == '\t') { q += 1; }
+        if q < code.len && code[q] == '=' && !(q + 1 < code.len && code[q + 1] == '=') { return true; }
+    }
+    return false;
+}
+
+// Is the first element tag after text[at..] (up to the matching {/for}) without gw-key? Scans at most 12 lines.
+fn first_tag_unkeyed(li: i64, at: i64) -> bool {
+    var from = at;
+    var l = li;
+    var tag: u8[>..] = [];
+    var open = false;
+    var braces = 0;
+    while l < line_start.len && l < li + 12 {
+        let ln = text[line_start[l]..line_end[l]];
+        var i = if l == li { from } else { 0 };
+        while i < ln.len {
+            let c = ln[i];
+            if !open {
+                if starts_with(ln[i..], "{/for}") { return false; }
+                if c == '<' && i + 1 < ln.len && is_alpha(ln[i + 1]) { open = true; }
+            } else {
+                if c == '{' { braces += 1; }
+                if c == '}' && braces > 0 { braces -= 1; }
+                if c == '>' && braces == 0 { return find(tag, "gw-key") < 0; }
+                tag.push(c);
+            }
+            i += 1;
+        }
+        if open { tag.push(' '); }
+        l += 1;
+    }
+    return false;
+}
+
+// unkeyed-for (legacy components): a {#for x in s.F} over the State array whose script writes F other than by
+// push and clear, and whose first element tag has no gw-key. A heuristic on the text; it errs towards silence.
+fn warn_unkeyed(close: i64, warns: u8[>..]&) {
+    let si = find_struct("State");
+    if si < 0 { return; }
+    var f: u8[>..] = [];
+    for k in structs[si].n {
+        let fl = fields[structs[si].first + k];
+        if fl.kind == Kind.Array { f.append(fl.name); }
+    }
+    if f.len == 0 || close < 1 { return; }
+    if !writes_array(text[line_start[1]..line_start[close]], f) { return; }
+    var want: u8[>..] = [];
+    format(want, "s.", f);
+    let first = close + 1;
+    let total = line_start.len;
+    for li in first..total {
+        let ln = text[line_start[li]..line_end[li]];
+        var p = 0;
+        while p < ln.len {
+            let k = find(ln[p..], "{#for ");
+            if k < 0 { break; }
+            let a = p + k;
+            let e = find(ln[a..], "}");
+            if e < 0 { break; }
+            p = a + e + 1;
+            let head = ln[a + 6..a + e];
+            let kin = find(head, " in ");
+            if kin < 0 || trim(head[kin + 4..]) != want { continue; }
+            if first_tag_unkeyed(li, p) {
+                var m: u8[>..] = [];
+                format(m, "{#for} over ", want, " needs gw-key on its elements: the list can reorder or lose an item");
+                format(warns, "unkeyed-for\t", src_path, ":", li + 1, ": warning: ", m, "\n");
+            }
+        }
+    }
+}
+
 // The parity tests of the component compile() last read, one name per line.
 fn test_names() -> u8[>..] {
     var r: u8[>..] = [];
@@ -2598,9 +2695,10 @@ fn reset() {
 }
 
 // Errors go to errs as `path:LINE: error: MSG` lines; false when there were any.
+// Warnings go to warns as `code\tpath:LINE: warning: MSG` lines.
 // goose_out is written even then, so the Goose compiler can report its own errors.
 fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: bool,
-           goose_out: u8[>..]&, js_out: u8[>..]&, errs: u8[>..]&) -> bool {
+           goose_out: u8[>..]&, js_out: u8[>..]&, errs: u8[>..]&, warns: u8[>..]&) -> bool {
     reset();
     compact = compact_js;
     src_path.clear();
@@ -2676,5 +2774,6 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
     }
     js_out.append(js);
     errs.append(errs_buf);
+    if nerr == 0 { warn_unkeyed(close, warns); }
     return nerr == 0;
 }

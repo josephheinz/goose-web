@@ -26,4 +26,4 @@ fn test_copies(s: State&) {
 }
 </script>
 <p>{s.cur.id} {s.cur.p.x},{s.cur.p.y} {s.flat.x},{s.flat.y}</p>
-{#for it in s.items}{#let q = it}<i>{q.id}:{q.p.x},{q.p.y}</i>{/for}
+{#for it in s.items}{#let q = it}<i gw-key="{q.id}">{q.id}:{q.p.x},{q.p.y}</i>{/for}

@@ -91,7 +91,7 @@ step catchall env PORT="${PORT:-3994}" sh "$HERE/catchall.sh"
 gweb_new() {
   mkdir "$WORK/lone"
   cp "$ROOT/gweb" "$WORK/lone/gweb"
-  (cd "$WORK/lone" && ./gweb new site && ./gweb -C site build)
+  (cd "$WORK/lone" && ./gweb new site && ./gweb -C site build --strict)
 }
 step "lone gweb new and build" gweb_new
 
