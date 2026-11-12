@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRPropType.gshtml:4: error: @prop items cannot have type Item[>..<]; allowed: i64, bool, u8[:], u8[..N], a struct or S[:]
+struct Item { v: i64 }
+@prop const items: Item[>..<];
+</script>
+<p>x</p>

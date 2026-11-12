@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRInitOrder.gshtml:3: error: @state a reads b, which is declared after it
+@state var a: i64 = b;
+@state var b: i64 = 0;
+</script>
+<p>x</p>

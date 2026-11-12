@@ -29,7 +29,8 @@ bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 mkdir -p "$WORK/ok/app" "$WORK/ok/components"
 echo '<p>components suite</p>' > "$WORK/ok/app/page.html"
 for f in "$HERE"/components/*.gshtml; do
-  case "$(basename "$f")" in Fail*|Warn*) ;; *) cp "$f" "$WORK/ok/components/" ;; esac
+  # R[A-Z]*: reactive components (Addendum 12). Step 5 removes this exclusion when their parity is written.
+  case "$(basename "$f")" in Fail*|Warn*|R[A-Z]*) ;; *) cp "$f" "$WORK/ok/components/" ;; esac
 done
 if out=$("$GWEB" -C "$WORK/ok" test 2>&1); then ok; echo "$out"; else bad "gweb test"; echo "$out"; fi
 
@@ -56,6 +57,8 @@ done
 for f in "$HERE"/components/Warn*.gshtml; do
   name=$(basename "$f")
   want=$(sed -n 's|^// warn: ||p' "$f")
+  code=$(sed -n 's|^// code: ||p' "$f")
+  [ -n "$code" ] || code=unkeyed-for
   dir="$WORK/${name%.gshtml}"
   mkdir -p "$dir/app" "$dir/components"
   echo '<p>x</p>' > "$dir/app/page.html"
@@ -73,10 +76,10 @@ for f in "$HERE"/components/Warn*.gshtml; do
     for (const l of ls) {
       const o = JSON.parse(l);
       for (const k of ["severity", "file", "line", "code", "message"]) if (!(k in o)) throw new Error("no " + k);
-      if (o.code === "unkeyed-for") hit = true;
+      if (o.code === process.argv[2]) hit = true;
     }
     process.exit(hit ? 0 : 1);
-  ' "$WORK/diag.jsonl"; then ok; else bad "$name: --diagnostics json"; sed 's/^/    /' "$WORK/diag.jsonl"; fi
+  ' "$WORK/diag.jsonl" "$code"; then ok; else bad "$name: --diagnostics json"; sed 's/^/    /' "$WORK/diag.jsonl"; fi
 done
 
 # 2c. The parity project builds clean under --strict.

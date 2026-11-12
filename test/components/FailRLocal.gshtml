@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRLocal.gshtml:4: error: 'count' is @state; a local cannot reuse the name
+@state var count: i64 = 0;
+fn f(count: i64) { }
+</script>
+<p>x</p>

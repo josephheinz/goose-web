@@ -1,0 +1,7 @@
+<script goose>
+// expect: components/FailRInitCall.gshtml:4: error: @state b cannot call 'bump', which changes state
+@state var a: i64 = 0;
+@state var b: i64 = bump();
+fn bump() -> i64 { a += 1; return a; }
+</script>
+<p>x</p>

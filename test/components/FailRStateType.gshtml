@@ -1,0 +1,5 @@
+<script goose>
+// expect: components/FailRStateType.gshtml:3: error: @state s cannot have type u8[:]; allowed: i64, bool, u8[..N], a struct or S[>..<]
+@state var s: u8[:] = "";
+</script>
+<p>x</p>

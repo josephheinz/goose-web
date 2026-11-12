@@ -1,0 +1,7 @@
+<script goose>
+// expect: components/FailRComputedWrite.gshtml:5: error: @computed d is set by the framework; component code cannot assign it
+@state var c: i64 = 0;
+@computed let d: i64 = c * 2;
+fn f() { d = 1; }
+</script>
+<p>x</p>

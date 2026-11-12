@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRComputedType.gshtml:4: error: @computed c cannot have type Item[>..<]; allowed: i64, bool, u8[..N] or a struct
+struct Item { v: i64 }
+@computed let c: Item[>..<] = 0;
+</script>
+<p>x</p>

@@ -1,0 +1,7 @@
+<script goose>
+// expect: components/FailROnParam.gshtml:7: error: on:click handler 'pick' takes only i64, bool and const u8[:] parameters
+struct Item { v: i64 }
+@state var n: i64 = 0;
+fn pick(it: Item&) { n += 1; }
+</script>
+<button on:click="pick">x</button>

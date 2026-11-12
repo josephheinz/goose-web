@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRCycle.gshtml:3: error: @computed a and b depend on each other
+@computed let a: i64 = b + 1;
+@computed let b: i64 = a + 1;
+</script>
+<p>x</p>

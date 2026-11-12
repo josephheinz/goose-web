@@ -1,0 +1,5 @@
+<script goose>
+// expect: components/FailRUnknown.gshtml:3: error: unknown declaration '@frob'
+@frob x;
+</script>
+<p>x</p>

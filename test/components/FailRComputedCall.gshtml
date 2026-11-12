@@ -1,0 +1,7 @@
+<script goose>
+// expect: components/FailRComputedCall.gshtml:4: error: @computed d cannot call 'bump', which changes state
+@state var c: i64 = 0;
+@computed let d: i64 = bump();
+fn bump() -> i64 { c += 1; return c; }
+</script>
+<p>x</p>

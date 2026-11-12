@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRDup.gshtml:4: error: 'a' is declared twice as a reactive name
+@state var a: i64 = 0;
+@state var a: i64 = 1;
+</script>
+<p>x</p>

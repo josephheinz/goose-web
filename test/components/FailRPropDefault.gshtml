@@ -1,0 +1,5 @@
+<script goose>
+// expect: components/FailRPropDefault.gshtml:3: error: @prop n: a default must be a literal (a whole number, true, false or a string)
+@prop const n: i64 = 1 + 2;
+</script>
+<p>x</p>

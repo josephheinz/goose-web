@@ -1,0 +1,5 @@
+<script goose>
+// expect: components/FailRBindChecked.gshtml:5: error: bind:checked needs a @state var of type bool
+@state var n: i64 = 0;
+</script>
+<input type="checkbox" bind:checked="n">

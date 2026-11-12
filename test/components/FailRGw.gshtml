@@ -1,0 +1,5 @@
+<script goose>
+// expect: components/FailRGw.gshtml:3: error: names starting with gw_ are reserved
+@state var gw_x: i64 = 0;
+</script>
+<p>x</p>

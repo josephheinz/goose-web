@@ -1,0 +1,6 @@
+<script goose>
+// warn: components/WarnRStateKeyword.gshtml:4: warning: state should be var
+// code: state-keyword
+@state let n: i64 = 0;
+</script>
+<p>{n}</p>

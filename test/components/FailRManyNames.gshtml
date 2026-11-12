@@ -1,0 +1,36 @@
+<script goose>
+// expect: components/FailRManyNames.gshtml:34: error: a component may have at most 31 @prop, @state and @computed names
+@prop const p0: i64;
+@prop const p1: i64;
+@prop const p2: i64;
+@prop const p3: i64;
+@prop const p4: i64;
+@prop const p5: i64;
+@prop const p6: i64;
+@prop const p7: i64;
+@prop const p8: i64;
+@prop const p9: i64;
+@prop const p10: i64;
+@prop const p11: i64;
+@prop const p12: i64;
+@prop const p13: i64;
+@prop const p14: i64;
+@prop const p15: i64;
+@prop const p16: i64;
+@prop const p17: i64;
+@prop const p18: i64;
+@prop const p19: i64;
+@prop const p20: i64;
+@prop const p21: i64;
+@prop const p22: i64;
+@prop const p23: i64;
+@prop const p24: i64;
+@prop const p25: i64;
+@prop const p26: i64;
+@prop const p27: i64;
+@prop const p28: i64;
+@prop const p29: i64;
+@prop const p30: i64;
+@prop const p31: i64;
+</script>
+<p>x</p>

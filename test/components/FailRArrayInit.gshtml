@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRArrayInit.gshtml:4: error: @state xs is an array; its initializer must be []
+struct Item { v: i64 }
+@state var xs: Item[>..<] = 1;
+</script>
+<p>x</p>

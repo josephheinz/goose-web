@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRBind.gshtml:6: error: bind:value needs a @state var; 'total' is @computed
+@state var n: i64 = 0;
+@computed let total: i64 = n * 2;
+</script>
+<input bind:value="total">

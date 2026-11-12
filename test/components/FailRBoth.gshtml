@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRBoth.gshtml:4: error: a component uses either @ declarations or struct State, not both
+@state var n: i64 = 0;
+struct State { n: i64 }
+</script>
+<p>x</p>

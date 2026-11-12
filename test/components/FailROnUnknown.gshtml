@@ -1,0 +1,5 @@
+<script goose>
+// expect: components/FailROnUnknown.gshtml:5: error: on:click handler 'nothing' is not a function of this component
+@state var n: i64 = 0;
+</script>
+<button on:click="nothing">x</button>

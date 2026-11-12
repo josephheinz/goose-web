@@ -1,0 +1,5 @@
+<script goose>
+// expect: components/FailREvery.gshtml:3: error: @every needs a whole number of milliseconds, at least 16
+@every(5) { }
+</script>
+<p>x</p>

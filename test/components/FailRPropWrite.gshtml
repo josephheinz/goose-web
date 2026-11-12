@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRPropWrite.gshtml:4: error: @prop label is const; a component cannot change its props
+@prop const label: i64;
+fn f() { label = 1; }
+</script>
+<p>x</p>

@@ -35,9 +35,49 @@ struct SDef { name: u8[..64], line: i64, first: i64, n: i64 }
 struct Param { name: u8[..64], ty: Ty, mref: bool, tok: i64, var_id: i64 }
 
 struct FnDef { name: u8[..64], tok: i64, line: i64, first: i64, n: i64, ret: Ty, body: i64,
-               js: u8[..72], handler: bool, test: bool }
+               js: u8[..72], handler: bool, test: bool,
+               event: bool,       // reactive: `@event fn name(params);`, no body
+               r: i64, w: i64,    // reactive: the bits it reads and writes, through calls
+               is_async: bool }   // reactive: awaits, or calls one that does (false until step 6)
 
 struct Var { name: u8[..64], ty: Ty, js: u8[..72] }
+
+// ---------------------------------------------------------------- reactive model (Addendum 12)
+
+let R_PROP = 0;
+let R_STATE = 1;
+let R_COMPUTED = 2;
+
+// A T_ARRAY whose cap is RO is `S[:]`, a read-only array (props only).
+let RO = 1;
+
+// One @prop, @state or @computed. bit is the declaration index; mask is 1 << bit.
+// init: the default (@prop, -1 when required), the initializer (@state, @computed), or -1;
+// an array @state has init -1 (its initializer is []). r: the bits the initializer reads, through calls.
+// order: for a computed, its place in rorder.
+struct RDecl { kind: i64, name: u8[..64], tok: i64, line: i64, ty: Ty, keyword_tok: i64, init: i64,
+               bit: i64, mask: i64, r: i64, order: i64 }
+
+let RB_WATCH = 0;
+let RB_MOUNT = 1;
+let RB_UNMOUNT = 2;
+let RB_EVERY = 3;
+
+// @watch, @mount, @unmount or @every(ms) with its block. r and w as for a function.
+struct RBlock { kind: i64, tok: i64, line: i64, ms: i64, body: i64, r: i64, w: i64, is_async: bool }
+
+struct RUse { name: u8[..64], line: i64 }
+
+let RM_TEXT = 0;
+let RM_IF = 1;
+let RM_FOR = 2;
+let RM_LET = 3;
+let RM_RAW = 4;
+let RM_ON = 5;
+let RM_BIND = 6;
+
+// A markup expression: the bits it reads and writes (bind: writes), by line.
+struct RMk { kind: i64, line: i64, r: i64, w: i64 }
 
 // Tokens: offsets into text.
 let K_EOF = 0;
@@ -172,6 +212,20 @@ var gtext: u8[>..];            // markup text not yet written to the Goose line
 var gline: u8[>..];            // the Goose line being built
 var chk: u8[>..];              // the body of gw_check
 var raw_st = 0;                // tscan's <script>/<style> state across markup lines
+
+var reactive = false;          // the script has @ declarations (set by parse_script)
+var rdecls: RDecl[>..<];
+var rblocks: RBlock[>..<];
+var ruses: RUse[>..<];
+var rorder: i64[>..<];         // the computeds, each after the computeds it reads
+var rmarks: RMk[>..<];
+var mk_r = 0;                  // every bit the markup reads
+var rw_r = 0;                  // the R/W walker's accumulators
+var rw_w = 0;
+var rw_rep = false;            // the walker reports errors (the last pass only)
+var rw_ctx = 0;                // 0 function or block, 1 computed, 2 @state initializer, 3 markup
+var rw_ctx_name: u8[..64];
+var warns_buf: u8[>..];        // reactive warnings, in the warns format
 
 // ---------------------------------------------------------------- errors
 
@@ -525,7 +579,8 @@ fn parse_type() -> Ty {
         r.name = tok_name(pos);
         pos += 1;
         if is("[") {
-            if tok_is(pos + 1, ">") && tok_is(pos + 2, "..") && tok_is(pos + 3, "<") && tok_is(pos + 4, "]") { pos += 5; r.t = T_ARRAY; }
+            if reactive && tok_is(pos + 1, ":") && tok_is(pos + 2, "]") { pos += 3; r.t = T_ARRAY; r.cap = RO; }
+            else if tok_is(pos + 1, ">") && tok_is(pos + 2, "..") && tok_is(pos + 3, "<") && tok_is(pos + 4, "]") { pos += 5; r.t = T_ARRAY; }
             else if tok_is(pos + 1, ">") && tok_is(pos + 2, "..") && tok_is(pos + 3, "]") { pos += 4; r.t = T_ARRAY; }
             else { pos += 1; ty_e = pos; type_bad(); r.t = T_ERR; return r; }
         }
@@ -970,9 +1025,11 @@ fn check_reserved(tok: i64) {
         format(m, "'", name, "' is a reserved word in JavaScript; rename it");
         report(t.line, m);
     }
+    if reactive && starts_with(name, "gw_") { report(t.line, "names starting with gw_ are reserved"); }
 }
 
-fn parse_fn() {
+// bodyless: `@event fn name(params);`
+fn parse_fn(bodyless: bool) {
     let line = toks[pos].line;
     pos += 1;
     if !at_k(K_ID) || is_keyword(pos) { bad_tok(pos); return; }
@@ -982,7 +1039,8 @@ fn parse_fn() {
     if !expect("(") { return; }
     let fi = fns.len;
     fns.push(FnDef { name: tok_name(name_tok), tok: name_tok, line: line, first: params.len, n: 0,
-                     ret: ty(T_VOID), body: -1, js: "", handler: false, test: false });
+                     ret: ty(T_VOID), body: -1, js: "", handler: false, test: false,
+                     event: false, r: 0, w: 0, is_async: false });
     check_reserved(name_tok);
     while !is(")") {
         if !at_k(K_ID) || is_keyword(pos) { bad_tok(pos); return; }
@@ -995,6 +1053,7 @@ fn parse_fn() {
         if (t.t == T_INT || t.t == T_BOOL) && !ty_ref && !ty_const { ok = true; }
         if t.t == T_STR && t.cap == 0 && ty_const && !ty_ref { ok = true; }
         if t.t == T_STRUCT && ty_ref && (ty_const || t.name == "State") { ok = true; }
+        if reactive && t.t == T_STRUCT && ty_ref && t.name != "State" { ok = true; }
         if !ok { type_bad(); return; }
         params.push(Param { name: tok_name(pn), ty: t, mref: ty_ref && !ty_const, tok: pn, var_id: -1 });
         fns[fi].n += 1;
@@ -1008,9 +1067,229 @@ fn parse_fn() {
         if is(",") { bad_tok(pos); return; }
         fns[fi].ret = t;
     }
+    if bodyless {
+        expect(";");
+        return;
+    }
     let b = parse_block();
     if perr { return; }
     fns[fi].body = b;
+}
+
+// ---------------------------------------------------------------- reactive declarations
+
+fn find_rdecl(name: const u8[:]) -> i64 {
+    for d, i in rdecls { if d.name == name { return i; } }
+    return -1;
+}
+
+fn rmark(k: i64) -> u8[..16] {
+    var r: u8[..16] = "";
+    if k == R_PROP { r.append("@prop"); }
+    else if k == R_STATE { r.append("@state"); }
+    else { r.append("@computed"); }
+    return r;
+}
+
+fn warn_buf(code: const u8[:], line: i64, msg: const u8[:]) {
+    format(warns_buf, code, "\t", src_path, ":", line, ": warning: ", msg, "\n");
+}
+
+// Does the script have a top-level @? Then it is reactive.
+fn detect_reactive() {
+    reactive = false;
+    var depth = 0;
+    var k = pos;
+    while toks[k].k != K_EOF {
+        if toks[k].k == K_OP {
+            if tok_is(k, "{") { depth += 1; }
+            else if tok_is(k, "}") { depth -= 1; }
+            else if depth == 0 && tok_is(k, "@") { reactive = true; }
+        }
+        k += 1;
+    }
+}
+
+fn skip_to_semi() {
+    while !at_k(K_EOF) && !is(";") && !is("}") { pos += 1; }
+    if is(";") { pos += 1; }
+}
+
+fn is_literal(n: i64) -> bool {
+    let k = nodes[n].k;
+    if k == E_INT || k == E_BOOL || k == E_STR { return true; }
+    return k == E_UN && tok_is(nodes[n].tok, "-") && nodes[nodes[n].a].k == E_INT;
+}
+
+// pos is at the word after @ (prop, state or computed).
+fn parse_rdecl(kind: i64) {
+    pos += 1;
+    if !is("const") && !is("let") && !is("var") { bad_tok(pos); return; }
+    let kw = pos;
+    pos += 1;
+    if !at_k(K_ID) || is_keyword(pos) { bad_tok(pos); return; }
+    let nt = pos;
+    pos += 1;
+    let line = toks[nt].line;
+    let di = rdecls.len;
+    var mask = 1;
+    for k in min(di, 62) { mask *= 2; }
+    rdecls.push(RDecl { kind: kind, name: tok_name(nt), tok: nt, line: line, ty: ty(T_ERR), keyword_tok: kw,
+                        init: -1, bit: di, mask: mask, r: 0, order: -1 });
+    let name = tok_name(nt);
+    let mk = rmark(kind);
+    check_reserved(nt);
+    if find_rdecl(name) < di {
+        var m: u8[>..] = [];
+        format(m, "'", name, "' is declared twice as a reactive name");
+        report(line, m);
+    }
+    if di == 31 { report(line, "a component may have at most 31 @prop, @state and @computed names"); }
+    let kwtext = text[toks[kw].s..toks[kw].e];
+    if kind == R_PROP && kwtext != "const" { warn_buf("prop-keyword", toks[kw].line, "a prop should be const"); }
+    if kind == R_COMPUTED && kwtext != "let" { warn_buf("computed-keyword", toks[kw].line, "a computed value should be let"); }
+    if kind == R_STATE && kwtext != "var" { warn_buf("state-keyword", toks[kw].line, "state should be var"); }
+    if !is(":") {
+        var m: u8[>..] = [];
+        format(m, mk, " ", name, " needs a type: write ", mk, " ", kwtext, " ", name, ": T");
+        if kind != R_PROP { m.append(" = ..."); }
+        report(line, m);
+        skip_to_semi();
+        return;
+    }
+    pos += 1;
+    let t = parse_type();
+    if perr { return; }
+    var ok = !ty_ref && !ty_const;
+    var allowed: u8[..80] = "";
+    if kind == R_PROP {
+        ok = ok && (t.t == T_INT || t.t == T_BOOL || t.t == T_STR || t.t == T_STRUCT || (t.t == T_ARRAY && t.cap == RO));
+        allowed.append("i64, bool, u8[:], u8[..N], a struct or S[:]");
+    } else if kind == R_STATE {
+        ok = ok && (t.t == T_INT || t.t == T_BOOL || (t.t == T_STR && t.cap > 0) || t.t == T_STRUCT || (t.t == T_ARRAY && t.cap != RO));
+        allowed.append("i64, bool, u8[..N], a struct or S[>..<]");
+    } else {
+        ok = ok && (t.t == T_INT || t.t == T_BOOL || (t.t == T_STR && t.cap > 0) || t.t == T_STRUCT);
+        allowed.append("i64, bool, u8[..N] or a struct");
+    }
+    if !ok {
+        var m: u8[>..] = [];
+        format(m, mk, " ", name, " cannot have type ", text[toks[ty_s].s..toks[ty_e - 1].e], "; allowed: ", allowed);
+        report(toks[ty_s].line, m);
+        skip_to_semi();
+        return;
+    }
+    rdecls[di].ty = t;
+    if kind == R_STATE && t.t == T_ARRAY {
+        for j in di {
+            if rdecls[j].kind == R_STATE && rdecls[j].ty.t == T_ARRAY { report(line, "a component may hold one array @state"); }
+        }
+    }
+    if kind == R_PROP {
+        if accept(";") { return; }
+        if !expect("=") { return; }
+        let e = parse_expr(false);
+        if perr { return; }
+        rdecls[di].init = e;
+        if t.t == T_STRUCT || t.t == T_ARRAY {
+            var m: u8[>..] = [];
+            format(m, mk, " ", name, " cannot have a default; it is required at every call site");
+            report(line, m);
+        } else if !is_literal(e) {
+            var m: u8[>..] = [];
+            format(m, mk, " ", name, ": a default must be a literal (a whole number, true, false or a string)");
+            report(line, m);
+        }
+        expect(";");
+        return;
+    }
+    if !is("=") {
+        var m: u8[>..] = [];
+        format(m, mk, " ", name, " needs an initializer");
+        report(line, m);
+        skip_to_semi();
+        return;
+    }
+    pos += 1;
+    if t.t == T_ARRAY {
+        if is("[") && tok_is(pos + 1, "]") { pos += 2; }
+        else {
+            var m: u8[>..] = [];
+            format(m, mk, " ", name, " is an array; its initializer must be []");
+            report(line, m);
+            skip_to_semi();
+            return;
+        }
+        expect(";");
+        return;
+    }
+    let e = parse_expr(false);
+    if perr { return; }
+    rdecls[di].init = e;
+    expect(";");
+}
+
+// @watch { }, @mount { }, @unmount { }, @every(MS) { }; pos is at the word after @.
+fn parse_rblock() {
+    let line = toks[pos].line;
+    var kind = RB_WATCH;
+    if is("mount") { kind = RB_MOUNT; }
+    else if is("unmount") { kind = RB_UNMOUNT; }
+    else if is("every") { kind = RB_EVERY; }
+    let tk = pos;
+    pos += 1;
+    var ms = 0;
+    if kind == RB_EVERY {
+        var good = false;
+        if is("(") {
+            pos += 1;
+            if at_k(K_INT) { ms = int_value(pos); pos += 1; }
+            if ms >= 16 && is(")") { good = true; }
+        }
+        if !good { report(line, "@every needs a whole number of milliseconds, at least 16"); }
+        while !at_k(K_EOF) && !is("{") && !is(";") { pos += 1; }
+    }
+    if !is("{") { bad_tok(pos); return; }
+    let b = parse_block();
+    if perr { return; }
+    rblocks.push(RBlock { kind: kind, tok: tk, line: line, ms: ms, body: b, r: 0, w: 0, is_async: false });
+}
+
+// @event fn name(params);  pos is at the word after @.
+fn parse_revent() {
+    pos += 1;
+    if !is("fn") { bad_tok(pos); return; }
+    let before = fns.len;
+    parse_fn(true);
+    if fns.len > before { fns[fns.len - 1].event = true; }
+}
+
+fn parse_ruse() {
+    let line = toks[pos].line;
+    pos += 1;
+    if !at_k(K_ID) || is_keyword(pos) { bad_tok(pos); return; }
+    ruses.push(RUse { name: tok_name(pos), line: line });
+    pos += 1;
+    report(line, "@use is not built yet (Addendum 12 step 12)");
+    expect(";");
+}
+
+// pos is at the @.
+fn parse_at() {
+    pos += 1;
+    if !at_k(K_ID) { bad_tok(pos); return; }
+    if is("prop") { parse_rdecl(R_PROP); }
+    else if is("state") { parse_rdecl(R_STATE); }
+    else if is("computed") { parse_rdecl(R_COMPUTED); }
+    else if is("watch") || is("mount") || is("unmount") || is("every") { parse_rblock(); }
+    else if is("event") { parse_revent(); }
+    else if is("use") { parse_ruse(); }
+    else {
+        var m: u8[>..] = [];
+        format(m, "unknown declaration '@", text[toks[pos].s..toks[pos].e], "'");
+        report(toks[pos].line, m);
+        perr = true;
+    }
 }
 
 fn skip_decl(start: i64) {
@@ -1035,11 +1314,13 @@ fn skip_decl(start: i64) {
 fn parse_script(first_line: i64, close: i64) -> bool {
     let before = nerr;
     pos = tokenize(line_start[first_line], line_start[close], first_line + 1);
+    detect_reactive();
     while !at_k(K_EOF) {
         let start = pos;
         perr = false;
         if is("struct") { parse_struct(); }
-        else if is("fn") { parse_fn(); }
+        else if is("fn") { parse_fn(false); }
+        else if reactive && is("@") { parse_at(); }
         else if is("let") || is("var") || is("const") { bad_what(toks[pos].line, "global"); }
         else { bad_tok(pos); }
         if perr {
@@ -1102,6 +1383,15 @@ fn begin_fn() {
 
 fn declare(tok: i64, t: Ty) -> i64 {
     check_reserved(tok);
+    if reactive {
+        let d = find_rdecl(text[toks[tok].s..toks[tok].e]);
+        if d >= 0 {
+            var m: u8[>..] = [];
+            let mk = rmark(rdecls[d].kind);
+            format(m, "'", rdecls[d].name, "' is ", mk, "; a local cannot reuse the name");
+            report(toks[tok].line, m);
+        }
+    }
     var v = Var { name: tok_name(tok), ty: t, js: "" };
     if compact { v.js.append(next_short()); } else { v.js = pick_name(v.name); }
     vars.push(v);
@@ -1232,6 +1522,14 @@ recursive fn check_expr(n: i64) {
     if k == E_STR { nodes[n].ty = ty(T_STR); return; }
     if k == E_NAME {
         let v = lookup(nodes[n].tok);
+        if v < 0 && reactive {
+            let d = find_rdecl(text[toks[nodes[n].tok].s..toks[nodes[n].tok].e]);
+            if d >= 0 { nodes[n].ref2 = d; nodes[n].ty = rdecls[d].ty; return; }
+            if tok_is(nodes[n].tok, "s") {
+                report(line, "'s' does not exist in a reactive component; name the state directly");
+                return;
+            }
+        }
         if v < 0 { cannot_type(line); return; }
         nodes[n].ref = v;
         nodes[n].ty = vars[v].ty;
@@ -1491,12 +1789,311 @@ recursive fn check_stmt(n: i64) {
 }
 
 fn check_fn(fi: i64) {
+    if reactive && fns[fi].event { return; }
     begin_fn();
     let f = fns[fi];
     for p in f.first..f.first + f.n {
         params[p].var_id = declare(params[p].tok, params[p].ty);
     }
     if f.body >= 0 { check_block(f.body); }
+}
+
+// ---------------------------------------------------------------- reads, writes (Addendum 12, section 2)
+
+// Which reactive name is node n, or -1 (a local, or something else).
+fn rdecl_of(n: i64) -> i64 {
+    if nodes[n].k == E_NAME { return nodes[n].ref2; }
+    return -1;
+}
+
+fn rw_read(d: i64) { rw_r = rw_r | rdecls[d].mask; }
+
+fn rw_write(d: i64, line: i64) {
+    rw_w = rw_w | rdecls[d].mask;
+    if !rw_rep { return; }
+    let dc = rdecls[d];
+    var m: u8[>..] = [];
+    if dc.kind == R_PROP {
+        format(m, "@prop ", dc.name, " is const; a component cannot change its props");
+        report(line, m);
+    } else if dc.kind == R_COMPUTED {
+        format(m, "@computed ", dc.name, " is set by the framework; component code cannot assign it");
+        report(line, m);
+    }
+}
+
+// A target: a name, or a field or element inside one. compound: the old value is read too.
+recursive fn rw_lvalue(n: i64, compound: bool, line: i64) {
+    if n < 0 { return; }
+    let k = nodes[n].k;
+    if k == E_NAME {
+        let d = nodes[n].ref2;
+        if d >= 0 {
+            if compound { rw_read(d); }
+            rw_write(d, line);
+        }
+        return;
+    }
+    if k == E_FIELD { rw_lvalue(nodes[n].a, compound, line); return; }
+    if k == E_INDEX {
+        rw_lvalue(nodes[n].a, compound, line);
+        rw_expr(nodes[n].b);
+        return;
+    }
+    rw_expr(n);
+}
+
+recursive fn rw_expr(n: i64) {
+    if n < 0 { return; }
+    let k = nodes[n].k;
+    let line = nodes[n].line;
+    if k == E_NAME {
+        if nodes[n].ref2 >= 0 { rw_read(nodes[n].ref2); }
+        return;
+    }
+    if k == E_FIELD { rw_expr(nodes[n].a); return; }
+    if k == E_INDEX { rw_expr(nodes[n].a); rw_expr(nodes[n].b); return; }
+    if k == E_UN { rw_expr(nodes[n].a); return; }
+    if k == E_BIN { rw_expr(nodes[n].a); rw_expr(nodes[n].b); return; }
+    if k == E_IF { rw_expr(nodes[n].a); rw_expr(nodes[n].b); rw_expr(nodes[n].c); return; }
+    if k == E_SLIT {
+        var f = nodes[n].a;
+        while f >= 0 { rw_expr(nodes[f].a); f = nodes[f].next; }
+        return;
+    }
+    if k != E_CALL { return; }
+    let r = nodes[n].ref;
+    var a = nodes[n].a;
+    if r >= 0 {
+        rw_r = rw_r | fns[r].r;
+        rw_w = rw_w | fns[r].w;
+        if rw_rep && rw_ctx != 0 && fns[r].w != 0 {
+            var m: u8[>..] = [];
+            if rw_ctx == 1 { format(m, "@computed ", rw_ctx_name, " cannot call '", fns[r].name, "', which changes state"); }
+            else if rw_ctx == 2 { format(m, "@state ", rw_ctx_name, " cannot call '", fns[r].name, "', which changes state"); }
+            else { format(m, "markup cannot call '", fns[r].name, "', which changes state"); }
+            report(line, m);
+        }
+        var i = 0;
+        while a >= 0 {
+            if i < fns[r].n && params[fns[r].first + i].mref { rw_lvalue(a, false, line); } else { rw_expr(a); }
+            i += 1;
+            a = nodes[a].next;
+        }
+        return;
+    }
+    if r == B_PUSH || r == B_REMOVE_AT || r == B_CLEAR || r == B_APPEND {
+        rw_lvalue(a, false, line);
+        if a >= 0 { a = nodes[a].next; }
+    }
+    while a >= 0 { rw_expr(a); a = nodes[a].next; }
+}
+
+recursive fn rw_stmt(n: i64) {
+    let k = nodes[n].k;
+    let line = nodes[n].line;
+    if k == S_LET { rw_expr(nodes[n].a); return; }
+    if k == S_ASSIGN {
+        rw_expr(nodes[n].b);
+        rw_lvalue(nodes[n].a, !tok_is(nodes[n].tok, "="), line);
+        return;
+    }
+    if k == S_INCDEC { rw_lvalue(nodes[n].a, true, line); return; }
+    if k == S_IF {
+        rw_expr(nodes[n].a);
+        rw_block(nodes[n].b);
+        let e = nodes[n].c;
+        if e >= 0 {
+            if nodes[e].k == S_IF { rw_stmt(e); } else { rw_block(e); }
+        }
+        return;
+    }
+    if k == S_FOR {
+        rw_expr(nodes[n].a);
+        rw_expr(nodes[n].b);
+        rw_block(nodes[n].c);
+        return;
+    }
+    if k == S_WHILE { rw_expr(nodes[n].a); rw_block(nodes[n].c); return; }
+    if k == S_RETURN || k == S_RESULT || k == S_EXPR { rw_expr(nodes[n].a); return; }
+}
+
+recursive fn rw_block(n: i64) {
+    if n < 0 { return; }
+    var s = nodes[n].a;
+    while s >= 0 {
+        rw_stmt(s);
+        s = nodes[s].next;
+    }
+}
+
+// R and W of every function, to a fixed point over the call graph. No errors.
+fn rw_fixpoint() {
+    rw_rep = false;
+    rw_ctx = 0;
+    var changed = true;
+    while changed {
+        changed = false;
+        for i in fns.len {
+            if fns[i].body < 0 { continue; }
+            rw_r = 0;
+            rw_w = 0;
+            rw_block(fns[i].body);
+            if rw_r != fns[i].r || rw_w != fns[i].w {
+                fns[i].r = rw_r;
+                fns[i].w = rw_w;
+                changed = true;
+            }
+        }
+    }
+}
+
+// The computeds in dependency order into rorder, or the cycle error.
+fn order_computeds() {
+    rorder.clear();
+    var cmask = 0;
+    var total = 0;
+    for i in rdecls.len {
+        if rdecls[i].kind == R_COMPUTED { cmask += rdecls[i].mask; total += 1; }
+    }
+    var placed = 0;
+    while rorder.len < total {
+        var progress = false;
+        for i in rdecls.len {
+            if rdecls[i].kind != R_COMPUTED || (placed & rdecls[i].mask) != 0 { continue; }
+            let pending = cmask - placed;
+            if (rdecls[i].r & pending) != 0 { continue; }
+            rorder.push(i);
+            rdecls[i].order = rorder.len - 1;
+            placed += rdecls[i].mask;
+            progress = true;
+        }
+        if progress { continue; }
+        // A cycle: follow the dependencies from the first computed left until one repeats.
+        var cur = -1;
+        for i in rdecls.len {
+            if cur < 0 && rdecls[i].kind == R_COMPUTED && (placed & rdecls[i].mask) == 0 { cur = i; }
+        }
+        var seen = 0;
+        loop {
+            seen = seen | rdecls[cur].mask;
+            let deps = rdecls[cur].r & (cmask - placed);
+            var nxt = -1;
+            for j in rdecls.len {
+                if nxt < 0 && (deps & rdecls[j].mask) != 0 { nxt = j; }
+            }
+            if nxt < 0 { return; }
+            if (seen & rdecls[nxt].mask) != 0 {
+                var m: u8[>..] = [];
+                if nxt == cur { format(m, "@computed ", rdecls[cur].name, " depends on itself"); }
+                else {
+                    let lo = min(cur, nxt);
+                    let hi = max(cur, nxt);
+                    format(m, "@computed ", rdecls[lo].name, " and ", rdecls[hi].name, " depend on each other");
+                }
+                report(rdecls[min(cur, nxt)].line, m);
+                return;
+            }
+            cur = nxt;
+        }
+    }
+}
+
+// After check_fn: initializers, blocks, then R/W and the rules built on them.
+fn check_reactive() {
+    for i in rdecls.len {
+        let init = rdecls[i].init;
+        if init < 0 { continue; }
+        begin_fn();
+        check_expr(init);
+        let got = nodes[init].ty;
+        let want = rdecls[i].ty;
+        if got.t == T_ERR || want.t == T_ERR { continue; }
+        if !same_ty(got, want) {
+            var m: u8[>..] = [];
+            let mk = rmark(rdecls[i].kind);
+            format(m, "the ", if rdecls[i].kind == R_PROP { "default" } else { "initializer" }, " of ", mk, " ", rdecls[i].name, " has the wrong type");
+            report(nodes[init].line, m);
+        }
+    }
+    for i in rblocks.len {
+        begin_fn();
+        check_block(rblocks[i].body);
+    }
+    rw_fixpoint();
+    rw_rep = true;
+    for i in fns.len {
+        if fns[i].body < 0 { continue; }
+        rw_ctx = 0;
+        rw_r = 0;
+        rw_w = 0;
+        rw_block(fns[i].body);
+    }
+    for i in rblocks.len {
+        rw_ctx = 0;
+        rw_r = 0;
+        rw_w = 0;
+        rw_block(rblocks[i].body);
+        rblocks[i].r = rw_r;
+        rblocks[i].w = rw_w;
+    }
+    for i in rdecls.len {
+        let init = rdecls[i].init;
+        if init < 0 || rdecls[i].kind == R_PROP { continue; }
+        rw_ctx = if rdecls[i].kind == R_STATE { 2 } else { 1 };
+        rw_ctx_name.clear();
+        rw_ctx_name.append(rdecls[i].name);
+        rw_r = 0;
+        rw_w = 0;
+        rw_expr(init);
+        rdecls[i].r = rw_r;
+        if rdecls[i].kind != R_STATE { continue; }
+        for j in rdecls.len {
+            if (rw_r & rdecls[j].mask) == 0 { continue; }
+            var m: u8[>..] = [];
+            if rdecls[j].kind == R_STATE && j >= i {
+                format(m, "@state ", rdecls[i].name, " reads ", rdecls[j].name, ", which is declared after it");
+            } else if rdecls[j].kind == R_COMPUTED {
+                format(m, "@state ", rdecls[i].name, " reads ", rdecls[j].name, ", which is @computed; initializers read props and earlier @state only");
+            }
+            if m.len > 0 { report(rdecls[i].line, m); }
+        }
+    }
+    rw_rep = false;
+    order_computeds();
+}
+
+// A markup expression: its R and W, and the rule that markup does not call a function that writes.
+fn rw_mark(n: i64, line: i64, kind: i64) {
+    if n < 0 { return; }
+    rw_rep = true;
+    rw_ctx = 3;
+    rw_r = 0;
+    rw_w = 0;
+    rw_expr(n);
+    rw_rep = false;
+    rmarks.push(RMk { kind: kind, line: line, r: rw_r, w: rw_w });
+    mk_r = mk_r | rw_r;
+}
+
+// After the parse: the rules that need every declaration, and the marks on functions.
+fn check_rmodel() {
+    let si = find_struct("State");
+    if si >= 0 { report(structs[si].line, "a component uses either @ declarations or struct State, not both"); }
+    for i in rdecls.len {
+        let t = rdecls[i].ty;
+        if (t.t == T_STRUCT || t.t == T_ARRAY) && find_struct(t.name) < 0 {
+            var m: u8[>..] = [];
+            let mk = rmark(rdecls[i].kind);
+            format(m, mk, " ", rdecls[i].name, ": '", t.name, "' is not a struct declared in this component");
+            report(rdecls[i].line, m);
+            rdecls[i].ty = ty(T_ERR);
+        }
+    }
+    for &f in fns {
+        f.test = starts_with(f.name, "test_") && f.n == 0 && !f.event;
+        f.handler = !f.test && !f.event;
+    }
 }
 
 // ---------------------------------------------------------------- JavaScript
@@ -1557,7 +2154,12 @@ recursive fn emit_expr(n: i64, top: bool) {
     let k = nodes[n].k;
     if k == E_INT || k == E_STR { w_tok(nodes[n].tok); return; }
     if k == E_BOOL { w_bool(tok_is(nodes[n].tok, "true")); return; }
-    if k == E_NAME { w_var(nodes[n].ref); return; }
+    if k == E_NAME {
+        // A reactive name has no JavaScript yet (step 5); the output is dropped.
+        if nodes[n].ref2 >= 0 { w(rdecls[nodes[n].ref2].name); return; }
+        w_var(nodes[n].ref);
+        return;
+    }
     if k == E_FIELD {
         let a = nodes[n].a;
         let at = nodes[a].ty.t;
@@ -2112,6 +2714,7 @@ fn m_expr(s: i64, e: i64, line: i64, raw: bool) {
     let n = parse_tag_expr(s, e, line);
     if n < 0 { return; }
     check_expr(n);
+    if reactive { rw_mark(n, line, if raw { RM_RAW } else { RM_TEXT }); }
     let t = nodes[n].ty.t;
     if t == T_ERR { return; }
     if t != T_INT && t != T_BOOL && t != T_STR { cannot_type(line); return; }
@@ -2149,6 +2752,7 @@ fn m_if(s: i64, e: i64, line: i64, else_if: bool) {
     let n = parse_tag_expr(s, e, line);
     if n >= 0 {
         check_expr(n);
+        if reactive { rw_mark(n, line, RM_IF); }
         let t = nodes[n].ty.t;
         if t != T_ERR && t != T_BOOL { cannot_type(line); }
         else if t == T_BOOL { emit_expr(n, true); }
@@ -2202,6 +2806,10 @@ fn m_for(s: i64, e: i64, line: i64) {
     nl();
     if ok {
         check_for_head(n);
+        if reactive {
+            rw_mark(nodes[n].a, line, RM_FOR);
+            rw_mark(nodes[n].b, line, RM_FOR);
+        }
         emit_for_head(n);
     } else {
         wo("for (;;) {");
@@ -2225,6 +2833,7 @@ fn m_let(s: i64, e: i64, line: i64) {
     perr = false;
     if !ok { return; }
     check_let(n);
+    if reactive { rw_mark(nodes[n].a, line, RM_LET); }
     nl();
     w("let ");
     w_var(nodes[n].ref);
@@ -2233,7 +2842,58 @@ fn m_let(s: i64, e: i64, line: i64) {
     w(";");
 }
 
+// on: in a reactive component: any function of the component whose parameters are i64, bool or const u8[:].
+fn m_on_r(event: const u8[:], vs: i64, ve: i64, line: i64) {
+    let n = parse_tag_expr(vs, ve, line);
+    if n < 0 { return; }
+    var name_tok = -1;
+    if nodes[n].k == E_NAME { name_tok = nodes[n].tok; }
+    else if nodes[n].k == E_CALL && nodes[n].c != 1 && nodes[n].d < 0 { name_tok = nodes[n].tok; }
+    var fi = -1;
+    if name_tok >= 0 { fi = find_fn(text[toks[name_tok].s..toks[name_tok].e]); }
+    let shown = if name_tok >= 0 { text[toks[name_tok].s..toks[name_tok].e] } else { text[vs..ve] };
+    var m: u8[>..] = [];
+    if fi < 0 || fns[fi].event {
+        format(m, "on:", event, " handler '", shown, "' is not a function of this component");
+        report(line, m);
+        return;
+    }
+    for p in fns[fi].first..fns[fi].first + fns[fi].n {
+        let pt = params[p].ty.t;
+        if params[p].mref || (pt != T_INT && pt != T_BOOL && pt != T_STR) {
+            format(m, "on:", event, " handler '", shown, "' takes only i64, bool and const u8[:] parameters");
+            report(line, m);
+            return;
+        }
+    }
+    let na = if nodes[n].k == E_CALL { args_count(n) } else { 0 };
+    if na != fns[fi].n {
+        format(m, "on:", event, " handler '", shown, "' is called with ", na, " arguments; it takes ", fns[fi].n);
+        report(line, m);
+        return;
+    }
+    var a = nodes[n].a;
+    if nodes[n].k != E_CALL { a = -1; }
+    var i = 0;
+    while a >= 0 {
+        check_expr(a);
+        rw_mark(a, line, RM_ON);
+        let at = nodes[a].ty.t;
+        if at != T_ERR && at != params[fns[fi].first + i].ty.t {
+            m.clear();
+            format(m, "on:", event, " handler '", shown, "': argument ", i + 1, " has the wrong type");
+            report(line, m);
+        }
+        i += 1;
+        a = nodes[a].next;
+    }
+    var t: u8[>..] = [];
+    format(t, "data-on-", event, "=\"", shown, "\"");
+    mtext(t);
+}
+
 fn m_on(event: const u8[:], vs: i64, ve: i64, line: i64) {
+    if reactive { m_on_r(event, vs, ve, line); return; }
     let n = parse_tag_expr(vs, ve, line);
     if n < 0 { return; }
     var name_tok = -1;
@@ -2286,7 +2946,37 @@ fn m_on(event: const u8[:], vs: i64, ve: i64, line: i64) {
     chk_line(call, line);
 }
 
+// bind: in a reactive component: a @state var of type i64, bool or u8[..N] (bool for checked).
+fn m_bind_r(what: const u8[:], vs: i64, ve: i64, line: i64) {
+    let field = trim(text[vs..ve]);
+    let d = find_rdecl(field);
+    var m: u8[>..] = [];
+    if d < 0 {
+        format(m, "bind:", what, " needs a @state var; '", field, "' is not one");
+        report(line, m);
+        return;
+    }
+    if rdecls[d].kind != R_STATE {
+        let mk = rmark(rdecls[d].kind);
+        format(m, "bind:", what, " needs a @state var; '", field, "' is ", mk);
+        report(line, m);
+        return;
+    }
+    let t = rdecls[d].ty;
+    if t.t == T_ERR { return; }
+    if what == "checked" {
+        if t.t != T_BOOL { report(line, "bind:checked needs a @state var of type bool"); return; }
+    } else if t.t != T_INT && t.t != T_BOOL && t.t != T_STR {
+        format(m, "bind:", what, " needs a @state var of type i64, bool or u8[..N]");
+        report(line, m);
+        return;
+    }
+    rmarks.push(RMk { kind: RM_BIND, line: line, r: rdecls[d].mask, w: rdecls[d].mask });
+    mk_r = mk_r | rdecls[d].mask;
+}
+
 fn m_bind(what: const u8[:], vs: i64, ve: i64, line: i64) {
+    if reactive { m_bind_r(what, vs, ve, line); return; }
     let field = trim(text[vs..ve]);
     let fi = find_field(find_struct("State"), field);
     var ok = fi >= 0;
@@ -2480,24 +3170,28 @@ fn compile_markup(first_line: i64, render_line: i64, goose_out: u8[>..]&) {
     if compact {
         o_js.clear();
         o_js.append(next_short());
-        var v = Var { name: "s", ty: st, js: "" };
-        v.js.append(next_short());
-        vars.push(v);
+        if !reactive {
+            var v = Var { name: "s", ty: st, js: "" };
+            v.js.append(next_short());
+            vars.push(v);
+        }
     } else {
         o_js.clear();
         o_js.append("o");
         used.push("o");
-        var v = Var { name: "s", ty: st, js: "" };
-        v.js = pick_name("s");
-        vars.push(v);
+        if !reactive {
+            var v = Var { name: "s", ty: st, js: "" };
+            v.js = pick_name("s");
+            vars.push(v);
+        }
     }
-    s_var = vars.len - 1;
-    scope.push(s_var);
+    // A reactive component's markup names its state directly: no s.
+    if reactive { s_var = -1; } else { s_var = vars.len - 1; scope.push(s_var); }
     emit_line_note(render_line);
     w("function ");
     w(render_js);
     w("(");
-    w_var(s_var);
+    if !reactive { w_var(s_var); }
     wo(") {");
     ind = 1;
     nl();
@@ -2692,6 +3386,18 @@ fn reset() {
     gtext.clear();
     gline.clear();
     cat_open = false;
+    reactive = false;
+    rdecls.clear();
+    rblocks.clear();
+    ruses.clear();
+    rorder.clear();
+    rmarks.clear();
+    mk_r = 0;
+    rw_r = 0;
+    rw_w = 0;
+    rw_rep = false;
+    rw_ctx = 0;
+    warns_buf.clear();
 }
 
 // Errors go to errs as `path:LINE: error: MSG` lines; false when there were any.
@@ -2736,20 +3442,23 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
     }
     goose_out.append("fn render(out: u8[>..]&, s: const State&) {\n");
     parse_script(1, close);
-    check_structs();
+    if reactive { check_rmodel(); } else { check_structs(); }
     for &f in fns {
-        if f.n > 0 && params[f.first].mref && params[f.first].ty.name == "State" {
+        if !reactive && f.n > 0 && params[f.first].mref && params[f.first].ty.name == "State" {
             f.test = starts_with(f.name, "test_") && f.n == 1;
             f.handler = !f.test;
         }
     }
     assign_module_names();
     for i in fns.len { check_fn(i); }
-    for i in fns.len { if fns[i].body >= 0 { emit_js_fn(i); } }
+    if reactive { check_reactive(); }
+    if !reactive { for i in fns.len { if fns[i].body >= 0 { emit_js_fn(i); } } }
     compile_markup(close + 1, close + 1, goose_out);
     if close + 1 >= nlines { goose_out.append("}\n"); }
-    emit_zero();
-    emit_component_call();
+    if !reactive {
+        emit_zero();
+        emit_component_call();
+    }
     goose_out.append("fn gw_check(s: const State&) { var gw_w = State { .. };\n");
     goose_out.append(chk);
     goose_out.append("}\n");
@@ -2757,7 +3466,10 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
     format(goose_out, "fn component(out: u8[>..]&, s: const State&) { out.append(\"<div data-component=\\\"", name,
            "\\\">\"); render(out, s); out.append(\"</div><script type=\\\"application/json\\\">\"); gw_json(out, s); ",
            "out.append(\"</script><script type=\\\"module\\\" src=\\\"/_gw/", name, ".js\\\"></script>\"); }\n");
-    if compact {
+    if reactive {
+        // Step 5 writes the module; the Goose output waits for step 4b.
+        js_out.append("// reactive JS: Addendum 12 step 5\n");
+    } else if compact {
         js_out.append("import{");
         var first = true;
         for h in 9 {
@@ -2772,8 +3484,11 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
         js_out.append(path);
         js_out.append(". Do not edit.\nimport { component, esc, at, set, rm, blen, cap, idiv, imod } from \"./gwi.js\";\n");
     }
-    js_out.append(js);
+    if !reactive { js_out.append(js); }
     errs.append(errs_buf);
-    if nerr == 0 { warn_unkeyed(close, warns); }
+    if nerr == 0 {
+        warns.append(warns_buf);
+        warn_unkeyed(close, warns);
+    }
     return nerr == 0;
 }

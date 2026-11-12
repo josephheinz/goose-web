@@ -1,0 +1,11 @@
+<script goose>
+// Reactive component, Addendum 12 section 1. Parity for it starts in step 5; test/components.sh skips R*.gshtml until then.
+@prop const start: i64;
+@prop const label: u8[:];
+@prop const step: i64 = 1;
+@state var count: i64 = start;
+@computed let doubled: i64 = count * 2;
+fn inc() { count += step; }
+fn test_inc() { inc(); inc(); }
+</script>
+<button on:click="inc">{label}: {count} x 2 = {doubled}</button>
