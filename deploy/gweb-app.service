@@ -1,0 +1,55 @@
+# Copy to /etc/systemd/system/gweb-app.service, then:
+#   install the binary:  install -D .gooseweb/server /opt/gweb-app/server
+#   dedicated user:      useradd --system --home-dir /opt/gweb-app --shell /usr/sbin/nologin gweb-app
+#   data directory:      install -d -o gweb-app -g gweb-app /opt/gweb-app/data
+#   systemctl daemon-reload && systemctl enable --now gweb-app
+#
+# Two ways to restart:
+#   systemctl reload gweb-app    SIGUSR2: a new process starts on the same listening socket, the old
+#                                one drains. No request fails. New code only.
+#   systemctl restart gweb-app   stop, then start. With gweb-app.socket, connections wait in the
+#                                backlog; without it they are refused for the gap.
+# A reload needs migrations that the old binary can still run against (add, do not drop).
+[Unit]
+Description=gweb-app
+After=network.target
+
+[Service]
+# Type=notify: the server sends READY=1, and MAINPID when a reload hands over to a new process.
+# NotifyAccess=all lets that new process, which is not the main one yet, send it.
+Type=notify
+NotifyAccess=all
+User=gweb-app
+Group=gweb-app
+WorkingDirectory=/opt/gweb-app
+ExecStart=/opt/gweb-app/server
+ExecReload=/bin/kill -USR2 $MAINPID
+Environment=PORT=3000
+Environment=GWEB_LOG_FORMAT=json
+Environment=TZ=UTC
+# Add --drain-ms or --metrics here, or as GWEB_DRAIN_MS and GWEB_METRICS=1.
+
+# SIGTERM starts a drain of 10 s (--drain-ms) plus a 5 s hard deadline.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=1
+LimitNOFILE=65536
+
+# Hardening that keeps fork/exec (the reload) and the data directory working.
+# Left out on purpose: MemoryDenyWriteExecute and SystemCallFilter.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/gweb-app/data
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

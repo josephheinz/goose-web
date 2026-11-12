@@ -1,3 +1,5 @@
-// The native part of goose-web: the state owner channels, system facts, upload files, crypto and the page cache.
-c_sources = ["src/owner.c", "src/sys.c", "src/upload.c", "src/inflight.c", "src/crypto.c", "src/rate.c", "src/cache.c", "src/cache_core.c"];
+// The native part of goose-web: the state owner channels, system facts, upload files, crypto, the page cache,
+// observability and jobs.
+c_sources = ["src/owner.c", "src/sys.c", "src/upload.c", "src/inflight.c", "src/crypto.c", "src/rate.c",
+             "src/cache.c", "src/cache_core.c", "src/obs.c", "src/otel.c", "src/jobs.c"];
 exclude = ["test", "cli"];

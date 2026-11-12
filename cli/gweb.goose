@@ -89,6 +89,9 @@ var socket_open = false;               // and defines these handlers
 var socket_message = false;
 var socket_close = false;
 var uses_hub = false;                  // socket.goose, or a file under app/ or lib/ calls web::subscribe( or web::websocket(
+var has_state_shutdown = false;
+var has_jobs = false;
+var has_jobs_schedule = false;
 var has_not_found = false;
 var not_found_csrf = false;
 var uses_sqlite = false;
@@ -185,6 +188,19 @@ fn takes_res(src: const u8[:], name: const u8[:]) -> bool {
     format(pat, "fn ", name, "(");
     for line in split(src, '\n') {
         if starts_with(trim_start(line), pat) { return find(line, "http::Response") >= 0; }
+    }
+    return false;
+}
+
+// True when a line starts with enum NAME or struct NAME followed by a space or {.
+fn declares_type(src: const u8[:], name: const u8[:]) -> bool {
+    for line in split(src, '\n') {
+        let l = trim_start(line);
+        for kw in ["enum ", "struct "] {
+            if !starts_with(l, kw) { continue; }
+            let rest = l[kw.len..];
+            if starts_with(rest, name) && (rest.len == name.len || rest[name.len] == ' ' || rest[name.len] == '{') { return true; }
+        }
     }
     return false;
 }
@@ -574,6 +590,7 @@ fn scan_dir(base: const u8[:], prefix: const u8[:], rel: const u8[:], todo: u8[.
         var full: u8[>..] = [];
         format(full, path, "/", name);
         if is_dir(full) {
+            if name == "__gweb" { err(full, 0, "__gweb is reserved for the health, readiness and metrics URLs; rename this folder"); continue; }
             if name[0] == '_' || name[0] == '.' { continue; }
             if catch_kind(rel) > 0 {
                 err(full, 0, "a catch-all folder is the last segment of its route; move this folder out of it");
@@ -615,6 +632,9 @@ fn scan_dir(base: const u8[:], prefix: const u8[:], rel: const u8[:], todo: u8[.
         }
         else if name == "sitemap.goose" {
             if rel.len == 0 { has_sitemap = true; } else { err(full, 0, "sitemap.goose belongs in app/ only"); }
+        }
+        else if name == "jobs.goose" {
+            if rel.len == 0 { has_jobs = true; } else { err(full, 0, "jobs.goose belongs in app/ only"); }
         }
     }
     if d.route && d.page_html { err(path, 0, "a folder has route.goose or page.html, not both"); }
@@ -812,6 +832,9 @@ fn scan() {
     has_sitemap = false;
     has_entries = false;
     has_socket = false;
+    has_state_shutdown = false;
+    has_jobs = false;
+    has_jobs_schedule = false;
     has_not_found = false;
     if !is_dir("app") { err("app", 0, "no app/ folder here; run gweb in a project, or gweb new <dir>"); return; }
     load_packages();
@@ -2249,6 +2272,16 @@ fn gen_locales() {
     write(dst, g);
 }
 
+// A route's or page's place in ROUTES, the label the metrics and the access log use.
+fn route_index(di: i64) -> i64 {
+    var n = 0;
+    for d, j in dirs {
+        if j >= di { break; }
+        if d.route || d.page_html { n += 1; }
+    }
+    return n;
+}
+
 fn gen_dispatch(m: u8[>..]&) {
     format(m, "fn dispatch", SIG, " -> i64 {\n");
     if statics.len > 0 {
@@ -2302,7 +2335,7 @@ fn gen_dispatch(m: u8[>..]&) {
             }
             let call_kind = if d.route { "route_" } else { "page_" };
             var call: u8[>..] = [];
-            format(call, "ctx.route = ", i, "; web::inflight_route(ctx.worker, ", i, "); ", call_kind, i, "(req, ctx, res);");
+            format(call, "ctx.route = ", i, "; ctx.route_label = ", route_index(i), "; web::inflight_route(ctx.worker, ", i, "); ", call_kind, i, "(req, ctx, res);");
             var body: u8[>..] = [];
             if params.len > 0 { format(body, "if ", params, " { ", call, " } else { web::not_found(ctx); } finish(req, ctx, res); return -1;"); }
             else { format(body, call, " finish(req, ctx, res); return -1;"); }
@@ -2615,7 +2648,170 @@ thread_fn hub_supervisor(cfg: web::Config, owner_fd: i32) {
     }
 }
 
+thread_fn hub_leave(chans: web::Channels) {
+    while !net::wait_stop(1000) {}
+    web::owner_leave(chans);
+}
+
 """);
+}
+
+// ROUTES, the route patterns in the order route_index numbers them, and the typed jobs:: wrappers.
+fn gen_ops_decls(m: u8[>..]&) {
+    m.append("\nlet ROUTES = \"");
+    var first = true;
+    for d in dirs {
+        if !d.route && !d.page_html { continue; }
+        if !first { m.append("\\n"); }
+        first = false;
+        var u: u8[>..] = [];
+        url_of(u, d.rel);
+        lit(m, u);
+    }
+    m.append("\";\n");
+    if !has_jobs { return; }
+    m.append("""
+fn jobs::enqueue(ctx: const web::Ctx&, job: jobs::Job, delay_ms: i64 = 0) -> bool {
+    var one: jobs::Job[>..] = [];
+    one.push(job);
+    var bytes: u8[>..] = [];
+    to_bytes(one, bytes);
+    return web::job_push(bytes, delay_ms);
+}
+
+fn jobs::every(s: web::Schedules&, name: const u8[:], ms: i64, job: jobs::Job) -> bool {
+    var one: jobs::Job[>..] = [];
+    one.push(job);
+    var bytes: u8[>..] = [];
+    to_bytes(one, bytes);
+    return web::schedule_every(s, name, ms, bytes);
+}
+
+fn jobs::cron(s: web::Schedules&, name: const u8[:], spec: const u8[:], job: jobs::Job) -> bool {
+    var one: jobs::Job[>..] = [];
+    one.push(job);
+    var bytes: u8[>..] = [];
+    to_bytes(one, bytes);
+    return web::schedule_cron(s, name, spec, bytes);
+}
+""");
+    m.append("\n");
+}
+
+// A runner takes jobs until the server stops; job_supervisor restarts it after an abort and counts the job it held
+// as a failed attempt.
+fn gen_job_threads(m: u8[>..]&) {
+    m.append("""
+thread_fn job_runner(slot: i64, owner_fd: i32, cfg: web::Config) {
+    var bytes: u8[>..] = [];
+    var sched: u8[>..] = [];
+    while !net::stopping() {
+        bytes.clear();
+        sched.clear();
+        let id, attempt, got = web::job_take(slot, 250, bytes, sched);
+        if !got { continue; }
+        var name: u8[>..] = [];
+        if sched.len > 0 { format(name, "job ", sched); } else { name.append("job"); }
+        var ctx = web::job_ctx(slot, owner_fd, id, attempt, name);
+        let batch, decoded = from_bytes<jobs::Job[>..]>(bytes);
+        var ok = false;
+        if decoded { for j in batch { ok = jobs::run(j, ctx); } }
+        web::job_done(slot, ok, ctx);
+    }
+}
+
+thread_fn job_supervisor(slot: i64, owner_fd: i32, cfg: web::Config, chans: web::Channels) {
+    var why: u8[>..] = [];
+    while !thread_wait(thread_spawn_contained(job_runner, slot, owner_fd, cfg), why) {
+        web::job_abandon(slot, why);
+        if net::stopping() { break; }
+        why.clear();
+    }
+    web::owner_leave(chans);
+}
+""");
+    m.append("\n");
+}
+
+// The order: secrets and config, export, signals, listener, ops, state, uploads, the hub, jobs and their schedules,
+// workers, handoff, ready, then the waits and the shutdown steps. A start-up failure of a schedule exits before any
+// thread runs.
+fn gen_main_fn(m: u8[>..]&) {
+    m.append("\nfn main() {\n    var cfg = web::config_from_args();\n");
+    if uses_keys { m.append("    if cfg.auth.keys.n == 0 { print(\"goose-web: set WEB_SECRET (32 to 64 bytes; openssl rand -hex 32)\"); exit(2); }\n"); }
+    if has_config { m.append("    if !config::check() { exit(2); }\n"); }
+    // Export renders in process: no socket and no workers, but pages that ask the state owner still need it.
+    if has_state {
+        m.append("    if cfg.export_dir.len > 0 {\n");
+        if has_state_init { m.append("        state::init();\n"); }
+        m.append("        let chans = web::owner_channels(1);\n");
+        m.append("        thread_spawn(export_thread, web::worker_end(chans, 0), cfg);\n");
+        m.append("        web::owner_loop<state::Msg, state::Reply>(chans, state::handle);\n        return;\n    }\n");
+    } else {
+        m.append("    if cfg.export_dir.len > 0 { exit(if run_export(cfg.export_dir, -1) { 0 } else { 1 }); }\n");
+    }
+    m.append("    net::stop_on_signals(cfg.drain_delay_ms, cfg.drain_ms);\n");
+    m.append("""
+    let server, inherited = net::listen_inherited(cfg.port, cfg.host, 1024);
+    guard server.ok() else { print("goose-web: cannot listen on port ", cfg.port, ": ", net::last_error()); exit(1); }
+    web::ops_init(cfg, ROUTES);
+    web::inflight_init(cfg.workers, cfg.dev_id != 0);
+""");
+    if has_state && has_state_init { m.append("    state::init();\n"); }
+    // Owner channels: one per worker, then one per job runner, then the hub thread's.
+    var users: u8[>..] = [];
+    users.append("cfg.workers");
+    if has_jobs { users.append(" + cfg.job_runners"); }
+    var hub_slot: u8[>..] = [];
+    hub_slot.append(users);
+    if uses_hub { users.append(" + 1"); }
+    if has_state { format(m, "    let chans = web::owner_channels(", users, ");\n"); }
+    else { m.append("    let chans = web::Channels { handle: 0, n: 0 };\n"); }
+    m.append("    web::prepare_uploads(cfg);\n");
+    if uses_hub {
+        m.append("    let hb = net::hub();\n    cfg.hub = hb.handle;\n");
+        // The hub is not waited for: it ends with the process. Its owner channel leaves once the stop begins.
+        if has_state {
+            format(m, "    thread_spawn(hub_supervisor, cfg, web::worker_end(chans, ", hub_slot, "));\n");
+            m.append("    thread_spawn(hub_leave, chans);\n");
+        } else { m.append("    thread_spawn(hub_supervisor, cfg, -1);\n"); }
+    }
+    if has_jobs {
+        m.append("    web::jobs_init(cfg);\n    var sched = web::new_schedules(cfg);\n");
+        if has_jobs_schedule { m.append("    jobs::schedule(sched);\n"); }
+        m.append("    if sched.bad > 0 { exit(1); }\n");
+    }
+    m.append("    var ids: i64[>..] = [];\n");
+    let wfd = if has_state { "web::worker_end(chans, i)" } else { "-1" };
+    format(m, "    for i in cfg.workers { ids.push(thread_spawn(supervisor, i, server, ", wfd, ", cfg, chans)); }\n");
+    if has_jobs {
+        let jfd = if has_state { "web::worker_end(chans, cfg.workers + i)" } else { "-1" };
+        format(m, "    for i in cfg.job_runners { ids.push(thread_spawn(job_supervisor, i, ", jfd, ", cfg, chans)); }\n");
+    }
+    m.append("""
+    var argv: u8[>..] = [];
+    for a in args() { argv.append(a); argv.push(0); }
+    net::enable_handoff(server, argv);
+    net::ready();
+    var up: u8[>..] = [];
+    format(up, "goose-web: http://localhost:", cfg.port, " (", cfg.workers, " workers)");
+    web::log_message(web::Level.Info, up);
+""");
+    if has_state { m.append("    web::owner_loop<state::Msg, state::Reply>(chans, state::handle);\n"); }
+    m.append("    for id in ids { thread_wait(id); }\n");
+    if has_jobs {
+        m.append("""
+    web::jobs_stop();
+    let dropped = web::jobs_queued();
+    if dropped > 0 {
+        var msg: u8[>..] = [];
+        format(msg, "goose-web: stopped with ", dropped, " queued jobs dropped");
+        web::log_message(web::Level.Warn, msg);
+    }
+""");
+    }
+    if has_state_shutdown { m.append("    state::shutdown();\n"); }
+    m.append("    web::ops_shutdown();\n    exit(0);\n}\n");
 }
 
 // The part of the generated main that the server and the route tests share, up to and including dispatch.
@@ -2627,6 +2823,8 @@ fn gen_main_body(m: u8[>..]&, test: bool) {
     if uses_sqlite { m.append("import sqlite from \""); lit(m, pkg_source(2)); m.append("\";\n"); }
     m.append("import os;\nimport net.http;\nimport web.template;\nimport web.meta;\nimport web.sitemap;\nimport web.static;\nimport web.owner;\nimport web.form;\nimport web.csrf;\nimport web.valid;\nimport web.upload;\nimport web.errors;\nimport web.crypto;\nimport web.session;\nimport web.rate;\nimport web.cors;\nimport web.cache;\nimport web.stream;\nimport web.push;\n");
     if uses_hub { m.append("import net.hub;\n"); }
+    m.append("import web.ops;\n");
+    if has_jobs { m.append("import web.jobs;\nimport jobs;\n"); }
     if has_locales { m.append("import web.i18n;\nimport t;\n"); }
     if test { m.append("import web.testing;\nimport site;\n"); }
     for d in dirs {
@@ -2665,6 +2863,7 @@ fn gen_main_body(m: u8[>..]&, test: bool) {
     gen_finish(m);
     m.append("\n");
     gen_dispatch(m);
+    gen_ops_decls(m);
 }
 
 fn gen_main() -> u8[>..] {
@@ -2674,7 +2873,7 @@ fn gen_main() -> u8[>..] {
     gen_export(m);
     m.append("""
 thread_fn worker(slot: i64, server: net::Socket, owner_fd: i32, cfg: web::Config) {
-    web::run_worker(slot, server, owner_fd, cfg, dispatch, static_bytes);
+    web::run_worker(slot, server, owner_fd, cfg, ROUTES, dispatch, static_bytes);
 }
 
 // D12: answers the request the dead worker held. Runs contained, so a crash here only costs this attempt.
@@ -2701,10 +2900,12 @@ thread_fn crash_reply(slot: i64, cfg: web::Config, attempt: i64) {
 
 // After an abort with a request in flight: attempt 1, then 2, then a fixed plain 500; a crash during a web::fail
 // render (phase 1) skips attempt 1. Then the dead worker's loop is freed, which closes its connections.
-thread_fn supervisor(slot: i64, server: net::Socket, owner_fd: i32, cfg: web::Config) {
+thread_fn supervisor(slot: i64, server: net::Socket, owner_fd: i32, cfg: web::Config, chans: web::Channels) {
     var why: u8[>..] = [];
     while !thread_wait(thread_spawn_contained(worker, slot, server, owner_fd, cfg), why) {
-        print("goose-web: worker ", slot, " stopped: ", why, "; restarting it");
+        var msg: u8[>..] = [];
+        format(msg, "goose-web: worker ", slot, " stopped: ", why, if net::stopping() { "" } else { "; restarting it" });
+        web::log_message(web::Level.Error, msg);
         if web::inflight_pending(slot) {
             web::inflight_set_why(slot, why);
             var attempt = if web::inflight_phase_of(slot) == 1 { 2 } else { 1 };
@@ -2717,47 +2918,16 @@ thread_fn supervisor(slot: i64, server: net::Socket, owner_fd: i32, cfg: web::Co
             if !answered { web::plain_500(slot); }
         }
         web::inflight_release(slot);
+        if net::stopping() { break; }
         why.clear();
     }
+    web::owner_leave(chans);
 }
 
 """);
     if uses_hub { gen_hub_thread(m); }
-    m.append("""
-fn main() {
-    var cfg = web::config_from_args();
-""");
-    if uses_keys { m.append("    if cfg.auth.keys.n == 0 { print(\"goose-web: set WEB_SECRET (32 to 64 bytes; openssl rand -hex 32)\"); exit(2); }\n"); }
-    if has_config { m.append("    if !config::check() { exit(2); }\n"); }
-    // Export renders in process: no socket and no workers, but pages that ask the state owner still need it.
-    if has_state {
-        m.append("    if cfg.export_dir.len > 0 {\n");
-        if has_state_init { m.append("        state::init();\n"); }
-        m.append("        let chans = web::owner_channels(1);\n");
-        m.append("        thread_spawn(export_thread, web::worker_end(chans, 0), cfg);\n");
-        m.append("        web::owner_loop<state::Msg, state::Reply>(chans, state::handle);\n        return;\n    }\n");
-    } else {
-        m.append("    if cfg.export_dir.len > 0 { exit(if run_export(cfg.export_dir, -1) { 0 } else { 1 }); }\n");
-    }
-    m.append("""
-    let server = net::listen(cfg.port, cfg.host, 1024);
-    guard server.ok() else { print("goose-web: cannot listen on port ", cfg.port, ": ", net::last_error()); exit(1); }
-    web::inflight_init(cfg.workers, cfg.dev_id != 0);
-
-""");
-    if has_state {
-        if has_state_init { m.append("    state::init();\n"); }
-        format(m, "    let chans = web::owner_channels(cfg.workers", if uses_hub { " + 1" } else { "" }, ");\n");
-    }
-    m.append("    web::prepare_uploads(cfg);\n");
-    if uses_hub { m.append("    let hb = net::hub();\n    cfg.hub = hb.handle;\n"); }
-    m.append("    print(\"goose-web: http://localhost:\", cfg.port, \" (\", cfg.workers, \" workers)\");\n");
-    m.append("    var ids: i64[>..] = [];\n");
-    if uses_hub { m.append(if has_state { "    ids.push(thread_spawn(hub_supervisor, cfg, web::worker_end(chans, cfg.workers)));\n" } else { "    ids.push(thread_spawn(hub_supervisor, cfg, -1));\n" }); }
-    if has_state { m.append("    for i in cfg.workers { ids.push(thread_spawn(supervisor, i, server, web::worker_end(chans, i), cfg)); }\n"); }
-    else { m.append("    for i in cfg.workers { ids.push(thread_spawn(supervisor, i, server, -1, cfg)); }\n"); }
-    if has_state { m.append("    web::owner_loop<state::Msg, state::Reply>(chans, state::handle);\n"); }
-    m.append("    for id in ids { thread_wait(id); }\n}\n");
+    if has_jobs { m.append("\n"); gen_job_threads(m); }
+    gen_main_fn(m);
     return m;
 }
 
@@ -3336,6 +3506,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
         var code: u8[>..] = [];
         if copy_prefixed("app/state.goose", "state", code) {
             has_state_init = defines(code, "init");
+            has_state_shutdown = defines(code, "shutdown");
             for name in ["handle"] { if !defines(code, name) { err("app/state.goose", 0, "state.goose needs fn handle(msg: const Msg&) -> Reply"); } }
             if find(code, "enum Msg") < 0 && find(code, "struct Msg") < 0 { err("app/state.goose", 0, "state.goose needs a type named Msg"); }
             if find(code, "struct Reply") < 0 && find(code, "enum Reply") < 0 { err("app/state.goose", 0, "state.goose needs a type named Reply"); }
@@ -3353,6 +3524,14 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
         socket_open = defines(code_so, "open");
         socket_message = defines(code_so, "message");
         socket_close = defines(code_so, "close");
+    }
+    if has_jobs {
+        var code: u8[>..] = [];
+        if copy_prefixed("app/jobs.goose", "jobs", code) {
+            has_jobs_schedule = defines(code, "schedule");
+            if !defines(code, "run") { err("app/jobs.goose", 0, "jobs.goose needs fn run(job: const Job&, ctx: web::Ctx&) -> bool"); }
+            if !declares_type(code, "Job") { err("app/jobs.goose", 0, "jobs.goose needs a type named Job"); }
+        }
     }
     check_targets();
     if errors > 0 { return false; }
@@ -3981,6 +4160,10 @@ fn server_cmd(extra: u8[:][:], dev: bool) -> u8[>..] {
         // gweb dev's default port; gweb start and the server keep 3000.
         if !has_port { cmd.append(" --port 60053"); }
         cmd.append(" --log");
+        // Restarts on every edit; a long drain would only slow them.
+        var has_drain = false;
+        for a in extra { if a == "--drain-ms" { has_drain = true; } }
+        if !has_drain { cmd.append(" --drain-ms 200"); }
         // A fresh build id per spawn: open pages poll it and reload when it changes.
         format(cmd, " --dev-id ", (time() * 1000.0) as i64);
     }
@@ -4092,6 +4275,9 @@ fn dev(extra: u8[:][:]) {
 
 // ---------------------------------------------------------------- new
 
+let DOCKERFILE = embed_file("../deploy/Dockerfile");
+let DOCKERIGNORE = embed_file("../deploy/dockerignore");
+
 fn scaffold(dir: const u8[:]) {
     if is_dir(dir) {
         var probe: u8[>..] = [];
@@ -4163,6 +4349,8 @@ fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
 
 """],
         [".gitignore", ".gooseweb/\n.gooseweb.dev/\n.gooseweb.test/\n.gooseweb.lsp/\n.gooseweb.check/\n.env*.local\n"],
+        ["Dockerfile", DOCKERFILE],
+        [".dockerignore", DOCKERIGNORE],
         ["public/site.css", """
 body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; }
 nav a { margin-right: 1rem; }

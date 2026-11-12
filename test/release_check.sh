@@ -163,6 +163,9 @@ step srcmap sh "$HERE/srcmap.sh"
 step packages env PORT="${PORT:-4001}" sh "$HERE/packages.sh"
 step tutorial env PORT="${PORT:-4002}" sh "$HERE/tutorial.sh"
 step lsp sh "$HERE/lsp.sh"
+step ops env PORT="${PORT:-4003}" sh "$HERE/ops.sh"
+step ops_unit goose_test ops_unit
+step ops_c sh "$HERE/c/run.sh"
 
 gweb_new() {
   mkdir "$WORK/lone"

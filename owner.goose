@@ -4,6 +4,7 @@
 namespace web;
 
 import std;
+import web;
 
 struct Channels { handle: u64, n: i64 }
 
@@ -14,10 +15,15 @@ extern fn c_send_frame(fd: i32, payload: const u8[:]) -> i32 = "gweb_send_frame"
 extern fn c_recv_frame(fd: i32, out: u8[>..]&) -> i32 = "gweb_recv_frame";
 extern fn c_set_recv_timeout(fd: i32, ms: i64) = "gweb_set_recv_timeout";
 extern fn c_owner_next(h: u64, out: u8[>..]&) -> i32 = "gweb_owner_next";
+extern fn c_chans_leave(h: u64) = "gweb_chans_leave";
 
 fn owner_channels(workers: i64) -> Channels {
     Channels { handle: c_chans_new(workers as i32), n: workers }
 }
+
+// One call per user of the channels (a worker, or a job runner) when it is done for good. Once all n have left,
+// owner_loop returns. A no-op for a handle that was never made.
+fn owner_leave(c: Channels) { if c.handle != 0 { c_chans_leave(c.handle); } }
 
 // Worker i's end of its channel; replies time out after 5 seconds.
 fn worker_end(c: Channels, i: i64) -> i32 {
@@ -41,14 +47,15 @@ fn owner_call_fd<M, R>(fd: i32, msg: M) -> R, bool {
     return R { .. }, false;
 }
 
-// Serves the workers on the calling thread (main) forever: H(msg) -> R.
+// Serves the workers on the calling thread (main): H(msg) -> R. Returns when every user has called owner_leave.
 fn owner_loop<M, R, H>(c: Channels) {
     var buf: u8[>..] = [];
     var out: u8[>..] = [];
     loop {
         buf.clear();
         let i = c_owner_next(c.handle, buf);
-        if i < 0 { print("goose-web: state channel failed"); return; }
+        if i == -3 { return; }
+        if i < 0 { log_message(Level.Error, "goose-web: state channel failed"); return; }
         let ms, ok = from_bytes<M[>..]>(buf);
         if !ok { continue; }   // the worker times out
         var replies: R[>..] = [];
