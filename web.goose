@@ -16,6 +16,10 @@ struct Params { n: i64, names: u8[..32][8], values: u8[..256][8],
 
 enum Outcome { Continue, NotFound, Redirect }
 
+// Declared here, before Ctx and Config use them (DESIGN-ADDENDUM-13, D2).
+struct Keys { n: i64 = 0, k: u8[..64][4] = [""; 4] }   // the first key signs, all verify
+struct AuthConfig { keys: Keys = Keys { .. }, idle: i64 = 86400, max: i64 = 2592000, trust_proxy: bool = false }
+
 // Ctx holds no references or slices, so a handler may shrink res while it still reads req and ctx.
 struct Ctx {
     params: Params,
@@ -27,11 +31,13 @@ struct Ctx {
     redirect_status: i64,
     location: u8[..1024],
     title: u8[..256],
-    set_cookies: u8[..2048]   // pending Set-Cookie lines; run_worker moves them to res
+    set_cookies: u8[..2048],  // pending Set-Cookie lines; run_worker moves them to res
+    auth: AuthConfig = AuthConfig { .. }   // copied from Config by run_worker; the keys live here so handlers need no globals
 }
 
 struct Config { port: i64, host: u8[..64], workers: i64, log: bool, idle_ms: i64, max_body: i64,
-                dev_id: i64 }   // 0 = off
+                dev_id: i64,    // 0 = off
+                auth: AuthConfig }
 
 fn no_params() -> Params { Params { n: 0, names: [""; 8], values: [""; 8] } }
 
@@ -318,13 +324,21 @@ fn default_workers() -> i64 {
 
 fn default_config() -> Config {
     Config { port: 3000, host: "0.0.0.0", workers: default_workers(), log: false,
-             idle_ms: 5000, max_body: 1048576, dev_id: 0 }
+             idle_ms: 5000, max_body: 1048576, dev_id: 0, auth: AuthConfig { .. } }
 }
 
 // Reads --port N, --host H, --workers N, --log, --idle-ms N, --max-body N,
-// and the PORT and WEB_WORKERS environment variables (flags win).
+// and the PORT, WEB_WORKERS, WEB_SECRET, WEB_SESSION_IDLE, WEB_SESSION_MAX and WEB_TRUST_PROXY environment variables
+// (flags win), after loading the .env files. Exits with status 2 on a bad .env file, secret or session lifetime.
 fn config_from_args() -> Config {
     var cfg = default_config();
+    var envname: u8[>..] = [];
+    var env_err: u8[>..] = [];
+    var dev = false;
+    for arg in args() { if arg == "--dev-id" { dev = true; } }
+    c_setenv("GWEB_ENV", if dev { "development" } else { "production" });
+    environment(envname);
+    if !load_env_files(envname, env_err) { print(env_err); exit(2); }
     var e: u8[>..] = [];
     if env("PORT", e) { let p, ok = parse_int(trim(e)); if ok { cfg.port = p; } }
     e.clear();
@@ -349,6 +363,16 @@ fn config_from_args() -> Config {
         print("flags: --port N --host H --workers N --log --idle-ms N --max-body N (--dev-id N: gweb dev only)");
         exit(2);
     }
+    var secret_err: u8[>..] = [];
+    e.clear();
+    if env("WEB_SECRET", e) && trim(e).len > 0 {
+        if !parse_secret(e, cfg.auth.keys, secret_err) { print(secret_err); exit(2); }
+    } else if cfg.dev_id != 0 {
+        if !dev_secret(cfg.auth.keys, secret_err) { print(secret_err); exit(2); }
+    }
+    cfg.auth.idle = env_positive("WEB_SESSION_IDLE", cfg.auth.idle);
+    cfg.auth.max = env_positive("WEB_SESSION_MAX", cfg.auth.max);
+    cfg.auth.trust_proxy = env_bool("WEB_TRUST_PROXY", false);
     return cfg;
 }
 
@@ -358,6 +382,8 @@ fn config_from_args() -> Config {
 extern fn c_entropy(buf: u8[:]) -> i32 = "gweb_entropy";
 
 let B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+let HEX_LOWER = "0123456789abcdef";
 
 // base64url without padding, appended to out.
 fn b64url(out: u8[>..]&, data: const u8[:]) {
@@ -381,6 +407,171 @@ fn b64url(out: u8[>..]&, data: const u8[:]) {
         out.push(B64URL[(n >> 12) & 63]);
         out.push(B64URL[(n >> 6) & 63]);
     }
+}
+
+// ---- env files and typed env
+
+extern fn c_setenv(name: const u8[:], value: const u8[:]) -> i32 = "gweb_setenv";
+
+// Appends GWEB_ENV, or "production" when it is unset or empty.
+fn environment(out: u8[>..]&) {
+    let before = out.len;
+    env("GWEB_ENV", out);
+    if out.len == before { out.append("production"); }
+}
+
+fn env_str(name: const u8[:], out: u8[>..]&) -> bool { return env(name, out); }
+
+fn env_int(name: const u8[:], fallback: i64) -> i64 {
+    var e: u8[>..] = [];
+    if !env(name, e) { return fallback; }
+    let n, ok = parse_int(trim(e));
+    if ok { return n; }
+    return fallback;
+}
+
+fn lower_is(s: const u8[:], word: const u8[:]) -> bool {
+    if s.len != word.len { return false; }
+    for i in s.len {
+        var c = s[i];
+        if c >= 'A' && c <= 'Z' { c = (c + 32) as u8; }
+        if c != word[i] { return false; }
+    }
+    return true;
+}
+
+// 1/true/yes/on and 0/false/no/off, case-insensitive; fallback when unset or anything else.
+fn env_bool(name: const u8[:], fallback: bool) -> bool {
+    var e: u8[>..] = [];
+    if !env(name, e) { return fallback; }
+    let t = trim(e);
+    for w in ["1", "true", "yes", "on"] { if lower_is(t, w) { return true; } }
+    for w in ["0", "false", "no", "off"] { if lower_is(t, w) { return false; } }
+    return fallback;
+}
+
+fn env_required(name: const u8[:]) -> bool {
+    var e: u8[>..] = [];
+    if env(name, e) { return true; }
+    print("config: ", name, " is not set");
+    return false;
+}
+
+// Only a positive integer replaces fallback; a bad lifetime is a startup error, not a silent default.
+fn env_positive(name: const u8[:], fallback: i64) -> i64 {
+    var e: u8[>..] = [];
+    if !env(name, e) || trim(e).len == 0 { return fallback; }
+    let n, ok = parse_int(trim(e));
+    if ok && n > 0 { return n; }
+    print(name, " must be a positive whole number of seconds");
+    exit(2);
+    return fallback;
+}
+
+fn env_name_start(c: u8) -> bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
+fn env_name_byte(c: u8) -> bool { return env_name_start(c) || (c >= '0' && c <= '9'); }
+
+// One .env line: 0 skipped (blank or comment), 1 a pair (name and value appended), -1 malformed.
+// An optional "export " prefix; the value is trimmed and one pair of matching quotes removed; # inside a value is kept.
+fn parse_env_line(line: const u8[:], name: u8[>..]&, value: u8[>..]&) -> i64 {
+    let t = trim(line);
+    if t.len == 0 || t[0] == '#' { return 0; }
+    var i = 0;
+    if starts_with(t, "export ") {
+        i = 7;
+        while i < t.len && t[i] == ' ' { i += 1; }
+    }
+    let start = i;
+    while i < t.len && env_name_byte(t[i]) { i += 1; }
+    if i == start || !env_name_start(t[start]) || i >= t.len || t[i] != '=' { return -1; }
+    let v = trim(t[i + 1..]);
+    name.append(t[start..i]);
+    if v.len >= 2 && (v[0] == '"' || v[0] == '\'') && v[v.len - 1] == v[0] {
+        value.append(v[1..v.len - 1]);
+    } else {
+        value.append(v);
+    }
+    return 1;
+}
+
+// Sets every pair in the file that is not already set, so the real environment and earlier files win.
+// A missing file is skipped. False, with err set to "path:N: error: ...", on a malformed line.
+fn load_env_file(path: const u8[:], err: u8[>..]&) -> bool {
+    var text: u8[>..] = [];
+    if !read_file(path, text) { return true; }
+    for line, i in split(text, '\n') {
+        var name: u8[>..] = [];
+        var value: u8[>..] = [];
+        let r = parse_env_line(line, name, value);
+        if r < 0 {
+            format(err, path, ":", i + 1, ": error: expected NAME=value");
+            return false;
+        }
+        if r == 1 && c_setenv(name, value) == 0 {
+            format(err, path, ":", i + 1, ": error: cannot set ", name);
+            return false;
+        }
+    }
+    return true;
+}
+
+// dir is "" for the working directory, else a folder path without a trailing slash.
+fn load_env_files_in(dir: const u8[:], envname: const u8[:], err: u8[>..]&) -> bool {
+    if envname.len == 0 || envname.len > 32 { format(err, "GWEB_ENV: invalid name"); return false; }
+    for c in envname {
+        if !env_name_byte(c) && c != '-' { format(err, "GWEB_ENV: invalid name"); return false; }
+    }
+    for k in 4 {
+        if k == 1 && envname == "test" { continue; }   // tests must not depend on a developer's local overrides
+        var path: u8[>..] = [];
+        if dir.len > 0 { format(path, dir, "/"); }
+        if k == 0 { format(path, ".env.", envname, ".local"); }
+        else if k == 1 { path.append(".env.local"); }
+        else if k == 2 { format(path, ".env.", envname); }
+        else { path.append(".env"); }
+        if !load_env_file(path, err) { return false; }
+    }
+    return true;
+}
+
+// Order: .env.<env>.local, .env.local (not for test), .env.<env>, .env; the first to set a name wins.
+fn load_env_files(envname: const u8[:], err: u8[>..]&) -> bool {
+    return load_env_files_in("", envname, err);
+}
+
+// ---- secrets
+
+// Parses WEB_SECRET: 1 to 4 comma-separated keys of 32 to 64 bytes. False, with err set, otherwise; err never holds key bytes.
+fn parse_secret(text: const u8[:], keys: Keys&, err: u8[>..]&) -> bool {
+    keys.n = 0;
+    for item, i in split(trim(text), ',') {
+        let k = trim(item);
+        if i >= 4 { format(err, "WEB_SECRET: more than 4 keys"); keys.n = 0; return false; }
+        if k.len == 0 { format(err, "WEB_SECRET: key ", i + 1, " is empty"); keys.n = 0; return false; }
+        if k.len < 32 { format(err, "WEB_SECRET: key ", i + 1, " is shorter than 32 bytes"); keys.n = 0; return false; }
+        if k.len > 64 { format(err, "WEB_SECRET: key ", i + 1, " is longer than 64 bytes"); keys.n = 0; return false; }
+        keys.k[i].clear();
+        keys.k[i].append(k);
+        keys.n = i + 1;
+    }
+    return keys.n > 0;
+}
+
+// gweb dev only: a stable key in .gooseweb.dev/secret keeps sessions alive across rebuilds. 32 random bytes as 64 hex digits.
+fn dev_secret(keys: Keys&, err: u8[>..]&) -> bool {
+    var text: u8[>..] = [];
+    var ignored: u8[>..] = [];
+    if read_file(".gooseweb.dev/secret", text) && parse_secret(text, keys, ignored) { return true; }
+    var raw: u8[..32] = [0; 32];
+    if c_entropy(raw) == 0 { format(err, "goose-web: cannot read system entropy for the dev secret"); return false; }
+    var hex: u8[>..] = [];
+    for b in raw {
+        hex.push(HEX_LOWER[(b >> 4) as i64]);
+        hex.push(HEX_LOWER[(b & 15) as i64]);
+    }
+    make_dir(".gooseweb.dev");
+    write_file(".gooseweb.dev/secret", hex);   // a write failure only costs session persistence across restarts
+    return parse_secret(hex, keys, err);
 }
 
 // ---------------------------------------------------------------- the worker loop
@@ -416,6 +607,7 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                             http::set_header(res, "Location", to);
                         } else {
                             var ctx = new_ctx(slot, owner_fd);
+                            ctx.auth = cfg.auth;
                             static_index = D(req, ctx, res);
                             if !apply_cookies(ctx, res) { static_index = -1; }
                             if !ctx.fragment { dev_inject(res, cfg.dev_id); }
