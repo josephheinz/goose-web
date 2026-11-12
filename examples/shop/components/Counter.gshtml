@@ -1,8 +1,0 @@
-<script goose>
-struct State { count: i64 }
-
-fn inc(s: State&) { s.count += 1; }
-
-fn test_basic(s: State&) { inc(s); inc(s); inc(s); }
-</script>
-<button on:click="inc">Clicked {s.count} times</button>

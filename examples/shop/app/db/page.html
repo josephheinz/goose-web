@@ -1,8 +1,0 @@
-<h1>Featured products</h1>
-{#if !props.ok}<p>The database is not available.</p>{/if}
-<p>From SQLite. <a href="/db/products">See them all</a>.</p>
-<ul class="grid">
-{#for p in props.items}
-<li class="card"><div class="cat">{p.category}</div><a href="/db/products/{p.id}">{p.name}</a> <span class="price">@shop::price(p.cents)</span></li>
-{/for}
-</ul>

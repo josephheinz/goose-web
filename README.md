@@ -120,7 +120,7 @@ goose build -o gweb cli/gweb.goose
 Apps can read SQLite through the sibling package
 [goose-sqlite](../goose-sqlite): write `import sqlite;` in a `lib/` or `app/`
 file, and `gweb` declares the package. Each worker opens its own read-only
-connection with `sqlite::local(path)`. See `examples/shop/lib/shopdb.goose`.
+connection with `sqlite::local(path)`. See `../examples/shop/lib/shopdb.goose`.
 
 ## Cookies
 
@@ -162,7 +162,7 @@ beside the headers already in `res`, the reply becomes a bare
 `500 {"error":"response headers too large"}`; a cookie is never dropped silently.
 Pages that set cookies carry no `Cache-Control`; behind a shared cache, set
 `Cache-Control: no-store` in `after` middleware. Signed sessions are not in v1.
-The demo is `examples/shop/app/cookies` (`/cookies`).
+The demo is `../examples/shop/app/cookies` (`/cookies`).
 
 ## Fragments
 
@@ -209,11 +209,11 @@ page.
 - The runtime sets `aria-busy="true"` on the target while a request runs, and a failure raises `gw:error`
   (the dev overlay shows it as a `page error`). The last request per target wins.
 
-The demo is `examples/shop/app/fragments` (`/fragments`, `/fragments/products`).
+The demo is `../examples/shop/app/fragments` (`/fragments`, `/fragments/products`).
 
 ## Example
 
-`examples/shop` is the benchmark site: pages, a JSON API, a todo list in
+`../examples/shop` is the benchmark site: pages, a JSON API, a todo list in
 owner state, static files, and SQLite twins of the product routes under `/db`. Its Next.js twin is in
 `../goose-bench/next-shop`.
 
