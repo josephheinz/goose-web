@@ -160,6 +160,18 @@ gweb test                    component parity: test_* functions as Goose and as 
 gweb version                 the gweb version and the package sources it declares
 ```
 
+Server flags (`gweb start`, `.gooseweb/server`; env in `docs/DEPLOY.md`):
+
+```
+--drain-ms N          drain time after SIGTERM before connections are cut (10000; dev 200)
+--drain-delay-ms N    keep accepting this long after SIGTERM while /__gweb/ready says 503 (0)
+--log-format text|json, --log-level debug|info|warn|error
+--metrics             serve Prometheus text at /__gweb/metrics
+--job-runners N, --job-queue N, --job-attempts N   background jobs (1, 10000, 5)
+--no-schedule         run jobs, fire no schedules
+--probe               GET /__gweb/ready on --port, exit 0 on 200 (the Docker HEALTHCHECK)
+```
+
 `gweb` finds the compiler in `$GOOSE`, else `goose` on `PATH`, and finds this
 package beside its own binary (or `$GOOSE_WEB_HOME`). A checkout older than
 the binary, or newer, stops with "rebuild gweb". Build `gweb` with:

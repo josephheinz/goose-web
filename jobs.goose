@@ -41,15 +41,19 @@ fn jobs_stop() { c_jobs_stop(); }
 // Jobs waiting, for the shutdown message.
 fn jobs_queued() -> i64 { c_jobs_stat(0) }
 
-// Queues a job. False when the queue is full or stopped; delay_ms postpones its first attempt.
-fn job_push(bytes: const u8[:], delay_ms: i64 = 0) -> bool { c_jobs_push(bytes, delay_ms) != 0 }
+// Queues a job. False when the queue is full or the server is stopping; delay_ms postpones its first attempt.
+fn job_push(bytes: const u8[:], delay_ms: i64 = 0) -> bool {
+    if net::stopping() { return false; }
+    return c_jobs_push(bytes, delay_ms) != 0;
+}
 
 // A runner's wait for work, up to timeout_ms. On true, out has the job's bytes and the results are its id and
 // attempt (from 1); sched has the schedule's name for a scheduled job. On false nothing was appended; a runner
-// leaves its loop once net::stopping() is true.
+// leaves its loop once net::stopping() is true (the first take after that also stops the scheduler).
 fn job_take(slot: i64, timeout_ms: i64, out: u8[>..]&, sched: u8[>..]&) -> i64, i64, bool {
     var id: i64 = 0;
     var attempt: i64 = 0;
+    if net::stopping() { c_jobs_stop(); return 0, 0, false; }
     let got = c_jobs_take(slot as i32, timeout_ms, out, id, attempt, sched);
     return id, attempt, got != 0;
 }
