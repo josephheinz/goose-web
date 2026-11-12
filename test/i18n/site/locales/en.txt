@@ -1,0 +1,7 @@
+# English: the default locale
+greeting = Hello, {name}!
+cart_items[one] = {count} item in your cart
+cart_items[other] = {count} items in your cart
+stock = Only {n:int} left
+warn = Use <b> with care
+only_en = Only in English

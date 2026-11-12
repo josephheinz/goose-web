@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.0 (unreleased)
 
 Needs the matching goose-net release (spool mode, `net::Hub`, `Loop.detach`, chunked responses, `http::accepts`).
 
@@ -35,6 +35,8 @@ Needs the matching goose-net release (spool mode, `net::Hub`, `Loop.detach`, chu
 - Server push: `web::subscribe` (SSE) and `web::websocket`, with `web::publish`, `web::send`, `web::close_socket` and `web::subscribers`, over one `net::Hub` thread. `app/socket.goose` handles `open`, `message` and `close`. `web::websocket` refuses a cross-origin `Origin`.
 - New `Config` flag `--export DIR`; new `Ctx` fields `meta`, `hub`, `conn_fd`.
 - New `docs/DEPLOY-PROXY.md`: Caddy and nginx in front of goose-web.
+- Route tests: `web.testing` and `tests/*.goose`, run by `gweb test` against the real dispatcher with no socket.
+- i18n: `locales/<tag>.txt` catalogs compile to a typed `t::` module; the locale comes from the `locale` cookie or `Accept-Language`.
 
 ## v0.2.1
 

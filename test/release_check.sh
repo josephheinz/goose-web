@@ -110,6 +110,24 @@ c_test() {
   "$WORK/c/$name"
 }
 
+testing_test() {
+  mkdir "$WORK/testing"
+  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+      -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
+      "$HERE/testing_test.goose" > "$WORK/testing/testing_test.goose"
+  "$GOOSE" build -o "$WORK/testing/testing_test" "$WORK/testing/testing_test.goose"
+  "$WORK/testing/testing_test"
+}
+
+i18n_test() {
+  mkdir "$WORK/i18n"
+  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+      -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
+      "$HERE/i18n_test.goose" > "$WORK/i18n/i18n_test.goose"
+  "$GOOSE" build -o "$WORK/i18n/i18n_test" "$WORK/i18n/i18n_test.goose"
+  "$WORK/i18n/i18n_test"
+}
+
 step cookie_test cookie_test
 step csrf_test csrf_test
 step meta_test meta_test
@@ -122,6 +140,8 @@ step security_test goose_test security_test
 step crypto_test.c c_test crypto_test "$ROOT/src/crypto.c"
 step env_test.c c_test env_test "$ROOT/src/sys.c"
 step rate_test.c c_test rate_test "$ROOT/src/rate.c" -lpthread
+step testing_test testing_test
+step i18n_test i18n_test
 step components sh "$HERE/components.sh"
 step templates sh "$HERE/templates.sh"
 step fragments env PORT="${PORT:-3991}" sh "$HERE/fragments.sh"
@@ -135,6 +155,8 @@ step auth env PORT="${PORT:-3997}" sh "$HERE/auth.sh"
 step sitemap env PORT="${PORT:-3993}" sh "$HERE/sitemap.sh"
 step cache env PORT="${PORT:-3998}" sh "$HERE/cache.sh"
 step push env PORT="${PORT:-3999}" sh "$HERE/push.sh"
+step routes sh "$HERE/routes.sh"
+step i18n env PORT="${PORT:-4000}" sh "$HERE/i18n.sh"
 
 gweb_new() {
   mkdir "$WORK/lone"

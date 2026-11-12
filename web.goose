@@ -40,6 +40,7 @@ struct Ctx {
     outcome: Outcome,
     fragment: bool = false,   // fragment replies get no dev script
     csrf: u8[..32] = "",      // the page's CSRF token; "" until web::csrf_begin
+    locale: i64 = 0,          // index into the generated t::TAGS; 0 is the default locale
     redirect_status: i64,
     location: u8[..1024],
     title: u8[..256],
@@ -729,6 +730,35 @@ fn apply_security(ctx: Ctx&, res: http::Response&, cfg: const Config&) -> bool {
 
 // ---------------------------------------------------------------- the worker loop
 
+// One parsed request through the framework; the static file index to send (or -1), and whether it was gweb dev's status request.
+fn respond<D>(req: const http::Request&, ctx: Ctx&, conn_fd: i32, cfg: const Config&, res: http::Response&) -> i64, bool {
+    let p = req.path;
+    let get_like = req.method == http::Method.Get || req.method == http::Method.Head;
+    if cfg.dev_id != 0 && p == "/__gweb/id" {
+        dev_status(res, cfg.dev_id);
+        return -1, true;
+    }
+    if get_like && p.len > 1 && p[p.len - 1] == '/' {
+        var to: u8[>..] = [];
+        to.append(p[..p.len - 1]);
+        if req.query.len > 0 { to.push('?'); to.append(req.query); }
+        res.status = http::Status.PermanentRedirect;
+        http::set_header(res, "Location", to);
+        return -1, false;
+    }
+    ctx.auth = cfg.auth;
+    ctx.conn_fd = conn_fd;
+    if cfg.csp != 0 && !make_nonce(ctx) {
+        http::json_error(res, http::Status.InternalServerError, "csp nonce unavailable");
+        return -1, false;
+    }
+    var static_index = D(req, ctx, res);
+    if !apply_cookies(ctx, res) { static_index = -1; ctx.detach = Detach.None; }
+    if !ctx.streamed && !apply_security(ctx, res, cfg) { static_index = -1; ctx.detach = Detach.None; }
+    if !ctx.fragment { dev_inject(res, cfg.dev_id, ctx.nonce); }
+    return static_index, false;
+}
+
 // D, the generated dispatcher, returns the index of a static file to send, or -1; S gives its bytes, sent without a copy. Never returns.
 fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) {
     // One worker takes every waiting connection per pass; several take one each, so a burst spreads.
@@ -772,35 +802,17 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                 match parsed {
                     Ready => {
                         keep = http::wants_keep_alive(req);
-                        let p = req.path;
-                        let get_like = req.method == http::Method.Get || req.method == http::Method.Head;
                         if !spool_ok {
                             http::json_error(res, http::Status.InternalServerError, http::reason(http::Status.InternalServerError));
-                        } else if cfg.dev_id != 0 && p == "/__gweb/id" {
-                            dev_status(res, cfg.dev_id);
-                            dev_request = true;
-                        } else if get_like && p.len > 1 && p[p.len - 1] == '/' {
-                            var to: u8[>..] = [];
-                            to.append(p[..p.len - 1]);
-                            if req.query.len > 0 { to.push('?'); to.append(req.query); }
-                            res.status = http::Status.PermanentRedirect;
-                            http::set_header(res, "Location", to);
                         } else {
-                            ctx.auth = cfg.auth;
-                            ctx.conn_fd = conn.fd;
-                            if cfg.csp != 0 && !make_nonce(ctx) {
-                                http::json_error(res, http::Status.InternalServerError, "csp nonce unavailable");
-                            } else {
-                                static_index = D(req, ctx, res);
-                                if !apply_cookies(ctx, res) { static_index = -1; ctx.detach = Detach.None; }
-                                if !ctx.streamed && !apply_security(ctx, res, cfg) { static_index = -1; ctx.detach = Detach.None; }
-                                streamed = ctx.streamed;
-                                stream_ended = ctx.stream_ended;
-                                detach = ctx.detach;
-                                topic.append(ctx.topic);
-                                heartbeat.append(ctx.heartbeat);
-                                if !ctx.fragment { dev_inject(res, cfg.dev_id, ctx.nonce); }
-                            }
+                            let index, dev = respond(req, ctx, conn.fd, cfg, res, D);
+                            static_index = index;
+                            dev_request = dev;
+                            streamed = ctx.streamed;
+                            stream_ended = ctx.stream_ended;
+                            detach = ctx.detach;
+                            topic.append(ctx.topic);
+                            heartbeat.append(ctx.heartbeat);
                         }
                     },
                     Reject r => http::json_error(res, r.status, http::reason(r.status)),

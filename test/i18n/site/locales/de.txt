@@ -1,0 +1,6 @@
+# Deutsch; only_en is left to English
+greeting = Hallo, {name}!
+cart_items[one] = {count} Artikel im Warenkorb
+cart_items[other] = {count} Artikel im Warenkorb
+stock = Nur noch {n} übrig
+warn = Mit <b> vorsichtig sein

@@ -57,6 +57,8 @@ goose-architect agent.
 | `app/socket.goose` | Optional `fn open`, `fn message`, `fn close` for WebSocket connections |
 | `lib/**.goose` | Your modules: `import lib.catalog;` (write their `namespace`) |
 | `public/**` | Static files, embedded in the binary, with ETags and hashed URLs |
+| `tests/*.goose` | Route tests run by `gweb test` (see Route tests) |
+| `locales/default`, `locales/<tag>.txt` | Message catalogs, compiled to the `t::` module (see i18n) |
 
 A folder named `[id]` is a dynamic segment; `[...slug]` and `[[...slug]]` are
 catch-alls (see below). Folders starting with `_` are ignored. App files get their
@@ -162,7 +164,7 @@ gweb start [flags]           build and run (--port N --host H --workers N --log 
 gweb export [-o DIR]         build, then write the site as static files to DIR (default out/)
 gweb dev [flags]             build, run with --log on 2 workers and port 60053 (unless --port), rebuild on change
 gweb routes                  the route table (GET,POST and a frag line for each fragment)
-gweb test                    component parity: test_* functions as Goose and as JavaScript (writes .gooseweb.test/; leaves .gooseweb/ alone)
+gweb test                    component parity (test_* as Goose and JavaScript), then tests/*.goose route tests (writes .gooseweb.test/; leaves .gooseweb/ alone)
 gweb version                 the gweb version and the package sources it declares
 ```
 
@@ -713,6 +715,110 @@ fn close(ctx: web::Ctx&, id: u64, topic: const u8[:]) { }
 - Authenticate in the route before calling `websocket` or `subscribe`; cookies and `ctx` work as in any
   route. A route is not CSRF-checked for GET.
 - Behind a proxy: see [docs/DEPLOY-PROXY.md](docs/DEPLOY-PROXY.md).
+
+## Route tests
+
+`tests/*.goose` holds route tests. `gweb test` builds them with the app's real
+dispatcher into one program and runs every `fn test_*(t: web::Tester&)` on `main`,
+after `state::init()`. Requests take the worker's code path, minus the socket.
+
+| File | Meaning |
+|---|---|
+| `tests/<name>.goose` | `<name>` is `[a-z][a-z0-9_]*`; write no `namespace`. Errors point at `tests/<name>.goose:LINE` |
+
+```goose
+// tests/todos.goose
+import std;
+import net.http;
+import web;
+import web.testing;
+
+fn test_list(t: web::Tester&) {
+    let res = site::get(t, "/api/todos");
+    web::expect_status(t, res, 200);
+    web::expect_contains(t, res.body, "\"title\"");
+}
+
+fn test_add(t: web::Tester&) {
+    site::get(t, "/fragments");                                   // sets the CSRF cookie
+    let res = site::post_form(t, "/fragments", "add=1&title=milk");
+    web::expect_status(t, res, 200);
+    web::expect_contains(t, site::get(t, "/fragments").body, "milk");
+}
+```
+
+- `site::get`, `head`, `delete(t, target)`; `post_form`, `post_json`, `put_json`, `patch_json(t, target, body)`;
+  `site::request(t, method, target, body, content_type)`. Each returns an `http::Response`.
+- `web::expect(t, ok, what)`, `expect_status`, `expect_contains(t, text, needle)`, `expect_header(t, res, name, value)`, which take the response as `const&`, so bind it first (`let res = site::get(...)`);
+  `web::header_of(res, name)` and `web::form_field(out, name, value)` help build and read messages.
+- The jar `t.cookies` keeps `Set-Cookie` values and sends them on the next request. With `t.auto_csrf` (the default) a
+  non-GET request sends the jar's `gw_csrf` as `X-CSRF-Token`, adding a fixed token when there is none. Set
+  `t.auto_csrf = false` to test a refusal. `t.headers` holds extra header lines for the next request only.
+- `state::ask` calls `state::handle` directly on `main`.
+
+Rules for authors:
+- Tests run in file order, then in source order. They share `state`, the database and the jar unless a test
+  resets `t.cookies`.
+- Point the app's database at a test file through its environment variable.
+- A test that aborts ends the run; the `== <test>` line before it names the test.
+- Tests are not part of the server: `gweb build` ignores `tests/`.
+
+## i18n
+
+`locales/default` holds the default locale's tag (`en`). `locales/<tag>.txt` holds one catalog per locale; `<tag>` is
+like `en`, `de` or `pt-BR`. `gweb` compiles them to `.gooseweb/t.goose`, and pages and layouts can call `t::` (a route, middleware or `lib/` file writes `import t;`).
+
+```
+# locales/en.txt
+greeting = Hello, {name}!
+cart_items[one] = {count} item in your cart
+cart_items[other] = {count} items in your cart
+stock = Only {n:int} left
+```
+
+- One `key = text` per line; `#` starts a comment line. A key is `[a-z][a-z0-9_]*`, not a Goose keyword, and not
+  `tag`, `find` or `TAGS`. Escapes: `\n`, `\{`, `\}`, `\\`.
+- `{name}` is a text argument and `{name:int}` an `i64`. Write the type in the default locale, on the argument's first
+  use; other locales write `{name}` and may leave an argument out, but not add one.
+- `key[one]`, `key[other]` and so on (`zero one two few many other`) are plural forms. The default must give
+  `[other]`. The selector is the `i64` argument `count`, which comes first.
+- A key a locale lacks uses the default's text; a missing plural form uses that locale's `[other]`, then the
+  default's. The build prints `gweb: locales/de.txt lacks 1 key (falls back to en): a`. Bad syntax, duplicates, keys or
+  arguments the default lacks, type clashes, a bad tag, a plural without `[other]` and a missing `locales/default`
+  are build errors at `locales/<file>:LINE`.
+
+Generated, per key, a pair of functions (`t::greeting(ctx, name)`, and `t::greeting(loc, name)` for code without a `Ctx`),
+plus `t::TAGS`, `t::tag(ctx)` and `t::find(tag)` (case-insensitive, `-> i64, bool`):
+
+```html
+<html lang="{t::tag(ctx)}">
+<p>{t::cart_items(ctx, p.n)}</p>
+```
+
+`{expr}` escapes, so messages are plain text.
+
+The locale is `ctx.locale`, set before routing: the `locale` cookie (exact tag), then `Accept-Language` by q-value
+(`de-AT` takes `de`, `en` takes `en-GB`), then the default. With two or more locales, responses carry
+`Vary: Accept-Language, Cookie`.
+
+For `/de/products`, use an `app/[lang]/` folder with a middleware that picks the locale:
+
+```goose
+// app/[lang]/middleware.goose
+import std;
+import net.http;
+import web;
+import t;
+
+fn before(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) -> bool {
+    let i, ok = t::find(web::param(ctx, "lang"));
+    if ok { ctx.locale = i; } else { web::not_found(ctx); return false; }
+    return true;
+}
+```
+
+Not in v1: translations inside `.gshtml` components (pass translated text in as data), number, date and currency
+formatting, HTML inside messages, and decimal plural operands.
 
 ## Example
 

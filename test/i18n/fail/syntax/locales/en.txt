@@ -1,0 +1,2 @@
+a = x
+broken line without equals
