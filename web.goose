@@ -16,6 +16,9 @@ struct Params { n: i64, names: u8[..32][8], values: u8[..256][8],
 
 enum Outcome { Continue, NotFound, Redirect }
 
+// Fixed-size fields, so Ctx stays free of references; the setters in meta.goose cut at a UTF-8 boundary.
+struct Meta { description: u8[..320] = "", canonical: u8[..512] = "", image: u8[..512] = "", robots: u8[..64] = "" }
+
 // Ctx holds no references or slices, so a handler may shrink res while it still reads req and ctx.
 struct Ctx {
     params: Params,
@@ -27,6 +30,7 @@ struct Ctx {
     redirect_status: i64,
     location: u8[..1024],
     title: u8[..256],
+    meta: Meta,
     set_cookies: u8[..2048]   // pending Set-Cookie lines; run_worker moves them to res
 }
 
@@ -37,7 +41,7 @@ fn no_params() -> Params { Params { n: 0, names: [""; 8], values: [""; 8] } }
 
 fn new_ctx(worker: i64, owner_fd: i32) -> Ctx {
     Ctx { params: no_params(), worker: worker, owner_fd: owner_fd, outcome: Outcome.Continue,
-          redirect_status: 302, location: "", title: "", set_cookies: "" }
+          redirect_status: 302, location: "", title: "", meta: Meta { .. }, set_cookies: "" }
 }
 
 // ---------------------------------------------------------------- params and query

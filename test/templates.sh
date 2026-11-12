@@ -29,7 +29,8 @@ bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 # 1. The page renders as expected.
 cp -R "$HERE/templates/site" "$WORK/ok"
 if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
-  "$WORK/ok/.gooseweb/server" --port "$PORT" >/dev/null 2>&1 &
+  # SITE_URL, with a trailing slash, makes the @meta() URLs independent of the port.
+  SITE_URL=https://example.com/ "$WORK/ok/.gooseweb/server" --port "$PORT" >/dev/null 2>&1 &
   PID=$!
   got=""
   for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -50,6 +51,12 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     if grep -qi '^cache-control: public, max-age=0, must-revalidate' "$WORK/plain.h"; then ok; else bad "the plain URL lost must-revalidate"; fi
     if cmp -s "$WORK/hashed.b" "$WORK/plain.b" && cmp -s "$WORK/hashed.b" "$HERE/templates/site/public/site.css"; then ok; else bad "the hashed and plain URLs serve different bytes"; fi
     if [ "$(grep -ci '^etag:' "$WORK/hashed.h")" = 1 ] && [ "$(grep -i '^etag:' "$WORK/hashed.h")" = "$(grep -i '^etag:' "$WORK/plain.h")" ]; then ok; else bad "the hashed and plain URLs have different ETags"; fi
+    # @image's hashed URLs, the 1x and the @2x file, serve the file's bytes as immutable.
+    for pair in "logo.a13ebe70.png logo.png" "logo@2x.bf8fa421.png logo@2x.png"; do
+      set -- $pair
+      curl -s -D "$WORK/img.h" -o "$WORK/img.b" "http://127.0.0.1:$PORT/img/$1"
+      if grep -qi '^cache-control: .*immutable' "$WORK/img.h" && cmp -s "$WORK/img.b" "$HERE/templates/site/public/img/$2"; then ok; else bad "/img/$1 is not served immutable with the file's bytes"; fi
+    done
     # The minifier ran on loose.css, and the already-minified site.css came through unchanged (checked above).
     curl -s -o "$WORK/loose.b" "http://127.0.0.1:$PORT/loose.css"
     if cmp -s "$WORK/loose.b" "$HERE/templates/loose.min.css"; then ok; else bad "public/loose.css was not served minified"; fi
@@ -170,6 +177,18 @@ expect_fail $P '@asset()' 2 '@asset() takes one string literal, as in @asset("/c
 expect_fail $P '@asset(x)' 2 '@asset() takes one string literal, as in @asset("/css/site.css")'
 expect_fail $P '@asset("/nope.css")' 2 "no public file at /nope.css (looked for public/nope.css)"
 expect_fail app/layout.html '@asset("/css/none.css")' 2 "no public file at /css/none.css (looked for public/css/none.css)"
+# @image and @meta.
+U1='@image() needs a string literal path and an alt text, as in @image("/img/a.png", "A")'
+expect_fail $P '@image()' 2 "$U1"
+expect_fail $P '@image("/img/logo.png")' 2 "$U1"
+expect_fail $P '@image(x, "A")' 2 "$U1"
+expect_fail $P '@image("/img/logo.png", "A", x)' 2 "$U1"
+expect_fail $P '@image("/img/logo.png", "A", "b", "c")' 2 "$U1"
+expect_fail $P '@image("/img/logo.png", )' 2 "$U1"
+expect_fail $P '@image("/img/nope.png", "A")' 2 "no public file at /img/nope.png (looked for public/img/nope.png)"
+expect_fail app/layout.html '@image("/img/none.png", "A")' 2 "no public file at /img/none.png (looked for public/img/none.png)"
+expect_fail $P '@meta()' 2 "@meta() is for layout.html only"
+expect_fail app/layout.html '@meta(1)' 2 "@meta() takes no arguments"
 # A hashed URL may not be another file's URL.
 cp "$HERE/templates/site/app/page.html" "$WORK/f/app/page.html"
 cp "$HERE/templates/site/app/layout.html" "$WORK/f/app/layout.html"

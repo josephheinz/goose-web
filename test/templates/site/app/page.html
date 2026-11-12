@@ -12,4 +12,12 @@ h1 { color: {props.url}; }
 </script><b>{props.b.n + 1}</b>
 <script type="application/ld+json">{"@context": "https://schema.org"}</script>
 <p>@asset("/site.css")</p>
+<p>@image("/img/logo.png", "Logo, v1")</p>
+<p>@image("/img/tiny.gif", if props.b.n > 2 { "big, <b>" } else { "s" }, "class=\"x\" loading=\"eager\"")</p>
+<p>@image("/img/tiny.jpg", "")</p>
+<p>@image("/img/tiny.webp", "w")</p>
+<p>@image("/img/lossless.webp", "l")</p>
+<p>@image("/img/tiny.svg", "s", "data-k")</p>
+<p>@image("/img/viewbox.svg", "v")</p>
+<p>@image("/img/blob.bin", "b")</p>
 @Brace(props.b)

@@ -71,6 +71,15 @@ csrf_test() {
   "$WORK/csrf/csrf_test"
 }
 
+meta_test() {
+  mkdir "$WORK/meta"
+  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+      -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
+      "$HERE/meta_test.goose" > "$WORK/meta/meta_test.goose"
+  "$GOOSE" build -o "$WORK/meta/meta_test" "$WORK/meta/meta_test.goose"
+  "$WORK/meta/meta_test"
+}
+
 catchall_test() {
   mkdir "$WORK/catchall"
   sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
@@ -82,6 +91,7 @@ catchall_test() {
 
 step cookie_test cookie_test
 step csrf_test csrf_test
+step meta_test meta_test
 step catchall_test catchall_test
 step components sh "$HERE/components.sh"
 step templates sh "$HERE/templates.sh"
