@@ -10,6 +10,7 @@ import std;
 import os;
 import component;
 import tscan;
+import pins;
 
 // ---------------------------------------------------------------- C helpers (proc.c)
 

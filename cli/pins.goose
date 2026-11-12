@@ -1,0 +1,18 @@
+// The tags a gweb outside a checkout declares.
+
+namespace pins;
+
+import std;
+
+let OWNER = "jheinz-bzs";
+let TAG = "v0.1.0";
+
+fn pin(repo: const u8[:]) -> u8[>..] {
+    var s: u8[>..] = [];
+    format(s, OWNER, "/", repo, "@", TAG);
+    return s;
+}
+
+let PIN_WEB = pin("goose-web");
+let PIN_NET = pin("goose-net");
+let PIN_SQLITE = pin("goose-sqlite");
