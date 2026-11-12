@@ -282,9 +282,8 @@ fn read_manifest(path: const u8[:], text: const u8[:], name: u8[..64]&) -> bool 
         let t = trim(raw);
         if t.len == 0 || t[0] == '#' { continue; }
         let sp = find(t, " ");
-        var key: const u8[:] = t;
-        var val: const u8[:] = "";
-        if sp >= 0 { key = t[..sp]; val = trim(t[sp + 1..]); }
+        let key = t[..(if sp >= 0 { sp } else { t.len })];
+        let val = trim(t[(if sp >= 0 { sp + 1 } else { t.len })..]);
         if key == "name" {
             if !is_ident(val) || val.len > 64 { err(path, i + 1, "name needs a Goose identifier, as in name admin"); good = false; }
             else { name.clear(); name.append(val); have_name = true; }
@@ -335,20 +334,20 @@ fn load_packages() {
         let ln = i + 1;
         let t = trim(raw);
         if t.len == 0 || t[0] == '#' { continue; }
-        var source: const u8[:] = t;
-        var prefix: const u8[:] = "";
+        var source: u8[>..] = [];
+        var prefix: u8[>..] = [];
         let at = find(t, " at ");
         if at >= 0 || ends_with(t, " at") {
-            var mnt: const u8[:] = "";
-            if at >= 0 { source = trim(t[..at]); mnt = trim(t[at + 4..]); }
-            else { source = trim(t[..t.len - 3]); }
-            if mnt.len > 0 { prefix = mnt[1..]; }
-            while prefix.len > 0 && prefix[prefix.len - 1] == '/' { prefix = prefix[..prefix.len - 1]; }
+            var mnt: u8[>..] = [];
+            if at >= 0 { source.append(trim(t[..at])); mnt.append(trim(t[at + 4..])); }
+            else { source.append(trim(t[..t.len - 3])); }
+            if mnt.len > 0 { prefix.append(mnt[1..]); }
+            while prefix.len > 0 && prefix[prefix.len - 1] == '/' { prefix.pop(); }
             if mnt.len == 0 || mnt[0] != '/' || !mount_ok(prefix) {
                 err(PKG_LIST, ln, "at needs a mount like /admin: literal folder names, no [id], no catch-all, not /");
                 continue;
             }
-        }
+        } else { source.append(t); }
         if source.len == 0 || find(source, " ") >= 0 || find(source, "\t") >= 0 { err(PKG_LIST, ln, "a line is SOURCE or SOURCE at /prefix"); continue; }
         var dir: u8[>..] = [];
         if is_git_source(source) { if !fetch_git(ln, source, dir) { continue; } }
