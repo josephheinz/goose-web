@@ -1,0 +1,15 @@
+<h1>Fragments</h1>
+<p>This list is saved on the server. Each button posts a form; only the list comes back.</p>
+<div id="todo-list">{#fragment todo-list}
+<form method="post" action="/fragments" gw-target="todo-list">
+{#if props.error.len > 0}<p class="error">{props.error}</p>{/if}
+<p><input name="title" value="{props.draft}" placeholder="What needs doing?"> <button name="add" value="1">Add</button></p>
+<ul>
+{#for t in props.reply.todos}
+<li>{#if t.done}<s>{t.title}</s> <button name="undo" value="{t.id}">Undo</button>{#else}{t.title} <button name="done" value="{t.id}">Done</button>{/if} <button name="remove" value="{t.id}">Remove</button></li>
+{/for}
+</ul>
+</form>
+{/fragment}</div>
+<p>The whole page was rendered with <span id="stamp">{props.reply.todos.len}</span> todos.</p>
+<p><a href="/fragments/products">Products with fragments</a></p>

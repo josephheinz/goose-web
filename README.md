@@ -20,7 +20,7 @@ goose-architect agent.
 |---|---|
 | `app/**/route.goose` | API endpoint: `fn GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS` |
 | `app/**/page.html` | Server-rendered page (template) |
-| `app/**/page.goose` | Optional: `Props`, `fn load`, helpers for the page beside it |
+| `app/**/page.goose` | Optional: `Props`, `fn load`, `fn POST` (needs `load`), helpers for the page beside it |
 | `app/**/layout.html` | Wraps every page at or below its folder; `@slot()` marks the page |
 | `app/**/middleware.goose` | `fn before` and/or `fn after` for the subtree |
 | `app/not-found.html` | The 404 page, inside the root layout |
@@ -36,6 +36,7 @@ ignored. App files get their namespace from `gweb`; do not write one.
 ```goose
 fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&)        // route.goose
 fn load(req: const http::Request&, ctx: web::Ctx&) -> Props                      // page.goose
+fn POST(req: const http::Request&, ctx: web::Ctx&) -> Props                      // page.goose, optional (fragments)
 fn before(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) -> bool   // false: res is final
 fn after(req: const http::Request&, ctx: web::Ctx&, res: http::Response&)
 fn handle(msg: const Msg&) -> Reply                                               // state.goose
@@ -86,7 +87,7 @@ gweb gen                     write .gooseweb/ only
 gweb build [--debug]         gen, then goose build to .gooseweb/server
 gweb start [flags]           build and run (--port N --workers N --log --idle-ms N --max-body N)
 gweb dev [flags]             build, run with --log on 2 workers, rebuild on change
-gweb routes                  the route table
+gweb routes                  the route table (GET,POST and a frag line for each fragment)
 gweb test                    component parity: test_* functions as Goose and as JavaScript
 ```
 
@@ -162,6 +163,49 @@ beside the headers already in `res`, the reply becomes a bare
 Pages that set cookies carry no `Cache-Control`; behind a shared cache, set
 `Cache-Control: no-store` in `after` middleware. Signed sessions are not in v1.
 The demo is `examples/shop/app/cookies` (`/cookies`).
+
+## Fragments
+
+A link or form marked `gw-target="NAME"` fetches its normal URL, and the server
+answers with only the `{#fragment NAME}` region of that page, without the
+layout. The runtime (`/_gw/gwi.js`, added by `gweb` to any page with a
+`gw-target`) morphs the reply into the element with `id="NAME"`. Without
+JavaScript the same link or form does a normal navigation and gets the whole
+page.
+
+```html
+<ul id="todo-list">{#fragment todo-list}
+{#for t in props.todos}<li>{t.title}</li>{/for}
+{/fragment}</ul>
+<form method="post" action="/todos" gw-target="todo-list"> ... </form>
+<a href="?cat=home" gw-target="results">home</a>
+<a href="/fragments/products/{p.id}" gw-target="detail">Quick view</a>
+```
+
+- The fragment is a region of a `page.html` (not a layout, not a component). It goes right after the
+  opening tag that has `id="NAME"`, on the same line, and `{/fragment}` right before that
+  element's closing tag, so the reply and the DOM line up. A name is `[A-Za-z][A-Za-z0-9_-]*`,
+  at most 64 bytes; a page has at most 8 fragments, none inside `{#if}`, `{#for}` or another fragment,
+  and no `@Component()` inside.
+- A fragment sees `props`, `req` and `ctx`. A top-level `{#let}` ends at the next fragment tag.
+- The tags emit no bytes: a page is the same with or without them.
+- The request is the page's URL plus the header `GW-Fragment: NAME`. The reply is the region, with
+  `GW-Fragment: NAME` echoed and `Cache-Control: no-store`. An unknown name gives the whole page.
+- `gw-target` goes on `<a href>` or `<form>` (`method` get or post). `gweb` checks it at build time:
+  the URL (`/path`, `?query` or empty for the page itself; a `{expr}` segment matches a `[name]`
+  folder) must reach a page that has `{#fragment NAME}`, and `method="post"` needs `fn POST(` in that page.
+- A `page.goose` may define `fn POST(req, ctx) -> Props`, which runs in place of `load` for POST
+  (it needs `load` beside it). Return `load`'s props with what the form changed. A POST without the
+  header renders the whole page with status 200; for post-redirect-get call `web::redirect(ctx, "/x", 303)`.
+  A POST with `Sec-Fetch-Site: cross-site` gets 403; other methods get 405.
+- `import web.form;` gives `web::form(req, "name", out)` (URL-decoded, appended to `out`) and
+  `web::form_int(req, "id")`. Several intents on one page are told apart by button names:
+  `<button name="remove" value="3">`.
+- Not supported: file uploads, append/prepend swaps, a target inside a component.
+- The runtime sets `aria-busy="true"` on the target while a request runs, and a failure raises `gw:error`
+  (the dev overlay shows it as a `page error`). The last request per target wins.
+
+The demo is `examples/shop/app/fragments` (`/fragments`, `/fragments/products`).
 
 ## Example
 

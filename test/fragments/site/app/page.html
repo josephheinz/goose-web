@@ -1,0 +1,11 @@
+<h1>Fragments</h1>
+<div id="list">{#fragment list}
+<form method="post" action="/" gw-target="list">
+<p id="msg">{props.msg}</p>
+<ul>{#for i in 3}<li>{i}</li>{/for}</ul>
+</form>
+{/fragment}</div>
+<p id="note">whole page only</p>
+<a href="?x=1" gw-target="list">more</a>
+<a href="/item/{props.n}" gw-target="card">item</a>
+<div id="side">{#fragment side}<b>{props.n}</b>{/fragment}</div>
