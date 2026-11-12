@@ -1,0 +1,6 @@
+gweb
+test/manual
+test/owner_test
+test/cookie_test
+.gooseweb/
+*.o

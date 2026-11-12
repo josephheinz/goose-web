@@ -1,12 +1,38 @@
 # goose-web
 
 A Next.js-like web framework for [Goose](https://aardappel.github.io/goose/), on
-[goose-net](../goose-net). Folders under `app/` are routes. `gweb` turns the
+[goose-net](https://github.com/jheinz-bzs/goose-net). Folders under `app/` are routes. `gweb` turns the
 project into one native binary that serves on every core.
+
+## Install
+
+```
+git clone --branch v0.1.0 --depth 1 https://github.com/jheinz-bzs/goose-web
+cd goose-web && goose build -o gweb cli/gweb.goose
+ln -s "$PWD/gweb" ~/bin/gweb           # or: cp gweb ~/bin/
+```
 
 ```
 gweb new mysite && cd mysite
 GOOSE=/path/to/goose gweb dev          # http://localhost:60053, rebuilds and restarts on every change
+```
+
+A linked `gweb` uses its checkout as the `web` package, and a `goose-net` or
+`goose-sqlite` checkout beside it. A copied `gweb` declares the tagged
+releases from GitHub, and the compiler fetches them on the first build.
+`gweb version` prints the version and the three sources it declares.
+Set `GWEB_WEB`, `GWEB_NET` or `GWEB_SQLITE` to a path or a git source with
+`@ref` to override one.
+
+To run this package's tests from a clone, clone goose-net beside it
+(`../goose-net`).
+
+## Use the libraries without gweb
+
+```goose
+import web from "jheinz-bzs/goose-web@v0.1.0";
+import net from "jheinz-bzs/goose-net@v0.1.0";           // goose-web needs this line too
+import sqlite from "jheinz-bzs/goose-sqlite@v0.1.0";     // only if you use SQLite
 ```
 
 The design is in [DESIGN.md](docs/DESIGN.md). [DESIGN-ADDENDUM-1.md](docs/DESIGN-ADDENDUM-1.md)
@@ -89,10 +115,12 @@ gweb start [flags]           build and run (--port N --workers N --log --idle-ms
 gweb dev [flags]             build, run with --log on 2 workers and port 60053 (unless --port), rebuild on change
 gweb routes                  the route table (GET,POST and a frag line for each fragment)
 gweb test                    component parity: test_* functions as Goose and as JavaScript
+gweb version                 the gweb version and the package sources it declares
 ```
 
 `gweb` finds the compiler in `$GOOSE`, else `goose` on `PATH`, and finds this
-package beside its own binary (or `$GOOSE_WEB_HOME`). Build `gweb` with:
+package beside its own binary (or `$GOOSE_WEB_HOME`). A checkout older than
+the binary, or newer, stops with "rebuild gweb". Build `gweb` with:
 
 ```
 goose build -o gweb cli/gweb.goose
@@ -118,7 +146,7 @@ goose build -o gweb cli/gweb.goose
 ## SQLite
 
 Apps can read SQLite through the sibling package
-[goose-sqlite](../goose-sqlite): write `import sqlite;` in a `lib/` or `app/`
+[goose-sqlite](https://github.com/jheinz-bzs/goose-sqlite): write `import sqlite;` in a `lib/` or `app/`
 file, and `gweb` declares the package. Each worker opens its own read-only
 connection with `sqlite::local(path)`. See `../examples/shop/lib/shopdb.goose`.
 
