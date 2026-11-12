@@ -1,0 +1,74 @@
+<script goose>
+// Every statement and expression form of the client subset (E3).
+struct Pt { x: i64, y: i64 }
+struct Row { id: i64, name: u8[..40], on: bool, at: Pt }
+struct State { n: i64, flag: bool, text: u8[..64], log: u8[..300], p: Pt, rows: Row[>..<] }
+
+fn twice(v: i64) -> i64 { v * 2 }
+fn pick(c: bool, a: i64, b: i64) -> i64 { if c { a } else { b } }
+fn is_big(v: i64) -> bool { return v > 10; }
+fn sum_x(s: const State&) -> i64 {
+    var t = 0;
+    for r in s.rows { t += r.at.x; }
+    t
+}
+fn note(s: State&, what: const u8[:]) {
+    s.log.append(what);
+    s.log.append(";");
+}
+fn first_named(s: const State&, name: const u8[:]) -> i64 {
+    for r, i in s.rows { if r.name == name { return i; } }
+    return -1;
+}
+fn norm(p: const Pt&) -> i64 { abs(p.x) + abs(p.y) }
+fn grade(v: i64) -> i64 { if v < 0 { 0 } else if v < 10 { 1 } else { 2 } }
+
+fn test_statements(s: State&) {
+    let a = 7;
+    var b: i64 = 3;
+    b += a;
+    b -= 2;
+    b *= 3;
+    b /= 5;
+    b %= 3;
+    b++;
+    b--;
+    s.n = b;
+    if s.n == 1 { note(s, "one"); } else if s.n == 2 { note(s, "two"); } else { note(s, "other"); }
+    var k = 0;
+    while k < 5 {
+        k += 1;
+        if k == 2 { continue; }
+        if k == 4 { break; }
+        note(s, str("k", k));
+    }
+    for i in 3 { s.p.x += i; }
+    for i in 2..5 { s.p.y += i; }
+    s.flag = !s.flag && true || false;
+    s.text = "hello";
+    s.text.append(", world");
+    s.rows.push(Row { id: 1, name: "one", on: true, at: Pt { x: 1, y: 2 } });
+    s.rows.push(Row { id: 2, name: "two", on: false, at: s.p });
+    s.rows[0].at.x = twice(s.rows[0].at.x);
+    s.n += pick(is_big(twice(6)), 100, 200) + sum_x(s) + norm(s.p) + first_named(s, "two");
+    s.n = -s.n + min(3, 4) * max(-2, 5) - abs(-9);
+    s.flag = if s.n < 0 { true } else { false };
+    note(s, str(s.flag, " ", s.n, " ", s.rows.len, " ", s.text.len, " ", grade(s.n), grade(5), grade(50)));
+    if web::has(s.text, "world") { note(s, "has"); }
+    if !(s.n >= 0) && s.n != 3 && (s.n <= 100 || s.flag) { note(s, "logic"); }
+    s.rows.remove_at(0);
+    s.text.clear();
+    s.text.append(s.rows[0].name);
+}
+
+fn test_empty(s: State&) {
+    s.rows.push(Row { id: 5, name: "", on: false, at: Pt { x: -1, y: 1 } });
+    s.rows.clear();
+    s.n = first_named(s, "none");
+}
+</script>
+<p>{{ s.n }} {{ s.flag }} {{ s.text }} {{ s.log }}</p>
+<p>{{{ s.text }}}{{ twice(s.n) }}{{{ s.n }}}</p>
+{{-- a comment --}}
+{{#for r in s.rows}}<i>{{ r.id }}:{{ r.name }}:{{ r.on }}:{{ r.at.x }},{{ r.at.y }} {{ norm(r.at) }}</i>{{/for}}
+<b>{{ if s.flag { "yes" } else { "no" } }} {{ str(s.n, "/", s.flag) }} {{ -s.n }} {{ !s.flag }}</b>

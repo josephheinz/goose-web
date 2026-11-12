@@ -1,0 +1,25 @@
+<script goose>
+struct State { cents: i64, qty: i64 }
+
+fn inc(s: State&) { if s.qty < 99 { s.qty += 1; } }
+fn dec(s: State&) { if s.qty > 1 { s.qty -= 1; } }
+
+// The total in cents, split into dollars and cents with integer / and %.
+fn total(s: const State&) -> i64 { s.cents * s.qty }
+fn dollars(s: const State&) -> i64 { total(s) / 100 }
+fn rest(s: const State&) -> i64 { total(s) % 100 }
+
+fn test_basic(s: State&) {
+    s.cents = 1369;
+    s.qty = 1;
+    inc(s);
+    inc(s);
+    dec(s);
+}
+</script>
+<div class="qty">
+<button type="button" on:click="dec">&minus;</button>
+<input type="number" min="1" max="99" bind:value="qty">
+<button type="button" on:click="inc">+</button>
+<span class="total">Total: ${{ dollars(s) }}.{{#if rest(s) < 10}}0{{/if}}{{ rest(s) }}</span>
+</div>

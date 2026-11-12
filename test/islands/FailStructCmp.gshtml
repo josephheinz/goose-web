@@ -1,0 +1,9 @@
+<script goose>
+// expect: islands/FailStructCmp.gshtml:6: error: comparing structs is not available in client code
+struct Pt { x: i64 }
+struct State { a: Pt, b: Pt, same: bool }
+fn f(s: State&) {
+    s.same = s.a == s.b;
+}
+</script>
+<p>{{ s.same }}</p>

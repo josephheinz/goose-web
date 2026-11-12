@@ -1,0 +1,33 @@
+<script goose>
+// & < > " ' and multi-byte UTF-8: lengths in bytes, capacities in bytes.
+struct State { a: u8[..12], b: u8[..80], n: i64, m: i64, ok: bool }
+
+fn say(s: State&, v: const u8[:]) { s.b.clear(); s.b.append(v); }
+
+fn test_text(s: State&) {
+    s.a = "é✓";
+    s.n = s.a.len;
+    s.a.append("<&>");
+    s.m = s.a.len;
+    s.b = "quote \" and ' and \\ and \t tab \x41";
+    s.b.append(str("π", 3, true));
+    s.ok = s.a == "é✓<&>" && web::has(s.b, "π3") && !web::has(s.b, "zz") && web::has(s.b, "");
+}
+
+fn test_full(s: State&) {
+    s.a = "abcdefghijk";
+    s.a.append("l");
+    s.n = s.a.len;
+    s.b = s.a;
+    s.ok = s.b == "abcdefghijkl" && s.a != "x";
+}
+
+fn test_args(s: State&) {
+    say(s, "\"<&>' é");
+    s.a = "a\"b";
+}
+</script>
+<p title="{{ s.a }}">{{ s.a }} {{ s.n }} {{ s.m }} {{ s.ok }}</p>
+<pre>{{ s.b }}</pre>
+<button on:click="say(s.a)">a</button><button on:click="say(s.b)">b</button><button on:click='say("lit <&> é")'>c</button>
+<input bind:value="a"> {{ s.b.len }}

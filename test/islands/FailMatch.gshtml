@@ -1,0 +1,9 @@
+<script goose>
+// expect: islands/FailMatch.gshtml:5: error: 'match' is not available in client code (islands v1)
+struct State { n: i64 }
+fn f(s: State&) {
+    let k = match s.n { 0 => 1, _ => 2 };
+    s.n = k;
+}
+</script>
+<p>{{ s.n }}</p>

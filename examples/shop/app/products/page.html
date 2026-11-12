@@ -1,0 +1,7 @@
+<h1>All {{ props.count }} products</h1>
+<table>
+<tr><th>Name</th><th>Category</th><th>Price</th><th>About</th></tr>
+{{#for p in catalog::ITEMS}}
+<tr><td><a href="/products/{{ p.id }}">{{ p.name }}</a></td><td class="cat">{{ p.category }}</td><td class="price">{{> shop::price(p.cents)}}</td><td>{{ p.description }}</td></tr>
+{{/for}}
+</table>

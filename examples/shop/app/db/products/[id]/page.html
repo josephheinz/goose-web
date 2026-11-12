@@ -1,0 +1,8 @@
+<p><a href="/db/products">All products</a></p>
+<article class="card">
+<div class="cat">{{ props.p.category }}</div>
+<h1>{{ props.p.name }}</h1>
+<p class="price">{{> shop::price(props.p.cents)}}</p>
+<p>{{ props.p.description }}</p>
+{{#if props.p.featured}}<p><strong>Featured</strong></p>{{/if}}
+</article>

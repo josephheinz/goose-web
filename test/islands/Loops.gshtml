@@ -1,0 +1,30 @@
+<script goose>
+// for bounds are evaluated once; the loop forms over ints, ranges and arrays.
+struct Item { v: i64 }
+struct State { n: i64, count: i64, calls: i64, items: Item[>..<] }
+
+fn grow(s: State&) -> i64 {
+    s.calls += 1;
+    s.n += 1;
+    return s.n;
+}
+
+fn test_bounds(s: State&) {
+    s.n = 3;
+    for i in s.n { s.n += 1; s.count += 1; }
+    for i in 0..s.n { s.n -= 1; s.count += 10; }
+    for i in grow(s) { s.count += 100; }
+    for i in s.n..grow(s) { s.count += 1000; }
+    s.items.push(Item { v: 1 });
+    s.items.push(Item { v: 2 });
+    for i in s.items.len { s.items.push(Item { v: i + 10 }); }
+    for x, i in s.items { s.count += x.v * i; }
+    for x in s.items { if x.v > 10 { break; } s.count += 5; }
+    var j = 0;
+    while j < s.items.len { j += 2; }
+    s.n = j;
+}
+</script>
+<p>{{ s.n }} {{ s.count }} {{ s.calls }}</p>
+<ol>{{#for x, i in s.items}}<li value="{{ i }}">{{ x.v }}</li>{{/for}}</ol>
+{{#for i in 2..s.items.len}}[{{ i }}]{{/for}}

@@ -1,0 +1,8 @@
+<script goose>
+// expect: islands/FailSlice.gshtml:5: error: 'a[x..y]' is not available in client code (islands v1)
+struct State { t: u8[..20], u: u8[..20] }
+fn f(s: State&) {
+    s.u.append(s.t[0..2]);
+}
+</script>
+<p>{{ s.t }}</p>

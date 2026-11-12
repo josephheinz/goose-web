@@ -1,0 +1,17 @@
+<script goose>
+// A render that throws after a handler (DESIGN-ADDENDUM-3, follow-up 2,
+// point 7). With two items, the second click on "next" indexes past the end
+// in the markup. The browser test expects the DOM unchanged and one gw:error.
+struct Item { v: i64 }
+struct State { n: i64, items: Item[>..<] }
+
+fn next(s: State&) { s.n += 1; }
+
+fn test_two(s: State&) {
+    s.items.push(Item { v: 10 });
+    s.items.push(Item { v: 20 });
+    next(s);
+}
+</script>
+<button on:click="next">next</button>
+{{#if s.items.len > 0}}<p>item {{ s.items[s.n].v }}</p>{{/if}}

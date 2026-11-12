@@ -1,0 +1,29 @@
+<script goose>
+// Struct values are copied on push, let, var and assignment.
+struct Pt { x: i64, y: i64 }
+struct Item { id: i64, p: Pt }
+struct State { cur: Item, flat: Pt, items: Item[>..<] }
+
+fn test_copies(s: State&) {
+    s.cur = Item { id: 1, p: Pt { x: 1, y: 1 } };
+    s.items.push(s.cur);
+    s.cur.id = 2;
+    s.cur.p.x = 2;
+    let c = s.items[0];
+    s.items[0].id = 9;
+    s.cur.p.y = c.id;
+    var d = s.cur;
+    d.p.x = 50;
+    s.items.push(d);
+    s.items[1] = s.cur;
+    s.cur.id = 77;
+    s.flat = s.cur.p;
+    s.flat.x = 5;
+    let f = s.flat;
+    s.flat.y = f.x + 1;
+    s.items.push(Item { id: 3, p: s.flat });
+    s.flat.x = 0;
+}
+</script>
+<p>{{ s.cur.id }} {{ s.cur.p.x }},{{ s.cur.p.y }} {{ s.flat.x }},{{ s.flat.y }}</p>
+{{#for it in s.items}}{{#let q = it}}<i>{{ q.id }}:{{ q.p.x }},{{ q.p.y }}</i>{{/for}}

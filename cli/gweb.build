@@ -1,0 +1,2 @@
+// gweb's native helpers.
+c_sources = ["proc.c"];

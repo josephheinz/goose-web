@@ -1,0 +1,6 @@
+<script goose>
+// expect: islands/FailImport.gshtml:3: error: 'import' is not available in client code (islands v1)
+import math;
+struct State { n: i64 }
+</script>
+<p>{{ s.n }}</p>

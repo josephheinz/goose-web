@@ -1,0 +1,74 @@
+/* Goose Shop styles (shared by both benchmark sites). */
+:root { --ink: #1d232a; --muted: #5b6672; --line: #d9dee3; --accent: #2b6cb0; --bg: #fbfbfa; }
+* { box-sizing: border-box; }
+body { margin: 0; font: 16px/1.5 system-ui, -apple-system, sans-serif; color: var(--ink); background: var(--bg); }
+header { display: flex; gap: 1rem; align-items: center; padding: 1rem 1.5rem; border-bottom: 1px solid var(--line); }
+header nav { margin-left: auto; display: flex; gap: 1rem; }
+main { max-width: 64rem; margin: 0 auto; padding: 1.5rem; }
+footer { padding: 2rem 1.5rem; color: var(--muted); border-top: 1px solid var(--line); }
+a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+.grid { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 1rem; }
+.card { border: 1px solid var(--line); border-radius: 8px; padding: 1rem; background: #fff; }
+.price { font-variant-numeric: tabular-nums; color: var(--muted); }
+.cat { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+table { border-collapse: collapse; width: 100%; } td, th { padding: .4rem .6rem; border-bottom: 1px solid var(--line); text-align: left; }
+.u-m0 { margin: 0.00rem; } .u-p0 { padding: 0.00rem; }
+.u-m1 { margin: 0.25rem; } .u-p1 { padding: 0.25rem; }
+.u-m2 { margin: 0.50rem; } .u-p2 { padding: 0.50rem; }
+.u-m3 { margin: 0.75rem; } .u-p3 { padding: 0.75rem; }
+.u-m4 { margin: 1.00rem; } .u-p4 { padding: 1.00rem; }
+.u-m5 { margin: 1.25rem; } .u-p5 { padding: 1.25rem; }
+.u-m6 { margin: 1.50rem; } .u-p6 { padding: 1.50rem; }
+.u-m7 { margin: 1.75rem; } .u-p7 { padding: 1.75rem; }
+.u-m8 { margin: 2.00rem; } .u-p8 { padding: 2.00rem; }
+.u-m9 { margin: 2.25rem; } .u-p9 { padding: 2.25rem; }
+.u-m10 { margin: 2.50rem; } .u-p10 { padding: 2.50rem; }
+.u-m11 { margin: 2.75rem; } .u-p11 { padding: 2.75rem; }
+.u-m12 { margin: 3.00rem; } .u-p12 { padding: 3.00rem; }
+.u-m13 { margin: 3.25rem; } .u-p13 { padding: 3.25rem; }
+.u-m14 { margin: 3.50rem; } .u-p14 { padding: 3.50rem; }
+.u-m15 { margin: 3.75rem; } .u-p15 { padding: 3.75rem; }
+.u-m16 { margin: 4.00rem; } .u-p16 { padding: 4.00rem; }
+.u-m17 { margin: 4.25rem; } .u-p17 { padding: 4.25rem; }
+.u-m18 { margin: 4.50rem; } .u-p18 { padding: 4.50rem; }
+.u-m19 { margin: 4.75rem; } .u-p19 { padding: 4.75rem; }
+.u-m20 { margin: 5.00rem; } .u-p20 { padding: 5.00rem; }
+.u-m21 { margin: 5.25rem; } .u-p21 { padding: 5.25rem; }
+.u-m22 { margin: 5.50rem; } .u-p22 { padding: 5.50rem; }
+.u-m23 { margin: 5.75rem; } .u-p23 { padding: 5.75rem; }
+.u-m24 { margin: 6.00rem; } .u-p24 { padding: 6.00rem; }
+.u-m25 { margin: 6.25rem; } .u-p25 { padding: 6.25rem; }
+.u-m26 { margin: 6.50rem; } .u-p26 { padding: 6.50rem; }
+.u-m27 { margin: 6.75rem; } .u-p27 { padding: 6.75rem; }
+.u-m28 { margin: 7.00rem; } .u-p28 { padding: 7.00rem; }
+.u-m29 { margin: 7.25rem; } .u-p29 { padding: 7.25rem; }
+.u-m30 { margin: 7.50rem; } .u-p30 { padding: 7.50rem; }
+.u-m31 { margin: 7.75rem; } .u-p31 { padding: 7.75rem; }
+.u-m32 { margin: 8.00rem; } .u-p32 { padding: 8.00rem; }
+.u-m33 { margin: 8.25rem; } .u-p33 { padding: 8.25rem; }
+.u-m34 { margin: 8.50rem; } .u-p34 { padding: 8.50rem; }
+.u-m35 { margin: 8.75rem; } .u-p35 { padding: 8.75rem; }
+.u-m36 { margin: 9.00rem; } .u-p36 { padding: 9.00rem; }
+.u-m37 { margin: 9.25rem; } .u-p37 { padding: 9.25rem; }
+.u-m38 { margin: 9.50rem; } .u-p38 { padding: 9.50rem; }
+.u-m39 { margin: 9.75rem; } .u-p39 { padding: 9.75rem; }
+.u-m40 { margin: 10.00rem; } .u-p40 { padding: 10.00rem; }
+.u-m41 { margin: 10.25rem; } .u-p41 { padding: 10.25rem; }
+.u-m42 { margin: 10.50rem; } .u-p42 { padding: 10.50rem; }
+.u-m43 { margin: 10.75rem; } .u-p43 { padding: 10.75rem; }
+.u-m44 { margin: 11.00rem; } .u-p44 { padding: 11.00rem; }
+.u-m45 { margin: 11.25rem; } .u-p45 { padding: 11.25rem; }
+.u-m46 { margin: 11.50rem; } .u-p46 { padding: 11.50rem; }
+.u-m47 { margin: 11.75rem; } .u-p47 { padding: 11.75rem; }
+.u-m48 { margin: 12.00rem; } .u-p48 { padding: 12.00rem; }
+.u-m49 { margin: 12.25rem; } .u-p49 { padding: 12.25rem; }
+.u-m50 { margin: 12.50rem; } .u-p50 { padding: 12.50rem; }
+.u-m51 { margin: 12.75rem; } .u-p51 { padding: 12.75rem; }
+.u-m52 { margin: 13.00rem; } .u-p52 { padding: 13.00rem; }
+.u-m53 { margin: 13.25rem; } .u-p53 { padding: 13.25rem; }
+.u-m54 { margin: 13.50rem; } .u-p54 { padding: 13.50rem; }
+.u-m55 { margin: 13.75rem; } .u-p55 { padding: 13.75rem; }
+.u-m56 { margin: 14.00rem; } .u-p56 { padding: 14.00rem; }
+.u-m57 { margin: 14.25rem; } .u-p57 { padding: 14.25rem; }
+.u-m58 { margin: 14.50rem; } .u-p58 { padding: 14.50rem; }
+.u-m59 { margin: 14.75rem; } .u-p59 { padding: 14.75rem; }

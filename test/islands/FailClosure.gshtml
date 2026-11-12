@@ -1,0 +1,9 @@
+<script goose>
+// expect: islands/FailClosure.gshtml:6: error: 'closure' is not available in client code (islands v1)
+struct Item { v: i64 }
+struct State { n: i64, items: Item[>..<] }
+fn f(s: State&) {
+    s.n = s.items.count() { it.v > 1 };
+}
+</script>
+<p>{{ s.n }}</p>
