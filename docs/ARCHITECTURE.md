@@ -123,12 +123,13 @@ flowchart TB
 
 `gwi.js` is one ES module. It has four parts.
 
+Fragments (`gw-target`) live in `gwf.js`, a separate module that imports `swap` and `oops` from `gwi.js`: one `click` listener for `a[gw-target]` and one `submit` listener for `form[gw-target]`. gweb serves it, with a modulepreload link for `gwi.js`, only to pages that use `gw-target`.
+
 | Part | What it does |
 |---|---|
 | Helpers (`esc`, `at`, `set`, `rm`, `blen`, `cap`, `idiv`, `imod`) | Give the generated component JS the same behaviour as Goose: HTML escaping, bounds checks that throw, byte lengths, string capacities, truncating `/` and Euclidean `%`. |
 | `component(name, def)` | Each `_gw/Name.js` calls this to register its `render` function and handlers. |
 | Component listeners | Four capture listeners on `document`, for `click`, `change`, `input` and `submit`. |
-| Fragment listeners | One `click` listener for `a[gw-target]`, and one `submit` listener for `form[gw-target]`. |
 | `morph(from, to)` | Makes the live DOM match new HTML, changing only what differs. |
 
 ### 4.1 What the server sends for a component

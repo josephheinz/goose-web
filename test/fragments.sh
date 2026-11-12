@@ -67,7 +67,7 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     req list GET / -H 'GW-Fragment: list' -H "Cookie: gw_csrf=$TK"
     check "$([ "$(status list)" = 200 ] && has_header list 'gw-fragment: list' && echo ok)" "fragment list: 200 and the GW-Fragment echo"
     check "$(has_header list 'cache-control: no-store' && echo ok)" "fragment list: Cache-Control: no-store"
-    check "$(! body_has list '__gweb/id' && ! body_has list '<html' && ! body_has list 'gwi.js' && echo ok)" "fragment list: no dev script, no layout, no runtime tag"
+    check "$(! body_has list '__gweb/id' && ! body_has list '<html' && ! body_has list 'gwi.js' && ! body_has list 'gwf.js' && echo ok)" "fragment list: no dev script, no layout, no script tag"
     check "$(substring list whole && echo ok)" "fragment list: its bytes are a substring of the whole page"
     check "$(body_has whole '__gweb/id' && echo ok)" "the whole page has the dev script"
     check "$(body_has list '<form method="post" action="/" gw-target="list">' && ! body_has list 'whole page only' && echo ok)" "fragment list: the region and nothing else"
@@ -107,12 +107,14 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     check "$([ "$(status miss)" = 404 ] && ! has_header miss 'gw-fragment' && echo ok)" "a missing page with the header: 404, no echo"
 
     # The script tag: once for each template that has a gw-target.
-    check "$([ "$(body_count whole 'src="/_gw/gwi.js"')" = 2 ] && echo ok)" "GET /: the runtime tag twice (layout and page)"
+    check "$([ "$(body_count whole 'src="/_gw/gwf.js"')" = 2 ] && echo ok)" "GET /: the fragment script tag twice (layout and page)"
     req plain GET /plain
-    check "$([ "$(body_count plain 'src="/_gw/gwi.js"')" = 1 ] && echo ok)" "GET /plain: the runtime tag once (layout only)"
-    check "$(body_has whole '<script type="module" src="/_gw/gwi.js"></script><h1>Fragments</h1>' && echo ok)" "the page's tag comes first in the page"
+    check "$([ "$(body_count plain 'src="/_gw/gwf.js"')" = 1 ] && echo ok)" "GET /plain: the fragment script tag once (layout only)"
+    check "$(body_has whole '<link rel="modulepreload" href="/_gw/gwi.js"><script type="module" src="/_gw/gwf.js"></script><h1>Fragments</h1>' && echo ok)" "the page's tag comes first in the page"
     req rt GET /_gw/gwi.js
     check "$([ "$(status rt)" = 200 ] && has_header rt 'content-type: text/javascript' && echo ok)" "a project with no component serves /_gw/gwi.js"
+    req rf GET /_gw/gwf.js
+    check "$([ "$(status rf)" = 200 ] && has_header rf 'content-type: text/javascript' && echo ok)" "a project with fragments serves /_gw/gwf.js"
     check "$([ ! -d "$WORK/ok/components" ] && echo ok)" "the site has no components folder"
 
     req tk0 GET /

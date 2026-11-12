@@ -773,7 +773,7 @@ fn template_tag(path: const u8[:], ln: i64, inner: const u8[:], line: const u8[:
     }
 }
 
-let GW_SCRIPT = "<script type=\"module\" src=\"/_gw/gwi.js\"></script>";
+let GW_SCRIPT = "<link rel=\"modulepreload\" href=\"/_gw/gwi.js\"><script type=\"module\" src=\"/_gw/gwf.js\"></script>";
 
 fn script_tag(out: u8[>..]&) {
     out.append("out.append(\""); lit(out, GW_SCRIPT); out.append("\"); ");
@@ -1537,16 +1537,20 @@ fn pkg_source(which: i32) -> u8[>..] {
 
 let RT_PRETTY = embed_file("../client/gwi.js");
 let RT_MIN = embed_file("../client/gwi.min.js");
+let RT_FRAG_PRETTY = embed_file("../client/gwf.js");
+let RT_FRAG_MIN = embed_file("../client/gwf.min.js");
 
-fn runtime_js(min: bool, out: u8[>..]&) {
+// which: 0 is gwi.js (the core), 1 is gwf.js (fragments).
+fn runtime_js(which: i64, min: bool, out: u8[>..]&) {
     let home = goose_web_home();
     if home.len > 0 {
         var p: u8[>..] = [];
-        format(p, home, if min { "/client/gwi.min.js" } else { "/client/gwi.js" });
+        format(p, home, if which == 1 { if min { "/client/gwf.min.js" } else { "/client/gwf.js" } } else { if min { "/client/gwi.min.js" } else { "/client/gwi.js" } });
         if read(p, out) { return; }
     }
     out.clear();
-    out.append(if min { RT_MIN } else { RT_PRETTY });
+    if which == 1 { out.append(if min { RT_FRAG_MIN } else { RT_FRAG_PRETTY }); }
+    else { out.append(if min { RT_MIN } else { RT_PRETTY }); }
 }
 
 let EMBEDDED_VERSION = embed_file("../VERSION");
@@ -1585,16 +1589,24 @@ fn push_gw_static(url: const u8[:], file: const u8[:], data: const u8[:]) {
     statics.push(s);
 }
 
+fn gen_runtime_file(which: i64, name: const u8[:], dev: bool, gw_dir: const u8[:]) {
+    var rt: u8[>..] = [];
+    runtime_js(which, !dev, rt);
+    var js_path: u8[>..] = [];
+    format(js_path, gw_dir, "/", name);
+    write(js_path, rt);
+    var url: u8[>..] = [];
+    format(url, "/_gw/", name);
+    push_gw_static(url, js_path, rt);
+}
+
+// gwi.js serves components and fragments (gwf.js imports it); gwf.js only when the site uses fragments.
 fn gen_runtime(dev: bool) {
     var gw_dir: u8[>..] = [];
     format(gw_dir, gen_root, "/_gw");
     make_dir(gw_dir);
-    var rt: u8[>..] = [];
-    runtime_js(!dev, rt);
-    var js_path: u8[>..] = [];
-    format(js_path, gw_dir, "/gwi.js");
-    write(js_path, rt);
-    push_gw_static("/_gw/gwi.js", js_path, rt);
+    gen_runtime_file(0, "gwi.js", dev, gw_dir);
+    if uses_fragments { gen_runtime_file(1, "gwf.js", dev, gw_dir); }
 }
 
 // gen goes on after translator errors, so the Goose compiler reports its errors too.
@@ -1903,7 +1915,7 @@ fn test_cmd() -> bool {
         format(dir, parity, "/js-", if compact { "compact" } else { "pretty" });
         make_dir(dir);
         var rt: u8[>..] = [];
-        runtime_js(compact, rt);
+        runtime_js(0, compact, rt);
         var p: u8[>..] = [];
         format(p, dir, "/gwi.real.js");
         write(p, rt);

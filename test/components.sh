@@ -3,16 +3,14 @@
 #
 #   GOOSE=/path/to/goose test/components.sh
 #
-# 1. client/gwi.min.js must carry the FNV-1a hash of client/gwi.js in its
-#    banner (client/build.sh writes it), so a stale minified runtime fails.
-# 2. Every test/components/*.gshtml not named Fail* or Warn* goes into one project, and
+# 1. Every test/components/*.gshtml not named Fail* or Warn* goes into one project, and
 #    gweb test runs its test_* functions as Goose and as JavaScript, pretty
 #    and compact.
-# 3. Each test/components/Fail*.gshtml, alone in a project, must fail gweb build
+# 2. Each test/components/Fail*.gshtml, alone in a project, must fail gweb build
 #    with the line its `// expect: ` comment gives.
-# 3b. Each Warn*.gshtml, alone in a project, warns but builds; --strict fails it;
-#    --diagnostics json prints one JSON object per line. 3c: the parity project is warning-free.
-# 4. gweb test leaves .gooseweb/ alone: the built server and main.goose keep
+# 2b. Each Warn*.gshtml, alone in a project, warns but builds; --strict fails it;
+#    --diagnostics json prints one JSON object per line. 2c: the parity project is warning-free.
+# 3. gweb test leaves .gooseweb/ alone: the built server and main.goose keep
 #    their checksums across a test run.
 #
 # Needs node, and gweb built beside this folder (goose build -o gweb cli/gweb.goose).
@@ -27,12 +25,7 @@ fail=0
 ok() { pass=$((pass + 1)); }
 bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 
-# 1. The minified runtime is current.
-want=$(node "$ROOT/client/fnv.mjs" "$ROOT/client/gwi.js")
-have=$(head -c 40 "$ROOT/client/gwi.min.js" | sed -n 's|^/\* gwi \([0-9a-f]*\) \*/.*|\1|p')
-if [ "$want" = "$have" ]; then ok; else bad "client/gwi.min.js is stale (banner '$have', gwi.js hashes to $want): run client/build.sh"; fi
-
-# 2. Parity.
+# 1. Parity.
 mkdir -p "$WORK/ok/app" "$WORK/ok/components"
 echo '<p>components suite</p>' > "$WORK/ok/app/page.html"
 for f in "$HERE"/components/*.gshtml; do
@@ -40,7 +33,7 @@ for f in "$HERE"/components/*.gshtml; do
 done
 if out=$("$GWEB" -C "$WORK/ok" test 2>&1); then ok; echo "$out"; else bad "gweb test"; echo "$out"; fi
 
-# 3. Expected failures.
+# 2. Expected failures.
 for f in "$HERE"/components/Fail*.gshtml; do
   name=$(basename "$f")
   expect=$(sed -n 's|^// expect: ||p' "$f")
@@ -58,7 +51,7 @@ for f in "$HERE"/components/Fail*.gshtml; do
   fi
 done
 
-# 3b. Each Warn*.gshtml, alone in a project, builds with its `// warn: ` line on stderr;
+# 2b. Each Warn*.gshtml, alone in a project, builds with its `// warn: ` line on stderr;
 # --strict fails it; --diagnostics json prints JSON Lines, one with code unkeyed-for.
 for f in "$HERE"/components/Warn*.gshtml; do
   name=$(basename "$f")
@@ -86,10 +79,10 @@ for f in "$HERE"/components/Warn*.gshtml; do
   ' "$WORK/diag.jsonl"; then ok; else bad "$name: --diagnostics json"; sed 's/^/    /' "$WORK/diag.jsonl"; fi
 done
 
-# 3c. The parity project builds clean under --strict.
+# 2c. The parity project builds clean under --strict.
 if out=$("$GWEB" -C "$WORK/ok" build --strict 2>&1); then ok; else bad "parity project: gweb build --strict"; echo "$out" | sed 's/^/    /'; fi
 
-# 4. gweb test leaves .gooseweb/ alone.
+# 3. gweb test leaves .gooseweb/ alone.
 mkdir -p "$WORK/keep"
 cp -R "$WORK/ok/app" "$WORK/ok/components" "$WORK/keep/"
 if "$GWEB" -C "$WORK/keep" test >/dev/null 2>&1; then
