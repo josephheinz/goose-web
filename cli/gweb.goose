@@ -1049,6 +1049,12 @@ fn seg_count(rel: const u8[:]) -> i64 {
 
 fn gen_dispatch(m: u8[>..]&) {
     format(m, "fn dispatch", SIG, " -> i64 {\n");
+    if statics.len > 0 {
+        m.append("    if req.method == http::Method.Get || req.method == http::Method.Head {\n");
+        m.append("        let i, hit = static_file(req, res);\n");
+        m.append("        if hit { return i; }\n");
+        m.append("    }\n");
+    }
     m.append("    var seg: const u8[:][16] = [\"\"; 16];\n");
     m.append("    var starts: i64[16] = [0; 16];\n");
     m.append("    var ends: i64[16] = [0; 16];\n");
@@ -1088,10 +1094,6 @@ fn gen_dispatch(m: u8[>..]&) {
         m.append("        },\n");
     }
     m.append("        _ => {},\n");
-    m.append("    }\n");
-    m.append("    if req.method == http::Method.Get || req.method == http::Method.Head {\n");
-    m.append("        let i, hit = static_file(req, res);\n");
-    m.append("        if hit { return i; }\n");
     m.append("    }\n");
     m.append("    web::not_found(ctx);\n");
     m.append("    finish(req, ctx, res);\n");
