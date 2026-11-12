@@ -34,6 +34,7 @@ struct Dir {
     methods: i64,          // bit i set: METHODS[i] is defined in route.goose
     has_load: bool, has_before: bool, has_after: bool,
     has_post: bool,
+    has_post_res: bool = false, has_load_res: bool = false,   // fn POST( / fn load( take a third parameter, res: http::Response&
     frags: u8[..600],      // the page's fragment names, space-separated
     route_ns: u8[..200], page_ns: u8[..200], layout_ns: u8[..32], mw_ns: u8[..32],
     page_csrf: bool = false, layout_csrf: bool = false, csrf_const: bool = false,   // csrf_const: route.goose declares const CSRF
@@ -130,6 +131,16 @@ fn defines(src: const u8[:], name: const u8[:]) -> bool {
     var pat: u8[>..] = [];
     format(pat, "fn ", name, "(");
     for line in split(src, '\n') { if starts_with(trim_start(line), pat) { return true; } }
+    return false;
+}
+
+// True when the line that starts `fn name(` mentions http::Response: the handler takes res (D14).
+fn takes_res(src: const u8[:], name: const u8[:]) -> bool {
+    var pat: u8[>..] = [];
+    format(pat, "fn ", name, "(");
+    for line in split(src, '\n') {
+        if starts_with(trim_start(line), pat) { return find(line, "http::Response") >= 0; }
+    }
     return false;
 }
 
@@ -1231,14 +1242,14 @@ fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     }
     if d.has_post {
         m.append("    if req.method == http::Method.Post {\n");
-        format(m, "        let props = ", d.page_ns, "::POST(r, ctx);\n");
+        format(m, "        let props = ", d.page_ns, "::POST(r, ctx", if d.has_post_res { ", res" } else { "" }, ");\n");
         gen_page_reply(m, d, true, "        ", rq);
         m.append("    } else {\n");
-        format(m, "        let props = ", d.page_ns, "::load(r, ctx);\n");
+        format(m, "        let props = ", d.page_ns, "::load(r, ctx", if d.has_load_res { ", res" } else { "" }, ");\n");
         gen_page_reply(m, d, true, "        ", rq);
         m.append("    }\n");
     } else {
-        if d.has_load { format(m, "    let props = ", d.page_ns, "::load(req, ctx);\n"); }
+        if d.has_load { format(m, "    let props = ", d.page_ns, "::load(req, ctx", if d.has_load_res { ", res" } else { "" }, ");\n"); }
         gen_page_reply(m, d, d.has_load, "    ", rq);
     }
     middleware_after(m, d, rq);
@@ -1408,7 +1419,7 @@ fn gen_static(m: u8[>..]&) {
 
 fn gen_finish(m: u8[>..]&) {
     m.append("fn finish(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {\n");
-    m.append("    match ctx.outcome {\n        Continue => {},\n        NotFound => {\n");
+    m.append("    match ctx.outcome {\n        Continue => {},\n        Done => {},\n        NotFound => {\n");
     if has_not_found {
         m.append("            ctx.title.clear();\n            res.body.clear();\n            web::html(res, http::Status.NotFound);\n");
         var root_layout: u8[>..] = [];
@@ -1443,8 +1454,7 @@ fn nearest_error(rel: const u8[:]) -> i64 {
 // why is the abort text of a crash, "" for a web::fail.
 fn gen_error_reply(m: u8[>..]&) {
     let root = nearest_error("");
-    m.append("var gw_dev = false;\n\n");
-    m.append("fn error_at(route: i64) -> i64 {\n    match route {\n");
+        m.append("fn error_at(route: i64) -> i64 {\n    match route {\n");
     for d, i in dirs {
         if !d.route && !d.page_html { continue; }
         let e = nearest_error(d.rel);
@@ -1457,7 +1467,7 @@ fn gen_error_reply(m: u8[>..]&) {
     m.append("    if !crashed { status = ctx.error_status; message.clear(); message.append(ctx.error_message); }\n");
     m.append("    var info = web::new_error(status, message, crashed);\n");
     m.append("    if why.len > 0 { web::log_error(info, req, why); } else { web::log_error(info, req, message); }\n");
-    m.append("    if gw_dev { web::dev_detail(info, req, why); }\n");
+    m.append("    if web::dev_mode() { web::dev_detail(info, req, why); }\n");
     m.append("    res.headers.clear();\n");
     var api: u8[>..] = [];
     for d, i in dirs {
@@ -1489,7 +1499,7 @@ fn gen_error_reply(m: u8[>..]&) {
         m.append(if csrf { " }\n        },\n" } else { "\n        },\n" });
     }
     m.append("        _ => web::builtin_page(res.body, info),\n    }\n");
-    m.append("    if gw_dev { web::dev_error_script(res.body, info); }\n}\n");
+    m.append("    if web::dev_mode() { web::dev_error_script(res.body, info); }\n}\n");
 }
 
 fn gen_main() -> u8[>..] {
@@ -1577,8 +1587,7 @@ fn main() {
     let cfg = web::config_from_args();
     let server = net::listen(cfg.port, cfg.host, 1024);
     guard server.ok() else { print("goose-web: cannot listen on port ", cfg.port, ": ", net::last_error()); exit(1); }
-    gw_dev = cfg.dev_id != 0;
-    web::inflight_init(cfg.workers);
+    web::inflight_init(cfg.workers, cfg.dev_id != 0);
 
 """);
     if has_state {
@@ -1806,6 +1815,8 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
                     d.max_upload = max_upload_const(code);
                     d.has_load = defines(code, "load");
                     d.has_post = defines(code, "POST");
+                    d.has_load_res = takes_res(code, "load");
+                    d.has_post_res = takes_res(code, "POST");
                     if d.has_post && !d.has_load { err(src, 0, "fn POST( needs fn load( beside it"); }
                     csrf_const(src, code, false);
                     if mentions_csrf(code) { d.page_csrf = true; }

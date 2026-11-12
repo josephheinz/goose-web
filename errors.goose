@@ -19,7 +19,8 @@ struct ErrorInfo {
 
 extern fn c_err_entropy(buf: u8[:]) -> i32 = "gweb_entropy";
 
-extern fn c_if_init(n: i64) = "gweb_inflight_init";
+extern fn c_if_init(n: i64, dev: i32) = "gweb_inflight_init";
+extern fn c_if_dev() -> i32 = "gweb_inflight_dev";
 extern fn c_if_loop(slot: i64) -> u64 = "gweb_inflight_loop";
 extern fn c_if_set_route(slot: i64, route: i64) = "gweb_inflight_set_route";
 extern fn c_if_get_route(slot: i64) -> i64 = "gweb_inflight_get_route";
@@ -223,7 +224,11 @@ fn dev_detail(e: ErrorInfo&, req: const http::Request&, abort_text: const u8[:])
 
 // ---------------------------------------------------------------- crash helpers (D12)
 
-fn inflight_init(workers: i64) { c_if_init(workers); }
+// Call once in main before any worker starts. dev is stored in C, where every worker thread reads it.
+fn inflight_init(workers: i64, dev: bool) { c_if_init(workers, if dev { 1 } else { 0 }); }
+
+// True when the server runs under gweb dev (--dev-id): error pages carry the detail.
+fn dev_mode() -> bool { return c_if_dev() != 0; }
 
 // The dispatcher calls this beside ctx.route = i.
 fn inflight_route(slot: i64, route: i64) { c_if_set_route(slot, route); }

@@ -12,6 +12,7 @@
 #   - a crashing error.html: the fixed plain-text 500
 #   - a route.goose crash and a route fail: JSON {"error":..,"id":..}
 #   - --dev-id: gw-dev-error before the dev script, with the request; without it, no detail
+#   - D14: a page POST taking res that writes a 429 and calls web::done; a page POST's web::fail(429)
 #   - informational: plaintext requests per second (see BENCH below)
 #
 # Needs curl, python3 and gweb built beside this folder (goose build -o gweb cli/gweb.goose).
@@ -152,6 +153,23 @@ else
   check "$([ "$(status af)" = 429 ] && has_header af 'content-type: application/json' && echo ok)" "/api/fail: 429, JSON"
   check "$(grep -qE '^\{"error":"Slow down\.","id":"[0-9a-f]{16}"\}$' "$WORK/af.b" && echo ok)" "/api/fail: {\"error\":\"Slow down.\",\"id\":\"<id>\"}"
   check "$(! body_has af '<html' && ! body_has af 'root-layout' && echo ok)" "/api/fail: no HTML page"
+
+  # D14: a page POST that takes res and ends the reply itself with web::done.
+  TK=0123456789abcdef0123456789abcdef
+  C="Cookie: gw_csrf=$TK"
+  req lg GET /limit
+  check "$([ "$(status lg)" = 200 ] && body_has lg 'id="limit"' && echo ok)" "GET /limit: the page renders"
+  req lp POST /limit -H "$C" -d "_csrf=$TK"
+  check "$([ "$(status lp)" = 429 ] && has_header lp 'retry-after: 30' && echo ok)" "POST /limit: 429 with Retry-After: 30 from the handler"
+  check "$([ "$(cat "$WORK/lp.b")" = 'slow down' ] && echo ok)" "POST /limit: the body is exactly the handler's"
+  check "$(! body_has lp '<html' && ! body_has lp 'root-layout' && ! body_has lp 'id="limit"' && ! body_has lp 'root-error' && echo ok)" "POST /limit: no layout, page or error markup"
+
+  # web::fail from a page POST without res: error.html with the status.
+  req tp POST /tries -H "$C" -d "_csrf=$TK"
+  check "$([ "$(status tp)" = 429 ] && has_header tp 'content-type: text/html' && echo ok)" "POST /tries: 429, HTML"
+  check "$(body_has tp '<h1 id="root-error">429 Too many tries.</h1>' && body_has tp 'id="root-layout"' && ! body_has tp 'id="tries"' && echo ok)" "POST /tries: error.html with 429 and the message, inside the layout, page not rendered"
+  id=$(body_id tp)
+  check "$([ -n "$id" ] && logged "$id" 429 POST /tries && echo ok)" "POST /tries: the log line has the page's id"
 
   # Ids differ between errors.
   req d1 GET /fail

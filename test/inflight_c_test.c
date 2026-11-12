@@ -5,7 +5,8 @@
 #include <sys/socket.h>
 
 typedef struct { const uint8_t *data; int64_t len; } bytes;
-void gweb_inflight_init(int64_t);
+void gweb_inflight_init(int64_t, int32_t);
+int32_t gweb_inflight_dev(void);
 void gweb_inflight_set_loop(int64_t, uint64_t);
 uint64_t gweb_inflight_loop(int64_t);
 void gweb_inflight_begin(int64_t, int32_t, bytes);
@@ -41,7 +42,9 @@ int main(void) {
     CHECK(gweb_inflight_loop(0) == 0);
     CHECK(gweb_inflight_get_route(0) == -1);
 
-    gweb_inflight_init(3);
+    CHECK(gweb_inflight_dev() == 0);
+    gweb_inflight_init(3, 1);
+    CHECK(gweb_inflight_dev() == 1);
     for (int i = 0; i < 3; i++) { CHECK(gweb_inflight_pending(i) == 0); CHECK(gweb_inflight_fd(i) == -1); CHECK(gweb_inflight_get_route(i) == -1); }
     CHECK(gweb_inflight_pending(3) == 0 && gweb_inflight_pending(-1) == 0);       /* out of range */
 
@@ -152,7 +155,8 @@ int main(void) {
     }
 
     /* re-init resets */
-    gweb_inflight_init(2);
+    gweb_inflight_init(2, 0);
+    CHECK(gweb_inflight_dev() == 0);
     CHECK(gweb_inflight_loop(1) == 0 && gweb_inflight_pending(2) == 0);
 
     printf("inflight_c_test: %d checks, %d failed\n", checks, failures);

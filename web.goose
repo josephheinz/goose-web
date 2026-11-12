@@ -14,7 +14,7 @@ import json;
 struct Params { n: i64, names: u8[..32][8], values: u8[..256][8],
                 rest_name: u8[..32] = "", rest: u8[..1024] = "" }   // the catch-all tail has its own, larger field
 
-enum Outcome { Continue, NotFound, Redirect, Error }
+enum Outcome { Continue, NotFound, Redirect, Error, Done }
 
 // Ctx holds no references or slices, so a handler may shrink res while it still reads req and ctx.
 struct Ctx {
@@ -295,6 +295,10 @@ fn html(res: http::Response&, status: http::Status) {
 fn json(res: http::Response&, status: http::Status) { http::json_reply(res, status); }
 
 fn not_found(ctx: Ctx&) { ctx.outcome = Outcome.NotFound; }
+
+// A page handler that took `res` and wrote the whole reply (status, headers, body) calls this and returns: the
+// generated code skips rendering and finish leaves res as written (DESIGN-ADDENDUM-14, D14).
+fn done(ctx: Ctx&) { ctx.outcome = Outcome.Done; }
 
 // The generated page function applies a nonzero status after rendering, while the outcome is Continue.
 fn set_status(ctx: Ctx&, code: i64) { ctx.status = code; }

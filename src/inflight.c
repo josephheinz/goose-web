@@ -31,14 +31,19 @@ typedef struct {
 
 static gweb_if_slot *table;
 static int64_t table_n;
+static volatile int32_t dev_flag;   /* set once by init, before workers start; read by every thread */
 
 static gweb_if_slot *slot_of(int64_t slot) {
     if (!table || slot < 0 || slot >= table_n) return NULL;
     return &table[slot];
 }
 
-/* Call once, before any worker starts. Replaces an earlier table. */
-void gweb_inflight_init(int64_t n) {
+/* Whether the server runs under gweb dev. */
+int32_t gweb_inflight_dev(void) { return dev_flag; }
+
+/* Call once, before any worker starts. Replaces an earlier table. dev: nonzero under gweb dev. */
+void gweb_inflight_init(int64_t n, int32_t dev) {
+    dev_flag = dev ? 1 : 0;
     free(table);
     table = NULL;
     table_n = 0;
