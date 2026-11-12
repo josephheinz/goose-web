@@ -36,11 +36,16 @@ fn fragment_index(req: const http::Request&, names: const u8[:][:]) -> i64 {
     return 0;
 }
 
+// Adds Cache-Control: no-store unless the response already has it.
+fn no_store(res: http::Response&) {
+    if find(res.headers, "Cache-Control: no-store\r\n") < 0 { http::set_header(res, "Cache-Control", "no-store"); }
+}
+
 // Echoes the name in GW-Fragment, forbids caching, and keeps gweb dev's script out.
 fn fragment_reply(req: const http::Request&, ctx: Ctx&, res: http::Response&) {
     ctx.fragment = true;
     http::set_header(res, "GW-Fragment", fragment(req));
-    http::set_header(res, "Cache-Control", "no-store");
+    no_store(res);
 }
 
 // True for Sec-Fetch-Site: cross-site; generated page code refuses such a POST.

@@ -22,6 +22,7 @@ struct Ctx {
     owner_fd: i32,            // -1 without app/state.goose
     outcome: Outcome,
     fragment: bool = false,   // fragment replies get no dev script
+    csrf: u8[..32] = "",      // the page's CSRF token; "" until web::csrf_begin
     redirect_status: i64,
     location: u8[..1024],
     title: u8[..256],
