@@ -860,9 +860,17 @@ fn scan_targets(path: const u8[:], src: const u8[:], own: i64) {
     }
 }
 
+fn fits_count(d: const Dir&, count: i64) -> bool {
+    let kind = catch_kind(d.rel);
+    if kind == 0 { return seg_count(d.rel) == count; }
+    if kind == 2 { return count > prefix_len(d.rel); }
+    return count >= prefix_len(d.rel);
+}
+
+// The candidates for a path of count segments (17 means 17 or more), in the order the dispatcher tries them.
 fn dispatch_order(count: i64, order: i64[>..]&) {
     for d, i in dirs {
-        if (d.route || d.page_html) && seg_count(d.rel) == count {
+        if (d.route || d.page_html) && fits_count(d, count) {
             var at = order.len;
             let mine: u8[..512] = d.rel;
             for k in order.len {
@@ -898,14 +906,14 @@ fn match_url(url: const u8[:]) -> i64 {
         starts.push(s);
         ends.push(p.len);
     }
-    if starts.len > 16 { return -1; }
     var order: i64[>..] = [];
-    dispatch_order(starts.len, order);
+    dispatch_order(min(starts.len, 17), order);
     for di in order {
         let dd = dirs[di];
         let segs = split(dd.rel, '/');
         var fits = true;
-        for k in starts.len {
+        let compared = if catch_kind(dd.rel) > 0 { prefix_len(dd.rel) } else { starts.len };
+        for k in compared {
             let seg = p[starts[k]..ends[k]];
             let dyn = segs[k].len > 0 && segs[k][0] == '[';
             if find(seg, "{") >= 0 { if !dyn { fits = false; } }
@@ -1073,15 +1081,22 @@ fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     m.append("}\n");
 }
 
+// Ranks each segment literal, [name], catch-all; the first segment whose ranks differ decides.
 fn route_before(a: const u8[:], b: const u8[:]) -> bool {
     let sa = split(a, '/');
     let sb = split(b, '/');
     for k in min(sa.len, sb.len) {
-        let da = sa[k].len > 0 && sa[k][0] == '[';
-        let db = sb[k].len > 0 && sb[k][0] == '[';
-        if da != db { return !da; }
+        let ra = seg_rank(sa[k]);
+        let rb = seg_rank(sb[k]);
+        if ra != rb { return ra < rb; }
     }
     return false;
+}
+
+fn seg_rank(s: const u8[:]) -> i64 {
+    let kind = seg_kind(s);
+    if kind == 3 { return 2; }
+    return kind;
 }
 
 // 0 literal, 1 [name], 2 [...name], 3 [[...name]], -1 a malformed dynamic folder name.
@@ -1148,25 +1163,35 @@ fn gen_dispatch(m: u8[>..]&) {
     m.append("    var ends: i64[16] = [0; 16];\n");
     m.append("    let n = web::split(req.path, seg, starts, ends);\n");
     m.append("    match n {\n");
-    for count in 17 {
+    for count in 18 {
         var order: i64[>..] = [];
         dispatch_order(count, order);
         if order.len == 0 { continue; }
         format(m, "        ", count, " => {\n");
         for i in order {
             let d = dirs[i];
+            let kind = catch_kind(d.rel);
+            let k = prefix_len(d.rel);
             var cond: u8[>..] = [];
             var params: u8[>..] = [];
-            if count > 0 {
-                for s, k in split(d.rel, '/') {
+            if count > 0 || kind > 0 {
+                for s, j in split(d.rel, '/') {
+                    if kind > 0 && j >= k { break; }
                     if s[0] == '[' {
                         if params.len > 0 { params.append(" && "); }
-                        format(params, "web::set_param(ctx, \"", s[1..s.len - 1], "\", seg[", k, "])");
+                        format(params, "web::set_param(ctx, \"", s[1..s.len - 1], "\", seg[", j, "])");
                     } else {
                         if cond.len > 0 { cond.append(" && "); }
-                        cond.append("seg["); format(cond, k); cond.append("] == \""); lit(cond, s); cond.push('"');
+                        cond.append("seg["); format(cond, j); cond.append("] == \""); lit(cond, s); cond.push('"');
                     }
                 }
+            }
+            if kind > 0 {
+                if params.len > 0 { params.append(" && "); }
+                let name = catch_name(last_seg(d.rel));
+                // A path ending in / leaves an empty last segment, which no catch-all accepts.
+                if count > k { format(params, "starts[", k, "] < req.path.len && web::set_rest(ctx, \"", name, "\", req.path[starts[", k, "]..])"); }
+                else { format(params, "web::set_rest(ctx, \"", name, "\", \"\")"); }
             }
             let call_kind = if d.route { "route_" } else { "page_" };
             var call: u8[>..] = [];
@@ -1177,7 +1202,7 @@ fn gen_dispatch(m: u8[>..]&) {
             var u: u8[>..] = [];
             url_of(u, d.rel);
             if cond.len > 0 { format(m, "            if ", cond, " { ", body, " }   // ", u, "\n"); }
-            else { format(m, "            { ", body, " }   // ", u, "\n"); }
+            else { format(m, "            { ", body, " }   // ", u, "\n"); break; }
         }
         m.append("        },\n");
     }
