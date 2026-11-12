@@ -4,8 +4,8 @@ namespace pins;
 
 import std;
 
-let OWNER = "jheinz-bzs";
-let TAG = "v0.1.0";
+let OWNER = "josephheinz";
+let TAG = "v0.1.1";
 
 fn pin(repo: const u8[:]) -> u8[>..] {
     var s: u8[>..] = [];

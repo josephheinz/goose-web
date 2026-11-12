@@ -1,13 +1,13 @@
 # goose-web
 
 A Next.js-like web framework for [Goose](https://aardappel.github.io/goose/), on
-[goose-net](https://github.com/jheinz-bzs/goose-net). Folders under `app/` are routes. `gweb` turns the
+[goose-net](https://github.com/josephheinz/goose-net). Folders under `app/` are routes. `gweb` turns the
 project into one native binary that serves on every core.
 
 ## Install
 
 ```
-git clone --branch v0.1.0 --depth 1 https://github.com/jheinz-bzs/goose-web
+git clone --branch v0.1.1 --depth 1 https://github.com/josephheinz/goose-web
 cd goose-web && goose build -o gweb cli/gweb.goose
 ln -s "$PWD/gweb" ~/bin/gweb           # or: cp gweb ~/bin/
 ```
@@ -30,9 +30,9 @@ To run this package's tests from a clone, clone goose-net beside it
 ## Use the libraries without gweb
 
 ```goose
-import web from "jheinz-bzs/goose-web@v0.1.0";
-import net from "jheinz-bzs/goose-net@v0.1.0";           // goose-web needs this line too
-import sqlite from "jheinz-bzs/goose-sqlite@v0.1.0";     // only if you use SQLite
+import web from "josephheinz/goose-web@v0.1.1";
+import net from "josephheinz/goose-net@v0.1.1";           // goose-web needs this line too
+import sqlite from "josephheinz/goose-sqlite@v0.1.1";     // only if you use SQLite
 ```
 
 The design is in [DESIGN.md](docs/DESIGN.md). [DESIGN-ADDENDUM-1.md](docs/DESIGN-ADDENDUM-1.md)
@@ -146,7 +146,7 @@ goose build -o gweb cli/gweb.goose
 ## SQLite
 
 Apps can read SQLite through the sibling package
-[goose-sqlite](https://github.com/jheinz-bzs/goose-sqlite): write `import sqlite;` in a `lib/` or `app/`
+[goose-sqlite](https://github.com/josephheinz/goose-sqlite): write `import sqlite;` in a `lib/` or `app/`
 file, and `gweb` declares the package. Each worker opens its own read-only
 connection with `sqlite::local(path)`. See `../examples/shop/lib/shopdb.goose`.
 
