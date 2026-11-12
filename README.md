@@ -7,7 +7,7 @@ project into one native binary that serves on every core.
 ## Install
 
 ```
-git clone --branch v0.1.1 --depth 1 https://github.com/josephheinz/goose-web
+git clone --branch v0.2.0 --depth 1 https://github.com/josephheinz/goose-web
 cd goose-web && goose build -o gweb cli/gweb.goose
 ln -s "$PWD/gweb" ~/bin/gweb           # or: cp gweb ~/bin/
 ```
@@ -30,9 +30,9 @@ To run this package's tests from a clone, clone goose-net beside it
 ## Use the libraries without gweb
 
 ```goose
-import web from "josephheinz/goose-web@v0.1.1";
-import net from "josephheinz/goose-net@v0.1.1";           // goose-web needs this line too
-import sqlite from "josephheinz/goose-sqlite@v0.1.1";     // only if you use SQLite
+import web from "josephheinz/goose-web@v0.2.0";
+import net from "josephheinz/goose-net@v0.2.0";           // goose-web needs this line too
+import sqlite from "josephheinz/goose-sqlite@v0.2.0";     // only if you use SQLite
 ```
 
 The design is in [DESIGN.md](docs/DESIGN.md). [DESIGN-ADDENDUM-1.md](docs/DESIGN-ADDENDUM-1.md)

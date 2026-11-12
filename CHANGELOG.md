@@ -9,6 +9,8 @@
 - Keyed morph: `gw-key` keeps element identity and focus when list items move, appear or disappear.
 - SQLite writes: the owner-thread writer pattern, documented, with the shop's `/db/todos` demo; needs goose-sqlite v0.2.0.
 
+Pins goose-net v0.2.0 and goose-sqlite v0.2.0.
+
 ## v0.1.1
 
 The repos moved from `jheinz-bzs` to `josephheinz`. `gweb` now pins `josephheinz/goose-*@v0.1.1`.
