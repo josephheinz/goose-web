@@ -4,7 +4,7 @@
 #
 #   GOOSE=/path/to/goose test/release_check.sh
 #
-# Needs git, curl, python3, node, and gweb built beside this folder.
+# Needs git, curl, python3, node, a C compiler (cc), and gweb built beside this folder.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(dirname "$HERE")
@@ -80,9 +80,37 @@ catchall_test() {
   "$WORK/catchall/catchall_test"
 }
 
+# The auth suite's Goose tests, the same pattern as cookie_test.
+goose_test() {
+  name=$1
+  mkdir "$WORK/$name"
+  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+      -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
+      "$HERE/$name.goose" > "$WORK/$name/$name.goose"
+  "$GOOSE" build -o "$WORK/$name/$name" "$WORK/$name/$name.goose"
+  "$WORK/$name/$name"
+}
+
+# The C tests need a C compiler, no network.
+c_test() {
+  name=$1
+  shift
+  mkdir -p "$WORK/c"
+  cc -O2 -Wall -o "$WORK/c/$name" "$HERE/$name.c" "$@"
+  "$WORK/c/$name"
+}
+
 step cookie_test cookie_test
 step csrf_test csrf_test
 step catchall_test catchall_test
+step crypto_test goose_test crypto_test
+step env_test goose_test env_test
+step session_test goose_test session_test
+step rate_test goose_test rate_test
+step security_test goose_test security_test
+step crypto_test.c c_test crypto_test "$ROOT/src/crypto.c"
+step env_test.c c_test env_test "$ROOT/src/sys.c"
+step rate_test.c c_test rate_test "$ROOT/src/rate.c" -lpthread
 step components sh "$HERE/components.sh"
 step templates sh "$HERE/templates.sh"
 step fragments env PORT="${PORT:-3991}" sh "$HERE/fragments.sh"
@@ -92,6 +120,7 @@ step errors env PORT="${PORT:-3996}" sh "$HERE/errors.sh"
 step frag sh "$HERE/frag.sh"
 step upload_c sh "$HERE/upload_c.sh"
 step inflight_c sh "$HERE/inflight_c.sh"
+step auth env PORT="${PORT:-3997}" sh "$HERE/auth.sh"
 
 gweb_new() {
   mkdir "$WORK/lone"

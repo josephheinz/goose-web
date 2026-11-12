@@ -8,8 +8,6 @@ import net.http;
 import web;
 import .form;
 
-extern fn c_entropy(buf: u8[:]) -> i32 = "gweb_entropy";
-
 const CSRF_LEN = 32;
 let CSRF_HEX = "0123456789abcdef";
 

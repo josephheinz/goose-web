@@ -277,7 +277,111 @@ secret, one token for the browser session.
   3-D Secure return). A route that opts out must not trust cookies for authority. Pages have no opt-out.
 - Behind a proxy that sends `X-Forwarded-Proto: https` the cookie is `__Host-gw_csrf` with `Secure`,
   and a plain `gw_csrf` cookie is ignored.
-- The token does not rotate at login, and it needs no `WEB_SECRET`.
+- `web::login` rotates the token. The token itself needs no `WEB_SECRET`.
+
+## Config and secrets
+
+`gweb` loads `.env` files from the project folder at startup. The first file to set a name wins, and
+the real environment beats every file:
+`.env.<env>.local`, `.env.local`, `.env.<env>`, `.env`. `<env>` is `GWEB_ENV`, else `development`
+under `gweb dev` and `production` otherwise. Lines are `NAME=value`; `#` starts a comment line.
+
+```
+# .env.local   (git-ignored)
+WEB_SECRET=3f1c...64 hex digits...   # openssl rand -hex 32
+```
+
+- `WEB_SECRET` is 1 to 4 comma-separated keys of 32 to 64 bytes. The first signs, all verify, so
+  you rotate by putting the new key first. Put it in `.env*.local` (git-ignored by `gweb new`) or the
+  real environment, never in a committed `.env`.
+- `gweb dev` makes a throwaway key in `.gooseweb.dev/secret` when none is set. Production refuses to
+  start without `WEB_SECRET` when the app uses sessions or signed cookies.
+- Read your own settings with `web::env_str`, `env_int`, `env_bool` and `env_required`. An
+  optional `app/config.goose` with `fn check() -> bool` runs before the server listens; false exits 2.
+- `WEB_SESSION_IDLE` and `WEB_SESSION_MAX` are seconds (defaults 86400 and 2592000).
+  `WEB_TRUST_PROXY=1` makes `client_ip` read the last `X-Forwarded-For` item; leave it off unless a
+  proxy you run sets that header, or clients can pick their own address.
+
+## Sessions and login
+
+A session is a signed cookie, `gw_session`: user id, your version number, times and up to 256 bytes
+of data. It is **signed, not encrypted**: the user can read it, so keep secrets out of it. It needs
+`WEB_SECRET`. Nothing reads it until you call `web::session`.
+
+```goose
+// app/login/submit/route.goose
+fn POST(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
+    // ... read username and password with web::form ...
+    if !web::rate_limit(req, ctx, res, "login", 10, 60) { return; }
+    if !web::password_verify(stored_hash_or_empty, password) { /* same error for both failures */ return; }
+    if !web::login(req, ctx, res, user.id, user.session_version) { return; }
+    web::redirect(ctx, web::safe_next(next, "/"), 303);
+}
+```
+
+```goose
+// app/admin/middleware.goose
+fn before(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) -> bool {
+    if !web::require_login(req, ctx, res, "/login") { return false; }   // 303 to /login?next=...
+    if ctx.session.ver != user_row.session_version { web::logout(req, ctx); web::redirect(ctx, "/login", 303); return false; }
+    return true;
+}
+```
+
+- **Revocation is yours.** Check `ctx.session.ver` against the user row and bump the row's version
+  on password change, role change or "log out everywhere".
+- **Logout must be POST** (a form with `@web::csrf_field(ctx)`); a link would let any site log users out.
+- `web::login` makes a new session id, rotates the CSRF token and sets `no-store`. Pass
+  `web::LoginOptions { remember: true, .. }` for a persistent cookie.
+- Passwords: `web::password_hash` makes a `$pbkdf2-sha256$600000$...` string; `password_verify("", pw)`
+  for an unknown user costs the same as a wrong password; `password_needs_rehash` tells you when to re-store.
+  A login holds a worker for a fraction of a second, so rate-limit it.
+- `web::require_login_api` answers `401` JSON. In templates: `web::user_id(ctx)`, `web::logged_in(ctx)`.
+- A page's `fn POST` cannot refuse with a `429`; do the login in a `route.goose` and point the form at it.
+- Behind HTTPS (`X-Forwarded-Proto: https`) the cookie is `__Host-gw_session` with `Secure`.
+- Also available: `web::set_signed_cookie` and `web::signed_cookie` (700 bytes, name under the MAC).
+
+## Rate limits
+
+```goose
+if !web::rate_limit(req, ctx, res, "login", 10, 60) { return; }               // 10 a minute per client address
+if !web::rate_limit_key(ctx, res, "login-user", username, 5, 60) { return; } // 5 a minute per user name
+```
+
+A refusal has already written `429`, `Retry-After` and the body, so you just return. The table is
+process-wide, shared by all workers, and lost on restart. It is a speed bump, not a firewall: an
+attacker with many addresses can evict entries. See `WEB_TRUST_PROXY` above for `client_ip`.
+
+## CORS
+
+Call `web::cors` in a route's `middleware.goose` `before`:
+
+```goose
+fn before(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) -> bool {
+    return web::cors(req, ctx, res, web::CorsOptions { origins: "https://app.example", .. });
+}
+```
+
+- `origins` is a comma list of exact origins, or `*`. Preflights are answered with `204` (or `403`)
+  and end the request. `credentials: true` never matches `*`.
+- Pages get no CORS.
+- A cross-origin `POST` also needs `const CSRF = false;` on the route, because the CSRF check refuses
+  `cross-site`. Such a route must not trust cookies, unless you set `credentials: true` with a
+  deliberate origin list: then a request from any other origin with an unsafe method gets `403`.
+
+## Security headers and CSP
+
+Every response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`
+and `X-Frame-Options: SAMEORIGIN`. `WEB_SECURITY_HEADERS=0` turns them off; a handler can set
+`ctx.default_headers = false`. `WEB_HSTS=<seconds>` adds `Strict-Transport-Security`.
+
+CSP is opt-in: `WEB_CSP=1` (or `--csp`), or `report-only` to watch without blocking, or
+`web::csp_begin(ctx)` in one subtree's `before`. HTML replies get
+`script-src 'self' 'nonce-N'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'`.
+
+- Inline scripts need the nonce: `<script nonce="{web::nonce(ctx)}">`.
+- Inline `on*` handlers (`onclick=...`) are blocked; use a script. `/_gw/*.js` is covered by `'self'`.
+- Styles are not restricted.
 
 ## Fragments
 

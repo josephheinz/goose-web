@@ -62,9 +62,11 @@ var statics: Static[>..<];
 var errors = 0;
 var has_state = false;
 var has_state_init = false;
+var has_config = false;
 var has_not_found = false;
 var not_found_csrf = false;
 var uses_sqlite = false;
+var uses_keys = false;   // code or templates call web::login, web::session or the signed cookie functions
 var map_text: u8[>..];
 var gen_root: u8[>..];
 // gweb test must never touch BUILD_DIR: a built server or a running gweb dev depends on it.
@@ -147,6 +149,11 @@ fn takes_res(src: const u8[:], name: const u8[:]) -> bool {
 }
 
 fn mentions_csrf(src: const u8[:]) -> bool { find(src, "web::csrf_") >= 0 }
+
+fn mentions_keys(src: const u8[:]) -> bool {
+    for w in ["web::login", "web::session", "web::signed_cookie", "web::set_signed_cookie"] { if find(src, w) >= 0 { return true; } }
+    return false;
+}
 
 // True when code declares const CSRF in route.goose; reports a malformed declaration, or any in a page.goose.
 fn csrf_const(path: const u8[:], code: const u8[:], route: bool) -> bool {
@@ -234,6 +241,9 @@ fn scan_dir(rel: const u8[:], todo: u8[..512][>..]&) {
         }
         else if name == "state.goose" {
             if rel.len == 0 { has_state = true; } else { err(full, 0, "state.goose belongs in app/ only"); }
+        }
+        else if name == "config.goose" {
+            if rel.len == 0 { has_config = true; } else { err(full, 0, "config.goose belongs in app/ only"); }
         }
     }
     if d.route && d.page_html { err(path, 0, "a folder has route.goose or page.html, not both"); }
@@ -380,6 +390,7 @@ fn scan() {
     errors = 0;
     has_state = false;
     has_state_init = false;
+    has_config = false;
     has_not_found = false;
     if !is_dir("app") { err("app", 0, "no app/ folder here; run gweb in a project, or gweb new <dir>"); return; }
     scan_app();
@@ -448,6 +459,7 @@ fn copy_prefixed_forms(src: const u8[:], ns: const u8[:], code: u8[>..]&, forms:
     if imports_sqlite(code) { uses_sqlite = true; }
     var extra: u8[>..] = [];
     if forms { form_decoders(src, code, extra); }
+    if mentions_keys(code) { uses_keys = true; }
     var out: u8[>..] = [];
     format(out, "namespace ", ns, "; ");
     if extra.len > 0 {
@@ -608,7 +620,10 @@ fn scan_lib_for_sqlite() {
                 if full.len < 512 { var t: u8[..512] = ""; t.append(full); todo.push(t); }
             } else if ends_with(name, ".goose") {
                 var code: u8[>..] = [];
-                if read_file(full, code) && imports_sqlite(code) { uses_sqlite = true; }
+                if read_file(full, code) {
+                    if imports_sqlite(code) { uses_sqlite = true; }
+                    if mentions_keys(code) { uses_keys = true; }
+                }
             }
         }
     }
@@ -1529,7 +1544,7 @@ fn gen_main() -> u8[>..] {
     m.append("import web from \""); lit(m, pkg_source(0)); m.append("\";\n");
     m.append("import net from \""); lit(m, pkg_source(1)); m.append("\";\n");
     if uses_sqlite { m.append("import sqlite from \""); lit(m, pkg_source(2)); m.append("\";\n"); }
-    m.append("import net.http;\nimport web.template;\nimport web.static;\nimport web.owner;\nimport web.form;\nimport web.csrf;\nimport web.valid;\nimport web.upload;\nimport web.errors;\n");
+    m.append("import net.http;\nimport web.template;\nimport web.static;\nimport web.owner;\nimport web.form;\nimport web.csrf;\nimport web.valid;\nimport web.upload;\nimport web.errors;\nimport web.crypto;\nimport web.session;\nimport web.rate;\nimport web.cors;\n");
     for d in dirs {
         if d.route { format(m, "import ", d.route_ns, ";\n"); }
         if d.page_html { format(m, "import ", d.page_ns, "_html;\n"); if d.page_goose { format(m, "import ", d.page_ns, ";\n"); } }
@@ -1539,6 +1554,7 @@ fn gen_main() -> u8[>..] {
         if d.loading { format(m, "import ", d.loading_ns, ";\n"); }
     }
     if has_not_found { m.append("import nf;\n"); }
+    if has_config { m.append("import config;\n"); }
     if has_state {
         m.append("import state;\n");
         m.append("fn state::ask(ctx: const web::Ctx&, msg: state::Msg) -> state::Reply, bool {\n");
@@ -1574,8 +1590,10 @@ thread_fn crash_reply(slot: i64, cfg: web::Config, attempt: i64) {
             var ctx = web::new_ctx(slot, -1);
             var res = http::new_response();
             error_reply(web::inflight_route_of(slot), attempt, req, ctx, res, abort_text);
+            ctx.auth = cfg.auth;
             web::apply_cookies(ctx, res);
-            web::dev_inject(res, cfg.dev_id);
+            web::apply_security(ctx, res, cfg);
+            web::dev_inject(res, cfg.dev_id, "");
             http::send_response(web::inflight_conn(slot), res, req.method == http::Method.Head, false);
         },
         _ => web::plain_500(slot),
@@ -1606,6 +1624,10 @@ thread_fn supervisor(slot: i64, server: net::Socket, owner_fd: i32, cfg: web::Co
 
 fn main() {
     let cfg = web::config_from_args();
+""");
+    if uses_keys { m.append("    if cfg.auth.keys.n == 0 { print(\"goose-web: set WEB_SECRET (32 to 64 bytes; openssl rand -hex 32)\"); exit(2); }\n"); }
+    if has_config { m.append("    if !config::check() { exit(2); }\n"); }
+    m.append("""
     let server = net::listen(cfg.port, cfg.host, 1024);
     guard server.ok() else { print("goose-web: cannot listen on port ", cfg.port, ": ", net::last_error()); exit(1); }
     web::inflight_init(cfg.workers, cfg.dev_id != 0);
@@ -1771,6 +1793,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     make_dir(root);
     map_text.clear();
     uses_sqlite = false;
+    uses_keys = false;
     component_errors = 0;
     uses_fragments = false;
     targets.clear();
@@ -1809,7 +1832,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
             var imports: u8[>..] = [];
             var frags: u8[>..] = [];
             var text: u8[>..] = [];
-            if read_file(src, text) { d.layout_csrf = mentions_csrf(text); }
+            if read_file(src, text) { d.layout_csrf = mentions_csrf(text); if mentions_keys(text) { uses_keys = true; } }
             add_default_imports(imports);
             gen_template(src, d.layout_ns, d.layout_ns,
                          "fn render<F>(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&)", imports, K_LAYOUT, -1, frags);
@@ -1857,7 +1880,10 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
             var src: u8[>..] = [];
             app_path(src, d.rel, "page.html");
             var html: u8[>..] = [];
-            if read_file(src, html) && mentions_csrf(html) { d.page_csrf = true; }
+            if read_file(src, html) {
+                if mentions_csrf(html) { d.page_csrf = true; }
+                if mentions_keys(html) { uses_keys = true; }
+            }
             var base: u8[>..] = [];
             format(base, d.page_ns, "_html");
             let sig = if d.has_load { "fn render<P>(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&, props: const P&)" }
@@ -1870,7 +1896,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     not_found_csrf = false;
     if has_not_found {
         var text: u8[>..] = [];
-        if read_file("app/not-found.html", text) { not_found_csrf = mentions_csrf(text); }
+        if read_file("app/not-found.html", text) { not_found_csrf = mentions_csrf(text); if mentions_keys(text) { uses_keys = true; } }
         var imports: u8[>..] = [];
         add_default_imports(imports);
         var frags: u8[>..] = [];
@@ -1883,6 +1909,12 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
             for name in ["handle"] { if !defines(code, name) { err("app/state.goose", 0, "state.goose needs fn handle(msg: const Msg&) -> Reply"); } }
             if find(code, "enum Msg") < 0 && find(code, "struct Msg") < 0 { err("app/state.goose", 0, "state.goose needs a type named Msg"); }
             if find(code, "struct Reply") < 0 && find(code, "enum Reply") < 0 { err("app/state.goose", 0, "state.goose needs a type named Reply"); }
+        }
+    }
+    if has_config {
+        var code: u8[>..] = [];
+        if copy_prefixed("app/config.goose", "config", code) {
+            if !defines(code, "check") { err("app/config.goose", 0, "config.goose needs fn check() -> bool"); }
         }
     }
     check_targets();
@@ -2471,7 +2503,7 @@ fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
 <p>No page at {req.path}.</p>
 
 """],
-        [".gitignore", ".gooseweb/\n.gooseweb.dev/\n.gooseweb.test/\n"],
+        [".gitignore", ".gooseweb/\n.gooseweb.dev/\n.gooseweb.test/\n.env*.local\n"],
         ["public/site.css", """
 body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; }
 nav a { margin-right: 1rem; }

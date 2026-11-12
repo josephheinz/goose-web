@@ -16,6 +16,15 @@ struct Params { n: i64, names: u8[..32][8], values: u8[..256][8],
 
 enum Outcome { Continue, NotFound, Redirect, Error, Done }
 
+// Declared here, before Ctx and Config use them (DESIGN-ADDENDUM-13, D2).
+struct Keys { n: i64 = 0, k: u8[..64][4] = [""; 4] }   // the first key signs, all verify
+struct AuthConfig { keys: Keys = Keys { .. }, idle: i64 = 86400, max: i64 = 2592000, trust_proxy: bool = false }
+
+// A signed session cookie, loaded lazily by web::session (DESIGN-ADDENDUM-13, D4).
+enum SessionState { Unread, Absent, Valid }
+struct Session { state: SessionState = SessionState.Unread, sid: u8[..22] = "", uid: i64 = 0, ver: i64 = 0,
+                 iat: i64 = 0, exp: i64 = 0, remember: bool = false, data: u8[..256] = "" }
+
 // Ctx holds no references or slices, so a handler may shrink res while it still reads req and ctx.
 struct Ctx {
     params: Params,
@@ -34,7 +43,12 @@ struct Ctx {
     upload_dir: u8[..256] = "",       // where multipart_begin puts them (Config.upload_dir); set by run_worker
     route: i64 = -1,                  // the dispatcher's matched dir index; finish picks the nearest error.html with it
     error_status: i64 = 0,            // web::fail's status and message, read by the generated error_reply
-    error_message: u8[..512] = ""
+    error_message: u8[..512] = "",
+    auth: AuthConfig = AuthConfig { .. }, // copied from Config by run_worker; the keys live here so handlers need no globals
+    session: Session = Session { .. },
+    conn_fd: i32 = -1,        // the worker's connection, for rate::client_ip
+    default_headers: bool = true,   // false: the handler writes its own frame and sniffing headers
+    nonce: u8[..24] = ""      // the CSP nonce; "" until run_worker or web::csp_begin makes it
 }
 
 // A file of a multipart post (web::upload). Lives here because Ctx holds it.
@@ -50,7 +64,9 @@ struct Config { port: i64, host: u8[..64], workers: i64, log: bool, idle_ms: i64
                 dev_id: i64,        // 0 = off
                 max_upload: i64,    // multipart bodies may be this large (--max-upload)
                 spool_over: i64,    // a multipart body over this many bytes is spooled to a file
-                upload_dir: u8[..256] }   // spool and upload files (--upload-dir); one server per dir
+                upload_dir: u8[..256],    // spool and upload files (--upload-dir); one server per dir
+                auth: AuthConfig,
+                security_headers: bool, hsts: i64, csp: i64 }   // csp: 0 off, 1 on, 2 report-only
 
 fn no_params() -> Params { Params { n: 0, names: [""; 8], values: [""; 8] } }
 
@@ -358,23 +374,35 @@ fn default_workers() -> i64 {
 fn default_config() -> Config {
     Config { port: 3000, host: "0.0.0.0", workers: default_workers(), log: false,
              idle_ms: 5000, max_body: 1048576, dev_id: 0,
-             max_upload: 33554432, spool_over: 65536, upload_dir: ".gooseweb.uploads" }
+             max_upload: 33554432, spool_over: 65536, upload_dir: ".gooseweb.uploads",
+             auth: AuthConfig { .. }, security_headers: true, hsts: 0, csp: 0 }
 }
 
 // Reads --port N, --host H, --workers N, --log, --idle-ms N, --max-body N, --max-upload N, --upload-dir D,
-// and the PORT and WEB_WORKERS environment variables (flags win).
+// --csp, and the PORT, WEB_WORKERS, WEB_SECRET, WEB_SESSION_IDLE, WEB_SESSION_MAX, WEB_TRUST_PROXY,
+// WEB_SECURITY_HEADERS, WEB_HSTS and WEB_CSP environment variables (flags win), after loading the .env files.
+// Exits with status 2 on a bad .env file, secret, session lifetime, WEB_HSTS or WEB_CSP.
 fn config_from_args() -> Config {
     var cfg = default_config();
+    var envname: u8[>..] = [];
+    var env_err: u8[>..] = [];
+    var dev = false;
+    for arg in args() { if arg == "--dev-id" { dev = true; } }
+    c_setenv("GWEB_ENV", if dev { "development" } else { "production" });
+    environment(envname);
+    if !load_env_files(envname, env_err) { print(env_err); exit(2); }
     var e: u8[>..] = [];
     if env("PORT", e) { let p, ok = parse_int(trim(e)); if ok { cfg.port = p; } }
     e.clear();
     if env("WEB_WORKERS", e) { let w, ok = parse_int(trim(e)); if ok && w > 0 { cfg.workers = w; } }
     let a = args();
+    var csp_flag = false;
     var i = 1;
     while i < a.len {
         let flag = a[i];
         let has_value = i + 1 < a.len;
         if flag == "--log" { cfg.log = true; i += 1; continue; }
+        if flag == "--csp" { csp_flag = true; i += 1; continue; }
         if has_value {
             let v = a[i + 1];
             let n, ok = parse_int(v);
@@ -388,10 +416,298 @@ fn config_from_args() -> Config {
             if flag == "--host" { cfg.host.clear(); cfg.host.append(v[..min(v.len, 64)]); i += 2; continue; }
         }
         print("unknown or incomplete flag: ", flag);
-        print("flags: --port N --host H --workers N --log --idle-ms N --max-body N --max-upload N --upload-dir D (--dev-id N: gweb dev only)");
+        print("flags: --port N --host H --workers N --log --idle-ms N --max-body N --max-upload N --upload-dir D --csp (--dev-id N: gweb dev only)");
         exit(2);
     }
+    var secret_err: u8[>..] = [];
+    e.clear();
+    if env("WEB_SECRET", e) && trim(e).len > 0 {
+        if !parse_secret(e, cfg.auth.keys, secret_err) { print(secret_err); exit(2); }
+    } else if cfg.dev_id != 0 {
+        if !dev_secret(cfg.auth.keys, secret_err) { print(secret_err); exit(2); }
+    }
+    cfg.auth.idle = env_positive("WEB_SESSION_IDLE", cfg.auth.idle);
+    cfg.auth.max = env_positive("WEB_SESSION_MAX", cfg.auth.max);
+    cfg.auth.trust_proxy = env_bool("WEB_TRUST_PROXY", false);
+    cfg.security_headers = env_bool("WEB_SECURITY_HEADERS", true);
+    cfg.hsts = env_nonneg("WEB_HSTS", 0);
+    cfg.csp = env_csp("WEB_CSP");
+    if csp_flag { cfg.csp = 1; }
     return cfg;
+}
+
+// ---------------------------------------------------------------- secrets and env (DESIGN-ADDENDUM-13)
+
+// Fills buf from the OS; 1 on success, 0 when refused (more than 256 bytes).
+extern fn c_entropy(buf: u8[:]) -> i32 = "gweb_entropy";
+
+let B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+let HEX_LOWER = "0123456789abcdef";
+
+// base64url without padding, appended to out.
+fn b64url(out: u8[>..]&, data: const u8[:]) {
+    var i = 0;
+    while i + 2 < data.len {
+        let n = ((data[i] as i64) << 16) | ((data[i + 1] as i64) << 8) | (data[i + 2] as i64);
+        out.push(B64URL[(n >> 18) & 63]);
+        out.push(B64URL[(n >> 12) & 63]);
+        out.push(B64URL[(n >> 6) & 63]);
+        out.push(B64URL[n & 63]);
+        i += 3;
+    }
+    let rest = data.len - i;
+    if rest == 1 {
+        let n = (data[i] as i64) << 16;
+        out.push(B64URL[(n >> 18) & 63]);
+        out.push(B64URL[(n >> 12) & 63]);
+    } else if rest == 2 {
+        let n = ((data[i] as i64) << 16) | ((data[i + 1] as i64) << 8);
+        out.push(B64URL[(n >> 18) & 63]);
+        out.push(B64URL[(n >> 12) & 63]);
+        out.push(B64URL[(n >> 6) & 63]);
+    }
+}
+
+// ---- env files and typed env
+
+extern fn c_setenv(name: const u8[:], value: const u8[:]) -> i32 = "gweb_setenv";
+
+// Appends GWEB_ENV, or "production" when it is unset or empty.
+fn environment(out: u8[>..]&) {
+    let before = out.len;
+    env("GWEB_ENV", out);
+    if out.len == before { out.append("production"); }
+}
+
+fn env_str(name: const u8[:], out: u8[>..]&) -> bool { return env(name, out); }
+
+fn env_int(name: const u8[:], fallback: i64) -> i64 {
+    var e: u8[>..] = [];
+    if !env(name, e) { return fallback; }
+    let n, ok = parse_int(trim(e));
+    if ok { return n; }
+    return fallback;
+}
+
+fn lower_is(s: const u8[:], word: const u8[:]) -> bool {
+    if s.len != word.len { return false; }
+    for i in s.len {
+        var c = s[i];
+        if c >= 'A' && c <= 'Z' { c = (c + 32) as u8; }
+        if c != word[i] { return false; }
+    }
+    return true;
+}
+
+// 1/true/yes/on and 0/false/no/off, case-insensitive; fallback when unset or anything else.
+fn env_bool(name: const u8[:], fallback: bool) -> bool {
+    var e: u8[>..] = [];
+    if !env(name, e) { return fallback; }
+    let t = trim(e);
+    for w in ["1", "true", "yes", "on"] { if lower_is(t, w) { return true; } }
+    for w in ["0", "false", "no", "off"] { if lower_is(t, w) { return false; } }
+    return fallback;
+}
+
+fn env_required(name: const u8[:]) -> bool {
+    var e: u8[>..] = [];
+    if env(name, e) { return true; }
+    var msg: u8[>..] = [];
+    format(msg, "config: ", name, " is not set\n");
+    write_stderr(msg);
+    return false;
+}
+
+// Only a positive integer replaces fallback; a bad lifetime is a startup error, not a silent default.
+fn env_positive(name: const u8[:], fallback: i64) -> i64 {
+    var e: u8[>..] = [];
+    if !env(name, e) || trim(e).len == 0 { return fallback; }
+    let n, ok = parse_int(trim(e));
+    if ok && n > 0 { return n; }
+    print(name, " must be a positive whole number of seconds");
+    exit(2);
+    return fallback;
+}
+
+// Like env_positive, but 0 is allowed.
+fn env_nonneg(name: const u8[:], fallback: i64) -> i64 {
+    var e: u8[>..] = [];
+    if !env(name, e) || trim(e).len == 0 { return fallback; }
+    let n, ok = parse_int(trim(e));
+    if ok && n >= 0 { return n; }
+    print(name, " must be a whole number of seconds, 0 or more");
+    exit(2);
+    return fallback;
+}
+
+// 1 for 1/true/yes/on, 2 for report-only, 0 for unset, empty or 0/false/no/off; anything else is a startup error.
+fn env_csp(name: const u8[:]) -> i64 {
+    var e: u8[>..] = [];
+    if !env(name, e) || trim(e).len == 0 { return 0; }
+    let t = trim(e);
+    if lower_is(t, "report-only") { return 2; }
+    for w in ["1", "true", "yes", "on"] { if lower_is(t, w) { return 1; } }
+    for w in ["0", "false", "no", "off"] { if lower_is(t, w) { return 0; } }
+    print(name, " must be 1, 0 or report-only");
+    exit(2);
+    return 0;
+}
+
+fn env_name_start(c: u8) -> bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
+fn env_name_byte(c: u8) -> bool { return env_name_start(c) || (c >= '0' && c <= '9'); }
+
+// One .env line: 0 skipped (blank or comment), 1 a pair (name and value appended), -1 malformed.
+// An optional "export " prefix; the value is trimmed and one pair of matching quotes removed; # inside a value is kept.
+fn parse_env_line(line: const u8[:], name: u8[>..]&, value: u8[>..]&) -> i64 {
+    let t = trim(line);
+    if t.len == 0 || t[0] == '#' { return 0; }
+    var i = 0;
+    if starts_with(t, "export ") {
+        i = 7;
+        while i < t.len && t[i] == ' ' { i += 1; }
+    }
+    let start = i;
+    while i < t.len && env_name_byte(t[i]) { i += 1; }
+    if i == start || !env_name_start(t[start]) || i >= t.len || t[i] != '=' { return -1; }
+    let v = trim(t[i + 1..]);
+    name.append(t[start..i]);
+    if v.len >= 2 && (v[0] == '"' || v[0] == '\'') && v[v.len - 1] == v[0] {
+        value.append(v[1..v.len - 1]);
+    } else {
+        value.append(v);
+    }
+    return 1;
+}
+
+// std::split, which web::split (the path splitter) shadows in this namespace.
+fn split_on(s: const u8[:], sep: u8) -> const u8[:][>..] {
+    var out: const u8[:][>..] = [];
+    var start = 0;
+    for c, i in s {
+        if c == sep { out.push(s[start..i]); start = i + 1; }
+    }
+    out.push(s[start..]);
+    return out;
+}
+
+// Sets every pair in the file that is not already set, so the real environment and earlier files win.
+// A missing file is skipped. False, with err set to "path:N: error: ...", on a malformed line.
+fn load_env_file(path: const u8[:], err: u8[>..]&) -> bool {
+    var text: u8[>..] = [];
+    if !read_file(path, text) { return true; }
+    for line, i in split_on(text, '\n') {
+        var name: u8[>..] = [];
+        var value: u8[>..] = [];
+        let r = parse_env_line(line, name, value);
+        if r < 0 {
+            format(err, path, ":", i + 1, ": error: expected NAME=value");
+            return false;
+        }
+        if r == 1 && c_setenv(name, value) == 0 {
+            format(err, path, ":", i + 1, ": error: cannot set ", name);
+            return false;
+        }
+    }
+    return true;
+}
+
+// dir is "" for the working directory, else a folder path without a trailing slash.
+fn load_env_files_in(dir: const u8[:], envname: const u8[:], err: u8[>..]&) -> bool {
+    if envname.len == 0 || envname.len > 32 { format(err, "GWEB_ENV: invalid name"); return false; }
+    for c in envname {
+        if !env_name_byte(c) && c != '-' { format(err, "GWEB_ENV: invalid name"); return false; }
+    }
+    for k in 4 {
+        if k == 1 && envname == "test" { continue; }   // tests must not depend on a developer's local overrides
+        var path: u8[>..] = [];
+        if dir.len > 0 { format(path, dir, "/"); }
+        if k == 0 { format(path, ".env.", envname, ".local"); }
+        else if k == 1 { path.append(".env.local"); }
+        else if k == 2 { format(path, ".env.", envname); }
+        else { path.append(".env"); }
+        if !load_env_file(path, err) { return false; }
+    }
+    return true;
+}
+
+// Order: .env.<env>.local, .env.local (not for test), .env.<env>, .env; the first to set a name wins.
+fn load_env_files(envname: const u8[:], err: u8[>..]&) -> bool {
+    return load_env_files_in("", envname, err);
+}
+
+// ---- secrets
+
+// Parses WEB_SECRET: 1 to 4 comma-separated keys of 32 to 64 bytes. False, with err set, otherwise; err never holds key bytes.
+fn parse_secret(text: const u8[:], keys: Keys&, err: u8[>..]&) -> bool {
+    keys.n = 0;
+    for item, i in split_on(trim(text), ',') {
+        let k = trim(item);
+        if i >= 4 { format(err, "WEB_SECRET: more than 4 keys"); keys.n = 0; return false; }
+        if k.len == 0 { format(err, "WEB_SECRET: key ", i + 1, " is empty"); keys.n = 0; return false; }
+        if k.len < 32 { format(err, "WEB_SECRET: key ", i + 1, " is shorter than 32 bytes"); keys.n = 0; return false; }
+        if k.len > 64 { format(err, "WEB_SECRET: key ", i + 1, " is longer than 64 bytes"); keys.n = 0; return false; }
+        keys.k[i].clear();
+        keys.k[i].append(k);
+        keys.n = i + 1;
+    }
+    return keys.n > 0;
+}
+
+// gweb dev only: a stable key in .gooseweb.dev/secret keeps sessions alive across rebuilds. 32 random bytes as 64 hex digits.
+fn dev_secret(keys: Keys&, err: u8[>..]&) -> bool {
+    var text: u8[>..] = [];
+    var ignored: u8[>..] = [];
+    if read_file(".gooseweb.dev/secret", text) && parse_secret(text, keys, ignored) { return true; }
+    var raw: u8[..32] = [0; 32];
+    if c_entropy(raw) == 0 { format(err, "goose-web: cannot read system entropy for the dev secret"); return false; }
+    var hex: u8[>..] = [];
+    for b in raw {
+        hex.push(HEX_LOWER[(b >> 4) as i64]);
+        hex.push(HEX_LOWER[(b & 15) as i64]);
+    }
+    make_dir(".gooseweb.dev");
+    write_file(".gooseweb.dev/secret", hex);   // a write failure only costs session persistence across restarts
+    return parse_secret(hex, keys, err);
+}
+
+// ---- security headers and CSP (DESIGN-ADDENDUM-13)
+
+// 16 random bytes as 22 b64url bytes in ctx.nonce; true without change when already set. False when entropy fails.
+fn make_nonce(ctx: Ctx&) -> bool {
+    if ctx.nonce.len > 0 { return true; }
+    var raw: u8[..16] = [0; 16];
+    if c_entropy(raw) == 0 { return false; }
+    var enc: u8[>..] = [];
+    b64url(enc, raw);
+    ctx.nonce.append(enc);
+    return true;
+}
+
+// For a subtree's `before`: turns the CSP on for this request even when WEB_CSP is off.
+fn csp_begin(ctx: Ctx&) -> bool { return make_nonce(ctx); }
+
+// Appends the default security headers, HSTS and CSP; false, with a bare 500, when they do not fit beside res.headers.
+fn apply_security(ctx: Ctx&, res: http::Response&, cfg: const Config&) -> bool {
+    var hdrs: u8[>..] = [];
+    if cfg.security_headers && ctx.default_headers {
+        hdrs.append("X-Content-Type-Options: nosniff\r\n");
+        hdrs.append("Referrer-Policy: strict-origin-when-cross-origin\r\n");
+        hdrs.append("X-Frame-Options: SAMEORIGIN\r\n");
+    }
+    if cfg.hsts > 0 { format(hdrs, "Strict-Transport-Security: max-age=", cfg.hsts, "; includeSubDomains\r\n"); }
+    if ctx.nonce.len > 0 && starts_with(res.content_type, "text/html") {
+        // csp_begin with WEB_CSP off asks for enforcement.
+        hdrs.append(if cfg.csp == 2 { "Content-Security-Policy-Report-Only: " } else { "Content-Security-Policy: " });
+        format(hdrs, "script-src 'self' 'nonce-", ctx.nonce, "'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'\r\n");
+    }
+    if hdrs.len > res.headers.cap - res.headers.len {
+        res.headers.clear();
+        http::json_error(res, http::Status.InternalServerError, "response headers too large");
+        return false;
+    }
+    res.headers.append(hdrs);
+    return true;
 }
 
 // ---------------------------------------------------------------- the worker loop
@@ -448,9 +764,16 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                             res.status = http::Status.PermanentRedirect;
                             http::set_header(res, "Location", to);
                         } else {
-                            static_index = D(req, ctx, res);
-                            if !apply_cookies(ctx, res) { static_index = -1; }
-                            if !ctx.fragment { dev_inject(res, cfg.dev_id); }
+                            ctx.auth = cfg.auth;
+                            ctx.conn_fd = conn.fd;
+                            if cfg.csp != 0 && !make_nonce(ctx) {
+                                http::json_error(res, http::Status.InternalServerError, "csp nonce unavailable");
+                            } else {
+                                static_index = D(req, ctx, res);
+                                if !apply_cookies(ctx, res) { static_index = -1; }
+                                if !apply_security(ctx, res, cfg) { static_index = -1; }
+                                if !ctx.fragment { dev_inject(res, cfg.dev_id, ctx.nonce); }
+                            }
                         }
                     },
                     Reject r => http::json_error(res, r.status, http::reason(r.status)),
@@ -505,9 +828,10 @@ fn dev_status(res: http::Response&, dev_id: i64) {
 // Appends the dev script that polls /__gweb/id: reload on a new id, error overlay otherwise.
 // Two overlay slots: sys (build failed or server down; the poll sets and clears it) and isl
 // (page errors; cleared by a click or reload). sys shows first.
-fn dev_inject(res: http::Response&, dev_id: i64) {
+fn dev_inject(res: http::Response&, dev_id: i64, nonce: const u8[:]) {
     if dev_id == 0 || !starts_with(res.content_type, "text/html") { return; }
-    format(res.body, "<script>(function(){var id=\"", dev_id, "\",fails=0,box,sys=\"\",isl=\"\";\n");
+    if nonce.len > 0 { format(res.body, "<script nonce=\"", nonce, "\">"); } else { res.body.append("<script>"); }
+    format(res.body, "(function(){var id=\"", dev_id, "\",fails=0,box,sys=\"\",isl=\"\";\n");
     res.body.append("""function draw(){var t=sys||isl;if(!t){if(box){box.remove();box=null}return}""");
     res.body.push('\n');
     res.body.append("""if(!box){box=document.createElement("pre");box.style.cssText="position:fixed;inset:0;margin:0;padding:24px;background:rgba(20,0,0,.92);color:#fff;font:13px/1.5 monospace;white-space:pre-wrap;overflow:auto;z-index:2147483647";box.onclick=function(){isl="";draw()};document.body.appendChild(box)}""");
