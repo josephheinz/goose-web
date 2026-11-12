@@ -27,7 +27,8 @@ struct Ctx {
     redirect_status: i64,
     location: u8[..1024],
     title: u8[..256],
-    set_cookies: u8[..2048]   // pending Set-Cookie lines; run_worker moves them to res
+    set_cookies: u8[..2048],  // pending Set-Cookie lines; run_worker moves them to res
+    status: i64 = 0           // a page's status override; 0 = none (set_status, unprocessable)
 }
 
 struct Config { port: i64, host: u8[..64], workers: i64, log: bool, idle_ms: i64, max_body: i64,
@@ -276,6 +277,11 @@ fn html(res: http::Response&, status: http::Status) {
 fn json(res: http::Response&, status: http::Status) { http::json_reply(res, status); }
 
 fn not_found(ctx: Ctx&) { ctx.outcome = Outcome.NotFound; }
+
+// The generated page function applies a nonzero status after rendering, while the outcome is Continue.
+fn set_status(ctx: Ctx&, code: i64) { ctx.status = code; }
+
+fn unprocessable(ctx: Ctx&) { ctx.status = 422; }
 
 fn redirect(ctx: Ctx&, to: const u8[:], status: i64 = 302) {
     ctx.outcome = Outcome.Redirect;
