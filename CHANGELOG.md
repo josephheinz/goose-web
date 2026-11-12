@@ -7,6 +7,7 @@
 - Behaviour change: `public/` files are now tried before every route for GET and HEAD. A public file that an `[id]` route at the same depth used to shadow is now served. A route that has the same URL as a public file is still a build error.
 - A route folder deeper than 16 folders is now a build error; it was silently never matched.
 - Keyed morph: `gw-key` keeps element identity and focus when list items move, appear or disappear.
+- SQLite writes: the owner-thread writer pattern, documented, with the shop's `/db/todos` demo; needs goose-sqlite v0.2.0.
 
 ## v0.1.1
 

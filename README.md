@@ -189,8 +189,18 @@ goose build -o gweb cli/gweb.goose
 
 Apps can read SQLite through the sibling package
 [goose-sqlite](https://github.com/josephheinz/goose-sqlite): write `import sqlite;` in a `lib/` or `app/`
-file, and `gweb` declares the package. Each worker opens its own read-only
-connection with `sqlite::local(path)`. See `../examples/shop/lib/shopdb.goose`.
+file, and `gweb` declares the package. Each worker opens its own connection: `sqlite::local(path)` for a
+database nobody writes, or `sqlite::local(path, sqlite::Mode.QueryOnly)` for one the app writes. See
+`../examples/shop/lib/shopdb.goose`.
+
+**Writes.** Workers never write. The owner thread in `app/state.goose` holds the one writer, `sqlite::writer(path)`,
+and a worker sends it a typed `Msg`. The owner binds, runs and commits each write as one
+`sqlite::begin` / `sqlite::commit` transaction, and replies with a row or an error code. A worker that
+aborts mid-transaction would keep its write lock; an abort on the owner ends the process instead.
+`state::init` runs `sqlite::migrate` and exits when that fails, so the schema is ready before the first request.
+The app maps `sqlite::busy` to 503, `sqlite::constraint` to 409 and a missing row to 404. Commits use
+`synchronous=NORMAL`; pass `durable: true` to `writer` to survive a power loss. See
+`../examples/shop/lib/todosdb.goose`.
 
 ## Cookies
 
