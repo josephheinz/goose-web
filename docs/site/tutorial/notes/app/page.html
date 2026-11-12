@@ -1,0 +1,13 @@
+<h1>Notes</h1>
+<form method="post" action="/" gw-target="notes">@web::csrf_field(ctx)
+<div>@CharCount(props.counter)</div>
+<button>Add</button>
+</form>
+<div id="notes">{#fragment notes}
+{#if props.error.len > 0}<p class="error">{props.error}</p>{/if}
+<ul>
+{#for n in props.reply.notes}
+<li gw-key="{n.id}">{n.text}</li>
+{/for}
+</ul>
+{/fragment}</div>
