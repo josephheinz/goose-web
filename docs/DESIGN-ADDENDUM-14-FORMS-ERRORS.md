@@ -392,3 +392,39 @@ Every step: work only in the named worktree; commit locally, never push. Find `g
 5. **Text fields are not trimmed.** Default: kept as typed; "Required." checks the trimmed value. Trimming would also trim passwords.
 6. **A crash closes the crashed worker's other keep-alive connections.** Default: yes; the alternative is today's leak.
 7. **`error.html` per folder, rendered in the layouts above it.** Default: yes, nearest wins, like Next.js.
+
+## Build log
+
+Builders: Sonnet, medium effort, one step each. The first passes ran without a compiler. Once `goose` v2026.4 was installed, one more pass compiled every step and fixed what failed. All suites below pass on the branch head.
+
+| Step | Commits | Tests |
+|---|---|---|
+| 1 goose-net spool | goose-net e58a8fb | `spool.sh` 25/25, `test_net.goose` 142/142 |
+| 2 `web::valid` | 7a8e0ef, 2acc1c1, 0fd5d29 | `valid_test` 117/117 |
+| 3 uploads | 15feb1f, d08e16f | `upload_test` 656/656, `upload_c.sh` 61/61 |
+| 4 form decoders | c34115d | `forms.sh` 55/55 |
+| 5 error pages, crash replies | 6986fd2, 2a0e34a, a449267 | `errors.sh` 56/56, `inflight_c.sh` 42/42 |
+| 5b `Outcome.Done`, `res` | 4cf204c | in `errors.sh` |
+| 6 `gwi.js`, `loading.html` | 3e8c2d8, 70bad7e | `frag.sh` 17/17, `morph.sh` 21/21, `fragments.sh` 82/82 (338d38f) |
+| 7 dev excerpts | 70bad7e, 3efada7 | in `errors.sh` |
+| 8 docs | 5fc81cc | none |
+
+Older suites still pass: `components.sh` 46/46, `templates.sh` 33/33, `catchall.sh` 50/50, and the cookie, csrf, catch-all and owner tests. I did not run `release_check.sh`.
+
+Experiments:
+- E1: the abort text is `index 5 out of bounds (length 3) (<abs>/.gooseweb/p6_crash.goose:11)`, with and without `--debug`. `gweb dev` keeps a normal build. Integer-overflow aborts were not tried.
+- E2 to E4 work as designed: `Upload[..8]` in `Ctx`, `@web::invalid` in a start tag, and a second contained thread function.
+- Benchmark (`ab -k -c 32`, 2 workers, plaintext): about 101k req/s on main and on the branch. The difference is within noise, well under the 2% stop line.
+
+Deviations from the design:
+- `form_text<T>` is generic over the field type. `u8[>..]&` does not accept a `u8[..N]` field, and `.cap` is missing on it.
+- Upload temp-dir sweep runs once in the generated `main` (`web::prepare_uploads`), not in a worker.
+- `error_reply` takes the abort text as a trailing argument. The dev flag lives in `src/inflight.c`, not in a Goose global.
+- A page that calls `web::fail` must `import web.errors;`. Templates get `web.valid` by default, and `error.html` also gets `web.errors`.
+- `gw-loading="none"` applies to links. A form opts in with a bare `gw-loading`.
+- Hidden `gweb dev --once` (one dev build, then exit) exists for the excerpt test.
+- `set_uploads` treats `max_upload <= 0` as off.
+- D14 (`Outcome.Done`) was added mid-build, at the auth-security architect's request.
+- Not built: component error boundaries (section 6). They wait for Addendum 12.
+
+Merge notes: the generated `main.goose` needs a goose-net that has the spool API (`GWEB_NET` points at goose-net `arch/forms-errors` until that merges). `Ctx`, `Config`, `Outcome`, `run_worker`, the supervisor and `gwi.js` `frag()` overlap with the auth-security, operations and reactivity branches. `gwi.min.js` is now 3,931 of 4,096 bytes.
