@@ -334,3 +334,33 @@ Common rules for every builder:
 5. **App readiness hook.** None (chosen), or an optional `fn ready() -> bool` in `app/state.goose` that `/__gweb/ready` calls through the owner.
 6. **Logs over OTLP.** stdout only, with trace ids in each line (chosen), or also export logs to the collector.
 7. **Version.** These features are a minor release, v0.3.0 (chosen).
+
+## Build log
+
+Branch `arch/operations` in all three repos. Nothing pushed. A Goose compiler (v2026.4) arrived mid-build; every step was then compiled and tested. Docker is not installed.
+
+| Step | Repo, commits | Tested |
+|---|---|---|
+| A1 lifecycle | goose-net `20f9ef9`, `02ac9e4` (SIGPIPE ignore on inherited listeners) | C 43 checks; `test_net` 151/151 |
+| A2 loop drain | goose-net `d98a7a6` | C 32 checks; `test_net` |
+| B1 `obs.c` | goose-web `db0ed83` | C 85 + 8 checks, also under TSan and ASan/UBSan |
+| B2 `otel.c` | goose-web `8419977` | C 154 checks against a fake collector |
+| B3 `jobs.c` | goose-web `0cb3cd0` | C 184 checks, TSan and ASan/UBSan |
+| B4 Goose runtime | goose-web `7e46e70`, fixes `8c32f93` | `ops_unit` 78, `owner_test`, C owner 14 |
+| B5 codegen | goose-web `89dcd17`, plus a newline fix in the build-log commit | all suites; `ops.sh` |
+| B6 `test/ops.sh` | goose-web `4f074e4` | 72/72, 6 serial and 3 parallel runs |
+| B7 deploy, docs, Linux audit | goose-web `dc488ff`; goose-sqlite `5cd1cf0` (`strlcpy` breaks glibc < 2.38) | not run: no Docker, no Linux |
+
+Suites on the final tree: components 46/46, templates 33/33, fragments 82/82, catchall 50/50, morph 21/21, cookie 59/59, csrf 52/52, catchall_test 62/62, ops 72/72, goose-sqlite all pass. Not run: `release_check.sh` and `linux.sh` (worktree layout and Docker), systemd units, Docker image, OTLP against a real collector, cron inside a running site, Linux paths (`/proc/self/exe`, `close_range`, glibc/musl).
+
+Deviations, each recorded in the commits:
+- `Level` lives in `web.goose`, since `run_worker` needs it. `config_from(a)` is split out of `config_from_args` for tests and copies `args()` (Goose does not convert `u8[:][>..]` to `(const u8[:])[:]`).
+- `run_worker` takes the `\n`-joined `ROUTES` as a defaulted parameter; `/__gweb/metrics` is served from `run_worker`.
+- App metric names starting `gweb_` are refused; gauges take f64.
+- macOS: `SO_ACCEPTCONN` is unsupported, so `listen_inherited` falls back to a `getpeername` check there; a no-op SIGCHLD handler keeps the signal pending for `sigwait`.
+- `http::serve` also returns on `Stopped`.
+- Cron DST: a local time that does not exist is skipped; a repeated one fires once, at its first occurrence. `*/n` in day-of-month or day-of-week counts as unrestricted for the OR rule, as in Vixie cron.
+- `job_push` refuses once `net::stopping()`; schedule errors set `Schedules.bad` and `main` exits 1.
+- The text access line prints the status as `200 OK`, as the old line did.
+
+Found, not fixed: `accept_all` in goose-net `loop.c` returns on any accept error, so `EMFILE` would spin the loop.

@@ -1482,7 +1482,7 @@ thread_fn supervisor(slot: i64, server: net::Socket, owner_fd: i32, cfg: web::Co
     web::owner_leave(chans);
 }
 """);
-    if has_jobs { gen_job_threads(m); }
+    if has_jobs { m.append("\n"); gen_job_threads(m); }
     gen_main_fn(m);
     return m;
 }
