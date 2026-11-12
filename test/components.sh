@@ -10,6 +10,8 @@
 #    and compact.
 # 3. Each test/components/Fail*.gshtml, alone in a project, must fail gweb build
 #    with the line its `// expect: ` comment gives.
+# 4. gweb test leaves .gooseweb/ alone: the built server and main.goose keep
+#    their checksums across a test run.
 #
 # Needs node, and gweb built beside this folder (goose build -o gweb cli/gweb.goose).
 set -u
@@ -53,6 +55,25 @@ for f in "$HERE"/components/Fail*.gshtml; do
     esac
   fi
 done
+
+# 4. gweb test leaves .gooseweb/ alone.
+mkdir -p "$WORK/keep"
+cp -R "$WORK/ok/app" "$WORK/ok/components" "$WORK/keep/"
+if "$GWEB" -C "$WORK/keep" test >/dev/null 2>&1; then
+  if [ -e "$WORK/keep/.gooseweb" ]; then bad "gweb test created .gooseweb/"; else ok; fi
+  if [ -x "$WORK/keep/.gooseweb.test/parity/components_test" ]; then ok; else bad "gweb test did not write .gooseweb.test/parity/components_test"; fi
+else
+  bad "gweb test in a project with no .gooseweb/"
+fi
+if "$GWEB" -C "$WORK/keep" build >/dev/null 2>&1; then
+  before=$(cksum "$WORK/keep/.gooseweb/server" "$WORK/keep/.gooseweb/main.goose")
+  if "$GWEB" -C "$WORK/keep" test >/dev/null 2>&1; then ok; else bad "second gweb test"; fi
+  after=$(cksum "$WORK/keep/.gooseweb/server" "$WORK/keep/.gooseweb/main.goose")
+  if [ "$before" = "$after" ]; then ok; else bad "gweb test changed .gooseweb/server or main.goose"; fi
+  if [ -x "$WORK/keep/.gooseweb/server" ]; then ok; else bad ".gooseweb/server is not executable after gweb test"; fi
+else
+  bad "gweb build in the keep project"
+fi
 
 echo "components.sh: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

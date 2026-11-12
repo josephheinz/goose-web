@@ -60,6 +60,10 @@ var has_not_found = false;
 var not_found_csrf = false;
 var uses_sqlite = false;
 var map_text: u8[>..];
+var gen_root: u8[>..];
+// gweb test must never touch BUILD_DIR: a built server or a running gweb dev depends on it.
+let TEST_DIR = ".gooseweb.test";
+let BUILD_DIR = ".gooseweb";
 var component_names: u8[..64][>..<];
 var component_lines: i64[>..<];
 var component_errors = 0;              // translator errors of this gen; the build still runs goose
@@ -420,7 +424,7 @@ fn copy_prefixed(src: const u8[:], ns: const u8[:], code: u8[>..]&) -> bool {
     var out: u8[>..] = [];
     format(out, "namespace ", ns, "; ", code);
     var dst: u8[>..] = [];
-    format(dst, ".gooseweb/", ns, ".goose");
+    format(dst, gen_root, "/", ns, ".goose");
     write(dst, out);
     format(map_text, ns, ".goose\t", src, "\n");
     return true;
@@ -723,7 +727,7 @@ fn gen_template(src_path: const u8[:], ns: const u8[:], file_base: const u8[:], 
         wrap = frags.len > 0;
     }
     var dst: u8[>..] = [];
-    format(dst, ".gooseweb/", file_base, ".goose");
+    format(dst, gen_root, "/", file_base, ".goose");
     write(dst, out);
     format(map_text, file_base, ".goose\t", src_path, "\n");
 }
@@ -1412,18 +1416,24 @@ fn push_gw_static(url: const u8[:], file: const u8[:], data: const u8[:]) {
 }
 
 fn gen_runtime(dev: bool) {
-    make_dir(".gooseweb/_gw");
+    var gw_dir: u8[>..] = [];
+    format(gw_dir, gen_root, "/_gw");
+    make_dir(gw_dir);
     var rt: u8[>..] = [];
     runtime_js(!dev, rt);
-    write(".gooseweb/_gw/gwi.js", rt);
-    push_gw_static("/_gw/gwi.js", ".gooseweb/_gw/gwi.js", rt);
+    var js_path: u8[>..] = [];
+    format(js_path, gw_dir, "/gwi.js");
+    write(js_path, rt);
+    push_gw_static("/_gw/gwi.js", js_path, rt);
 }
 
 // gen goes on after translator errors, so the Goose compiler reports its errors too.
 fn gen_components(dev: bool) {
     component_lines.clear();
     if component_names.len == 0 { return; }
-    make_dir(".gooseweb/_gw");
+    var gw_dir: u8[>..] = [];
+    format(gw_dir, gen_root, "/_gw");
+    make_dir(gw_dir);
     for n in component_names {
         var path: u8[>..] = [];
         format(path, "components/", n, ".gshtml");
@@ -1444,11 +1454,11 @@ fn gen_components(dev: bool) {
             if e.len == 0 { component_errors += 1; }
         }
         var dst: u8[>..] = [];
-        format(dst, ".gooseweb/", n, ".goose");
+        format(dst, gen_root, "/", n, ".goose");
         write(dst, g);
         format(map_text, n, ".goose\t", path, "\n");
         dst.clear();
-        format(dst, ".gooseweb/_gw/", n, ".js");
+        format(dst, gw_dir, "/", n, ".js");
         write(dst, j);
         var url: u8[>..] = [];
         format(url, "/_gw/", n, ".js");
@@ -1456,11 +1466,13 @@ fn gen_components(dev: bool) {
     }
 }
 
-fn gen(dev: bool) -> bool {
+fn gen(dev: bool, root: const u8[:]) -> bool {
     scan();
     if errors > 0 { return false; }
-    c_remove_tree(".gooseweb");
-    make_dir(".gooseweb");
+    gen_root.clear();
+    gen_root.append(root);
+    c_remove_tree(root);
+    make_dir(root);
     map_text.clear();
     uses_sqlite = false;
     component_errors = 0;
@@ -1468,7 +1480,11 @@ fn gen(dev: bool) -> bool {
     targets.clear();
     gen_components(dev);
     if is_dir("lib") { scan_lib_for_sqlite(); }
-    if is_dir("lib") { c_symlink("../lib", ".gooseweb/lib"); }
+    if is_dir("lib") {
+        var lib_link: u8[>..] = [];
+        format(lib_link, root, "/lib");
+        c_symlink("../lib", lib_link);
+    }
     for &d, di in dirs {
         if d.route {
             var src: u8[>..] = [];
@@ -1551,8 +1567,12 @@ fn gen(dev: bool) -> bool {
     check_targets();
     if errors > 0 { return false; }
     if component_names.len > 0 || uses_fragments { gen_runtime(dev); }
-    write(".gooseweb/main.goose", gen_main());
-    write(".gooseweb/map.txt", map_text);
+    var main_file: u8[>..] = [];
+    format(main_file, root, "/main.goose");
+    write(main_file, gen_main());
+    var map_file: u8[>..] = [];
+    format(map_file, root, "/map.txt");
+    write(map_file, map_text);
     return errors == 0;
 }
 
@@ -1573,7 +1593,7 @@ fn rewrite_errors(text: const u8[:], cwd: const u8[:]) -> u8[>..] {
         if !ok { continue; }
         for absolute in [true, false] {
             var from: u8[>..] = [];
-            if absolute { format(from, abs, ".gooseweb/", gen_name); } else { format(from, ".gooseweb/", gen_name); }
+            if absolute { format(from, abs, gen_root, "/", gen_name); } else { format(from, gen_root, "/", gen_name); }
             var next: u8[>..] = [];
             format_replaced(next, cur, from, src);
             cur.clear();
@@ -1581,7 +1601,7 @@ fn rewrite_errors(text: const u8[:], cwd: const u8[:]) -> u8[>..] {
         }
     }
     var lib_from: u8[>..] = [];
-    format(lib_from, abs, ".gooseweb/lib/");
+    format(lib_from, abs, gen_root, "/lib/");
     var next: u8[>..] = [];
     format_replaced(next, cur, lib_from, "lib/");
     cur.clear();
@@ -1613,7 +1633,7 @@ fn component_lines_back(text: const u8[:]) -> u8[>..] {
             if !ok || num <= component_lines[i] { continue; }
             done = true;
             var gen_path: u8[>..] = [];
-            format(gen_path, ".gooseweb/", n, ".goose");
+            format(gen_path, gen_root, "/", n, ".goose");
             var code: u8[>..] = [];
             var src_line = -1;
             if read_file(gen_path, code) {
@@ -1638,7 +1658,7 @@ fn component_lines_back(text: const u8[:]) -> u8[>..] {
 fn build(debug: bool, dev: bool) -> bool {
     let t0 = clock();
     last_errors.clear();
-    if !gen(dev) { return false; }
+    if !gen(dev, BUILD_DIR) { return false; }
     var cwd: u8[>..] = [];
     c_cwd(cwd);
     var cmd: u8[>..] = [];
@@ -1647,11 +1667,11 @@ fn build(debug: bool, dev: bool) -> bool {
     if debug { cmd.append("--debug "); }
     cmd.append("-o ");
     var bin: u8[>..] = [];
-    format(bin, cwd, "/.gooseweb/server");
+    format(bin, cwd, "/", BUILD_DIR, "/server");
     shq(cmd, bin);
     cmd.push(' ');
     var main_path: u8[>..] = [];
-    format(main_path, cwd, "/.gooseweb/main.goose");
+    format(main_path, cwd, "/", BUILD_DIR, "/main.goose");
     shq(cmd, main_path);
     var out: u8[>..] = [];
     let status = c_run(cmd, out);
@@ -1682,12 +1702,14 @@ fn build(debug: bool, dev: bool) -> bool {
 // ---------------------------------------------------------------- test
 
 fn test_cmd() -> bool {
-    if !gen(false) { return false; }
+    if !gen(false, TEST_DIR) { return false; }
     if component_errors > 0 { write_stderr("gweb test: fix the component errors above\n"); return false; }
     if component_names.len == 0 { write_stdout("gweb test: no components/*.gshtml here\n"); return true; }
     var probe: u8[>..] = [];
     if c_run("command -v node", probe) != 0 { write_stderr("gweb test needs node\n"); return false; }
-    make_dir(".gooseweb/test");
+    var parity: u8[>..] = [];
+    format(parity, TEST_DIR, "/parity");
+    make_dir(parity);
     var main: u8[>..] = [];
     main.append("// Generated by gweb test. Prints each case: its name, the state as JSON, the render.\n");
     main.append("import std;\nimport os;\n");
@@ -1701,7 +1723,7 @@ fn test_cmd() -> bool {
     for mode in 2 {
         let compact = mode == 1;
         var dir: u8[>..] = [];
-        format(dir, ".gooseweb/test/js-", if compact { "compact" } else { "pretty" });
+        format(dir, parity, "/js-", if compact { "compact" } else { "pretty" });
         make_dir(dir);
         var rt: u8[>..] = [];
         runtime_js(compact, rt);
@@ -1736,30 +1758,42 @@ fn test_cmd() -> bool {
                        n, "::render(out, s); out.append(\"\\n== end\\n\"); }\n");
             }
             var link: u8[>..] = [];
-            format(link, ".gooseweb/test/", n, ".goose");
+            format(link, parity, "/", n, ".goose");
             var target: u8[>..] = [];
             format(target, "../", n, ".goose");
             c_symlink(target, link);
         }
     }
     main.append("    write_stdout(out);\n}\n");
-    write(".gooseweb/test/main.goose", main);
+    var parity_main: u8[>..] = [];
+    format(parity_main, parity, "/main.goose");
+    write(parity_main, main);
     var cwd: u8[>..] = [];
     c_cwd(cwd);
     var cmd: u8[>..] = [];
     goose_cmd(cmd);
     cmd.append(" build --color never -o ");
     var bin: u8[>..] = [];
-    format(bin, cwd, "/.gooseweb/test/components_test");
+    format(bin, cwd, "/", parity, "/components_test");
     shq(cmd, bin);
     cmd.push(' ');
     var mp: u8[>..] = [];
-    format(mp, cwd, "/.gooseweb/test/main.goose");
+    format(mp, cwd, "/", parity_main);
     shq(cmd, mp);
     var out: u8[>..] = [];
     if c_run(cmd, out) != 0 {
         var fixed: u8[>..] = [];
-        format_replaced(fixed, out, ".gooseweb/test/", ".gooseweb/");
+        fixed.append(out);
+        for n in component_names {
+            var from: u8[>..] = [];
+            format(from, parity, "/", n, ".goose");
+            var to: u8[>..] = [];
+            format(to, TEST_DIR, "/", n, ".goose");
+            var next: u8[>..] = [];
+            format_replaced(next, fixed, from, to);
+            fixed.clear();
+            fixed.append(next);
+        }
         write_stderr(rewrite_errors(fixed, cwd));
         write_stderr("gweb test: the parity program did not build\n");
         return false;
@@ -1772,13 +1806,20 @@ fn test_cmd() -> bool {
         write_stderr("\ngweb test: the Goose side of a test stopped (an abort, such as a full u8[..N])\n");
         return false;
     }
-    write(".gooseweb/test/goose.out", out);
+    var goose_out: u8[>..] = [];
+    format(goose_out, parity, "/goose.out");
+    write(goose_out, out);
     var mjs: u8[>..] = [];
     format(mjs, "const COMPONENTS = [", mjs_components, "];\n");
     mjs.append(RUN_MJS);
-    write(".gooseweb/test/run.mjs", mjs);
+    var run_mjs: u8[>..] = [];
+    format(run_mjs, parity, "/run.mjs");
+    write(run_mjs, mjs);
     out.clear();
-    let status = c_run("node .gooseweb/test/run.mjs", out);
+    var node_cmd: u8[>..] = [];
+    node_cmd.append("node ");
+    shq(node_cmd, run_mjs);
+    let status = c_run(node_cmd, out);
     write_stdout(out);
     return status == 0;
 }
@@ -2062,7 +2103,7 @@ fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
 <p>No page at {req.path}.</p>
 
 """],
-        [".gitignore", ".gooseweb/\n.gooseweb.dev/\n"],
+        [".gitignore", ".gooseweb/\n.gooseweb.dev/\n.gooseweb.test/\n"],
         ["public/site.css", """
 body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; }
 nav a { margin-right: 1rem; }
@@ -2118,7 +2159,7 @@ fn main() {
     if cmd == "version" { print_version(); return; }
     check_version();
     if cmd == "new" { if rest.len != 1 { usage(); } scaffold(rest[0]); return; }
-    if cmd == "gen" { if !gen(false) || component_errors > 0 { exit(1); } write_stdout("gweb: wrote .gooseweb/\n"); return; }
+    if cmd == "gen" { if !gen(false, BUILD_DIR) || component_errors > 0 { exit(1); } write_stdout("gweb: wrote .gooseweb/\n"); return; }
     if cmd == "test" { if !test_cmd() { exit(1); } return; }
     if cmd == "build" { if !build(rest.len > 0 && rest[0] == "--debug", false) { exit(1); } return; }
     if cmd == "routes" { print_routes(); return; }

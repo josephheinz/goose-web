@@ -156,7 +156,7 @@ gweb build [--debug]         gen, then goose build to .gooseweb/server
 gweb start [flags]           build and run (--port N --workers N --log --idle-ms N --max-body N)
 gweb dev [flags]             build, run with --log on 2 workers and port 60053 (unless --port), rebuild on change
 gweb routes                  the route table (GET,POST and a frag line for each fragment)
-gweb test                    component parity: test_* functions as Goose and as JavaScript
+gweb test                    component parity: test_* functions as Goose and as JavaScript (writes .gooseweb.test/; leaves .gooseweb/ alone)
 gweb version                 the gweb version and the package sources it declares
 ```
 
@@ -379,7 +379,8 @@ under `gweb build` and `gweb start`. The runtime is `client/gwi.js` in dev and
 
 **`gweb test`.** Runs each component's `test_*` functions (each takes only
 `s: State&`), plus a `zero` case, as Goose and as JavaScript, pretty and
-compact, and compares the state and the render byte for byte. Needs `node`.
+compact, and compares the state and the render byte for byte. Needs `node`. It generates into `.gooseweb.test/`, so a built
+`.gooseweb/server` and a running `gweb dev` are untouched.
 goose-web's own suite is `test/components.sh` (parity components in
 `test/components/*.gshtml`, one `Fail*.gshtml` per error message, and a check that
 `client/gwi.min.js` is current). `test/morph.sh` runs the DOM morph under jsdom (it installs jsdom
