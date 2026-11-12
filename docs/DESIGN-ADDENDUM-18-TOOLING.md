@@ -92,7 +92,7 @@ josephheinz/goose-widgets@v0.2.0
 
 - **Sources.** A path (relative to the project, or absolute), or `owner/repo@tag`. A git source is cloned once with `git clone --depth 1 --branch TAG https://github.com/OWNER/REPO` into `$GWEB_PKG_CACHE/OWNER/REPO@TAG` (default `~/.cache/gweb/pkgs/`), and reused after that. `gweb` never updates a cached tag.
 - **Components** join the project's flat namespace. A name that two sources define is a build error naming both files.
-- **Routes.** `at /prefix` grafts the package's `app/` at `app/prefix/`. The prefix is one or more literal folder names (no `[id]`, no catch-all, not `/`). The project must have no `app/prefix/` folder. Layouts and middleware above the mount point wrap the package's pages, as for any folder. A package without `at` must have no `app/`.
+- **Routes.** `at /prefix` grafts the package's `app/` at `app/prefix/`. The prefix is one or more literal folder names (no `[id]`, no catch-all, not `/`). The project must have no `app/prefix/` folder. A mount may sit inside another package's mount (`/admin/shop` inside `/admin`, for CMS admin modules) when that package has no `app/shop/` folder; two mounts with the same prefix are an error. A package folder inside the project's `app/`, `components/`, `lib/` or `public/` is an error. Layouts and middleware above the mount point wrap the package's pages, as for any folder. A package without `at` must have no `app/`.
 - **Public files** of a mounted package are served under the prefix (`public/x.css` at `/prefix/x.css`). A package without `at` must have no `public/`.
 - **Goose code.** The package's `lib/` is linked at `<root>/NAME` in the output folder, so package code writes `import NAME.users;` (with `namespace NAME;` or below it, as lib modules do now). A package's own route and page files are compiled as app files, with gweb's namespaces.
 - **Refused in a package:** `app/state.goose`, `app/not-found.html` (one owner and one 404 page per app). Errors name the package path.
@@ -119,7 +119,7 @@ josephheinz/goose-widgets@v0.2.0
 
 ## Risks
 
-- **`goose lsp` is unverified.** It may not accept generated files sent by `didChange`, may reject symlinked `lib`, or may only speak UTF-16. The fallback (D3.6) keeps diagnostics working on save. The proxy is tested against a fake `goose lsp`.
+- **`goose lsp` (checked with v2026.4).** It accepts unsaved generated text by `didOpen` and `didChange`, but only when `initializationOptions.entryFiles` names `.gooseweb.lsp/main.goose`; without it every import fails. It answers `utf-16` even when `utf-8` is offered, so the server converts. It resolves symlinks, so the server sends real paths. The fallback (D3.6) stays for machines without it.
 - **Speed.** `lsp-gen` runs a whole `gen` per pause in typing. Fine for small apps; a per-file gen is a later optimisation.
 - **Merge conflicts.** Steps 1, 3 and 6 edit `cli/gweb.goose`, which most sibling architects also edit. Keep edits local to the functions named.
 - **Docs drift** between README and `docs/site/`. Step 8 removes the duplication before 1.0.
@@ -218,3 +218,13 @@ Differences from the design, kept:
 - `Dir.root` holds the folder of that directory, not the `app` base.
 
 First things to check with a compiler: `goose build -o gweb cli/gweb.goose`, then `test/srcmap.sh`, `test/packages.sh`, `test/tutorial.sh`, `test/components.sh`, `test/release_check.sh`; then `gweb lsp` against a real `goose lsp` (position encoding, `didChange` on generated files, the symlinked `lib`).
+
+### Compiled and tested (Goose v2026.4)
+
+| Change | Commit |
+|---|---|
+| Two §9.2 re-binding fixes in package parsing | `4ea0ad7` |
+| Server sends `entryFiles`, starts `goose lsp` after the first `lsp-gen`, uses real paths, sends `didChangeWatchedFiles`; `test/lsp/real_test.mjs` runs against the real `goose lsp` | `a0bf770` |
+| Nested package mounts (CMS design D11), any depth, line order free | `fd5b820` |
+
+All suites pass: components 46, templates 33, srcmap 4, packages 32, tutorial 21, lsp 23 (6 against the real `goose lsp`), fragments 82, catchall 50, morph 21, and `release_check.sh`. Generated `.goose` files match main's byte for byte; only `srcmap.txt` is new.
