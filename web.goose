@@ -7,6 +7,7 @@ import std;
 import os;
 import net;   // the root file declares it: import net from "OWNER/goose-net@<tag>";
 import net.http;
+import net.hub;
 import json;
 
 // ---------------------------------------------------------------- types
@@ -15,6 +16,9 @@ struct Params { n: i64, names: u8[..32][8], values: u8[..256][8],
                 rest_name: u8[..32] = "", rest: u8[..1024] = "" }   // the catch-all tail has its own, larger field
 
 enum Outcome { Continue, NotFound, Redirect }
+
+// What run_worker does with the connection after the handler: hand it to the hub as an SSE stream or a WebSocket.
+enum Detach { None, Stream, WebSocket }
 
 // Fixed-size fields, so Ctx stays free of references; the setters in meta.goose cut at a UTF-8 boundary.
 struct Meta { description: u8[..320] = "", canonical: u8[..512] = "", image: u8[..512] = "", robots: u8[..64] = "" }
@@ -31,18 +35,25 @@ struct Ctx {
     location: u8[..1024],
     title: u8[..256],
     meta: Meta,
-    set_cookies: u8[..2048]   // pending Set-Cookie lines; run_worker moves them to res
+    set_cookies: u8[..2048],  // pending Set-Cookie lines; run_worker moves them to res
+    conn_fd: i32 = -1,        // the request's socket, for web::stream_begin
+    streamed: bool = false,   // the handler sent its own reply through a Stream
+    hub: u64 = 0,             // 0 = no hub in this build
+    detach: Detach = Detach.None,
+    topic: u8[..64] = "",
+    heartbeat: u8[..64] = ""
 }
 
 struct Config { port: i64, host: u8[..64], workers: i64, log: bool, idle_ms: i64, max_body: i64,
                 dev_id: i64,    // 0 = off
-                export_dir: u8[..512] }   // "" = serve; else the generated main writes the site here and exits
+                export_dir: u8[..512],   // "" = serve; else the generated main writes the site here and exits
+                hub: u64 = 0 }          // the net::Hub handle; 0 when the app uses no streams or WebSockets
 
 fn no_params() -> Params { Params { n: 0, names: [""; 8], values: [""; 8] } }
 
-fn new_ctx(worker: i64, owner_fd: i32) -> Ctx {
+fn new_ctx(worker: i64, owner_fd: i32, hub: u64 = 0) -> Ctx {
     Ctx { params: no_params(), worker: worker, owner_fd: owner_fd, outcome: Outcome.Continue,
-          redirect_status: 302, location: "", title: "", meta: Meta { .. }, set_cookies: "" }
+          redirect_status: 302, location: "", title: "", meta: Meta { .. }, set_cookies: "", hub: hub }
 }
 
 // ---------------------------------------------------------------- params and query
@@ -375,6 +386,10 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                 var keep = false;
                 var static_index = -1;
                 var dev_request = false;
+                var streamed = false;
+                var detach = Detach.None;
+                var topic: u8[..64] = "";
+                var heartbeat: u8[..64] = "";
                 match parsed {
                     Ready => {
                         keep = http::wants_keep_alive(req);
@@ -390,9 +405,14 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                             res.status = http::Status.PermanentRedirect;
                             http::set_header(res, "Location", to);
                         } else {
-                            var ctx = new_ctx(slot, owner_fd);
+                            var ctx = new_ctx(slot, owner_fd, cfg.hub);
+                            ctx.conn_fd = conn.fd;
                             static_index = D(req, ctx, res);
-                            if !apply_cookies(ctx, res) { static_index = -1; }
+                            if !apply_cookies(ctx, res) { static_index = -1; ctx.detach = Detach.None; }
+                            streamed = ctx.streamed;
+                            detach = ctx.detach;
+                            topic.append(ctx.topic);
+                            heartbeat.append(ctx.heartbeat);
                             if !ctx.fragment { dev_inject(res, cfg.dev_id); }
                         }
                     },
@@ -400,6 +420,24 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                     Closed => {},
                 }
                 let head_only = req.method == http::Method.Head;
+                // A stream wrote its own reply; the connection survives only if its body was framed (chunked) and keep-alive was asked for.
+                if streamed {
+                    if !(keep && http::supports_chunked(req)) { lp.close_connection(conn); }
+                    continue;
+                }
+                // The hub owns the socket after the head is out; a failed head or a full hub closes it.
+                if detach != Detach.None {
+                    var rest: u8[>..] = [];
+                    let kind = if detach == Detach.Stream { net::HubKind.Stream } else { net::HubKind.WebSocket };
+                    let head_ok = if detach == Detach.Stream { http::begin_chunked(conn, res, false, false, true) }
+                                  else { http::send_head(conn, res, "Upgrade") };
+                    if head_ok {
+                        lp.detach(conn, rest);
+                        net::add(net::Hub { handle: cfg.hub }, conn, kind, topic, rest, heartbeat);
+                    } else { lp.close_connection(conn); }
+                    if cfg.log { print("[", slot, "] ", req.method_text, " ", req.target, " -> ", res.status, " (", if detach == Detach.Stream { "stream" } else { "websocket" }, ")"); }
+                    continue;
+                }
                 let sent = if static_index >= 0 {
                     http::send_response_with(conn, res, S(static_index), head_only, keep)
                 } else {
