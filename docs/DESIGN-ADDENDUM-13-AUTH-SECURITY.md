@@ -318,7 +318,9 @@ fn before(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) -> bo
 3. **Lifetimes.** Idle 24 hours, absolute 30 days (default). A CMS admin may want shorter.
 4. **Default headers.** On for every response (default). They add about 110 bytes per response.
 5. **429 reason phrase.** Add `TooManyRequests` to goose-net's `Status` (a goose-net release), or keep `429 Unknown` (default for now)?
-6. **Proxy trust.** `X-Forwarded-For` is used only with `WEB_TRUST_PROXY=1`, but the CSRF and session cookie names already trust `X-Forwarded-Proto` unconditionally. Should that also move behind `WEB_TRUST_PROXY`? Default: leave CSRF as Addendum 7 shipped it.
+6. **A page `fn POST` cannot end the reply.** Found in step 6: `gen_page_fn` renders whenever `ctx.outcome` is `Continue`, so a 429 or 500 written by `rate_limit` or `login` in a page POST gets the page appended. Default: login forms post to a `route.goose` (the fixture does). A fix is an `Outcome.Done` variant that `gen_page_reply` and `finish` skip; that touches the forms-errors architect's ground, so I left it.
+7. **Per-user login limit.** `rate_limit_key` on the username lets anyone lock a user out for a minute with 5 bad tries. Default: keep it in the example (it caps guessing across many addresses); an app can drop it.
+8. **Proxy trust.** `X-Forwarded-For` is used only with `WEB_TRUST_PROXY=1`, but the CSRF and session cookie names already trust `X-Forwarded-Proto` unconditionally. Should that also move behind `WEB_TRUST_PROXY`? Default: leave CSRF as Addendum 7 shipped it.
 
 ## 4. Build plan
 
@@ -377,3 +379,25 @@ Each step: commit locally, never push, edit only inside the worktree. With no Go
 - **Default headers change every response's bytes** (headers only, not bodies; `/products/42` body stays identical).
 - **The `.gooseweb.dev/secret` file** is readable by other local users; it is for development only, and production refuses to start without `WEB_SECRET`.
 - **Linux:** `getentropy` needs glibc 2.25+ and `<sys/random.h>` there; the platform architect owns Linux builds.
+
+## Build log
+
+Branch `arch/auth-security`, cut from main, rebased onto v0.2.1. No Goose compiler on this machine (`$GOOSE` unset, none on PATH): **no Goose file in this work was compiled or run.** The C parts were compiled and tested with `cc`.
+
+| Step | Commit | Tested |
+|---|---|---|
+| 1. Crypto core | 4bec8b4 | C: `test/crypto_test.c` 59 of 59 (NIST, RFC 4231, PBKDF2 and RFC 7914 vectors, padding edges), also under ASan/UBSan. PBKDF2 at 600,000: about 420 ms here. Goose wrappers and `crypto_test.goose` untested. |
+| 2. Env, secrets, config | 89bd41b, 854a067 | C: `test/env_test.c` 12 of 12 (`gweb_setenv`). Goose `.env` loader, `WEB_SECRET` parsing, dev secret, gweb scans and `env_test.goose` untested. |
+| 3. Signed cookies, sessions, passwords | 9d3ace8, 4ef0ff2 | Untested (Goose only). |
+| 4. Rate limits | c5eeed0 | C: `test/rate_test.c` 18 checks, also under TSan (8 threads, exactly the limit allowed). `rate.goose` and its test untested. |
+| 5. Headers, CSP, CORS | dcf5da2 | Untested (Goose only). |
+| 6. Fixture, `auth.sh`, docs | 8c9b503 | `sh -n` on `auth.sh` and `release_check.sh`. The fixture's password hash checked against Python's `hashlib`. The suite itself untested. |
+
+Review notes and fixes:
+- Step 2: `env_required` printed to stdout; changed to stderr (854a067). `Keys`, `AuthConfig` and `Session` sit before `Ctx` in `web.goose`, not in the secrets section, in case Goose needs declaration before use. A blank `WEB_SECRET=` counts as unset; a bad `WEB_SESSION_IDLE` or `WEB_SESSION_MAX` exits 2.
+- Step 3: `login` now refuses a negative `uid` or `ver`, which the digits-only parser would never load (4ef0ff2). MACs are compared as base64url text against a fresh encoding, so a non-canonical encoding never verifies. A refreshed `remember` cookie keeps `Max-Age = iat + max - now`. A session refresh followed by `login` or `logout` in the same request sends two lines; the last wins.
+- Step 4: `gweb_now_ms` uses `CLOCK_MONOTONIC`. Clients with an unknown address (only in tests) share one bucket.
+- Step 5: HSTS is sent whenever `WEB_HSTS > 0`, independent of `WEB_SECURITY_HEADERS` and `ctx.default_headers`. `csp_begin` with `WEB_CSP` off enforces. `gen_main` was missing `import web.rate;`; added.
+- Step 6: login posts to `app/login/submit/route.goose` (open question 6).
+
+First things to fix when a compiler is available, by the builders' notes: passing `u8[..N]&` to extern `u8[:]` parameters, `split_once` with three results, `time() as i64`, the `$` in a string literal, reassigning a `const u8[:]` local, NUL bytes in literals, and an unreachable `return` after `exit(2)`. Then run, in order: the five Goose tests, `test/auth.sh`, `test/release_check.sh`, and `bench_shop.py` for the `Ctx` growth and the default headers.
