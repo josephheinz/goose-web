@@ -80,13 +80,24 @@ catchall_test() {
   "$WORK/catchall/catchall_test"
 }
 
+testing_test() {
+  mkdir "$WORK/testing"
+  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+      -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
+      "$HERE/testing_test.goose" > "$WORK/testing/testing_test.goose"
+  "$GOOSE" build -o "$WORK/testing/testing_test" "$WORK/testing/testing_test.goose"
+  "$WORK/testing/testing_test"
+}
+
 step cookie_test cookie_test
 step csrf_test csrf_test
 step catchall_test catchall_test
+step testing_test testing_test
 step components sh "$HERE/components.sh"
 step templates sh "$HERE/templates.sh"
 step fragments env PORT="${PORT:-3991}" sh "$HERE/fragments.sh"
 step catchall env PORT="${PORT:-3994}" sh "$HERE/catchall.sh"
+step routes sh "$HERE/routes.sh"
 
 gweb_new() {
   mkdir "$WORK/lone"

@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.3.0 (unreleased)
+
+- Route tests: `web.testing` and `tests/*.goose`, run by `gweb test` against the real dispatcher with no socket.
+
 ## v0.2.1
 
 - Fix: `gweb test` no longer deletes `.gooseweb/`; it generates into `.gooseweb.test/`. Add `.gooseweb.test/` to `.gitignore`.

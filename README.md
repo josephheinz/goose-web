@@ -53,6 +53,7 @@ goose-architect agent.
 | `app/state.goose` | State owned by the main thread: `Msg`, `Reply`, `fn handle`, optional `fn init` |
 | `lib/**.goose` | Your modules: `import lib.catalog;` (write their `namespace`) |
 | `public/**` | Static files, embedded in the binary, with ETags |
+| `tests/*.goose` | Route tests run by `gweb test` (see Route tests) |
 
 A folder named `[id]` is a dynamic segment; `[...slug]` and `[[...slug]]` are
 catch-alls (see below). Folders starting with `_` are ignored. App files get their
@@ -156,7 +157,7 @@ gweb build [--debug]         gen, then goose build to .gooseweb/server
 gweb start [flags]           build and run (--port N --workers N --log --idle-ms N --max-body N)
 gweb dev [flags]             build, run with --log on 2 workers and port 60053 (unless --port), rebuild on change
 gweb routes                  the route table (GET,POST and a frag line for each fragment)
-gweb test                    component parity: test_* functions as Goose and as JavaScript (writes .gooseweb.test/; leaves .gooseweb/ alone)
+gweb test                    component parity (test_* as Goose and JavaScript), then tests/*.goose route tests (writes .gooseweb.test/; leaves .gooseweb/ alone)
 gweb version                 the gweb version and the package sources it declares
 ```
 
@@ -323,6 +324,53 @@ page.
   (the dev overlay shows it as a `page error`). The last request per target wins.
 
 The demo is `../examples/shop/app/fragments` (`/fragments`, `/fragments/products`).
+
+## Route tests
+
+`tests/*.goose` holds route tests. `gweb test` builds them with the app's real
+dispatcher into one program and runs every `fn test_*(t: web::Tester&)` on `main`,
+after `state::init()`. Requests take the worker's code path, minus the socket.
+
+| File | Meaning |
+|---|---|
+| `tests/<name>.goose` | `<name>` is `[a-z][a-z0-9_]*`; write no `namespace`. Errors point at `tests/<name>.goose:LINE` |
+
+```goose
+// tests/todos.goose
+import std;
+import net.http;
+import web;
+import web.testing;
+
+fn test_list(t: web::Tester&) {
+    let res = site::get(t, "/api/todos");
+    web::expect_status(t, res, 200);
+    web::expect_contains(t, res.body, "\"title\"");
+}
+
+fn test_add(t: web::Tester&) {
+    site::get(t, "/fragments");                                   // sets the CSRF cookie
+    let res = site::post_form(t, "/fragments", "add=1&title=milk");
+    web::expect_status(t, res, 200);
+    web::expect_contains(t, site::get(t, "/fragments").body, "milk");
+}
+```
+
+- `site::get`, `head`, `delete(t, target)`; `post_form`, `post_json`, `put_json`, `patch_json(t, target, body)`;
+  `site::request(t, method, target, body, content_type)`. Each returns an `http::Response`.
+- `web::expect(t, ok, what)`, `expect_status`, `expect_contains(t, text, needle)`, `expect_header(t, res, name, value)`;
+  `web::header_of(res, name)` and `web::form_field(out, name, value)` help build and read messages.
+- The jar `t.cookies` keeps `Set-Cookie` values and sends them on the next request. With `t.auto_csrf` (the default) a
+  non-GET request sends the jar's `gw_csrf` as `X-CSRF-Token`, adding a fixed token when there is none. Set
+  `t.auto_csrf = false` to test a refusal. `t.headers` holds extra header lines for the next request only.
+- `state::ask` calls `state::handle` directly on `main`.
+
+Rules for authors:
+- Tests run in file order, then in source order. They share `state`, the database and the jar unless a test
+  resets `t.cookies`.
+- Point the app's database at a test file through its environment variable.
+- A test that aborts ends the run; the `== <test>` line before it names the test.
+- Tests are not part of the server: `gweb build` ignores `tests/`.
 
 ## Example
 
