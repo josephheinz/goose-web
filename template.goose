@@ -71,3 +71,13 @@ fn arg(out: u8[>..]&, v: const u8[:]) {
 }
 
 fn has(a: const u8[:], b: const u8[:]) -> bool { find(a, b) >= 0 }
+
+// The hidden _csrf input a form needs; the value is "" before web::csrf_begin.
+fn csrf_field(out: u8[>..]&, ctx: const Ctx&) {
+    out.append("<input type=\"hidden\" name=\"_csrf\" value=\"");
+    out.append(ctx.csrf);
+    out.append("\">");
+}
+
+// This page's CSRF token, for a meta tag.
+fn csrf_token(ctx: const Ctx&) -> const u8[:] { return ctx.csrf; }

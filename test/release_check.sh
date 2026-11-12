@@ -62,7 +62,17 @@ cookie_test() {
   "$WORK/cookie/cookie_test"
 }
 
+csrf_test() {
+  mkdir "$WORK/csrf"
+  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+      -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
+      "$HERE/csrf_test.goose" > "$WORK/csrf/csrf_test.goose"
+  "$GOOSE" build -o "$WORK/csrf/csrf_test" "$WORK/csrf/csrf_test.goose"
+  "$WORK/csrf/csrf_test"
+}
+
 step cookie_test cookie_test
+step csrf_test csrf_test
 step components sh "$HERE/components.sh"
 step templates sh "$HERE/templates.sh"
 step fragments env PORT="${PORT:-3991}" sh "$HERE/fragments.sh"
