@@ -26,7 +26,8 @@ publish() {
     cd "$WORK/src/$name"
     git init -q -b main
     git add -A
-    git -c user.name=release_check -c user.email=release_check@localhost commit -q -m "release rehearsal"
+    # No background gc: it repacks loose objects while the clone below copies them.
+    git -c maintenance.auto=false -c gc.auto=0 -c user.name=release_check -c user.email=release_check@localhost commit -q -m "release rehearsal"
     git tag "$TAG"
   )
   git clone -q --bare "$WORK/src/$name" "$WORK/$name.git"
