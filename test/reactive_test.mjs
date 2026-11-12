@@ -284,6 +284,20 @@ test("8 empty text value then non-empty", () => {
   synced(root, def);
 });
 
+test("8b empty text part last in its element (no end marker)", () => {
+  const def = {
+    r: (s) => `<p>a <!--g-->${e(s.t)}</p><button data-on-click="set" data-args="[&quot;hi&quot;]">s</button>`,
+    u(s, m) { const a = m & 1 && "" + s.t; return (p) => { m & 1 && T(p[0], a); }; },
+    h: { set(s, c, v) { s.t = v; c.m(1); } },
+    b: { t: 1 },
+  };
+  const root = mount(def, { t: "" });
+  click(root.querySelector("button"));
+  eq(errors.length, 0, "no error");
+  eq(root.firstChild.textContent, "a hi", "inserted");
+  synced(root, def);
+});
+
 let pass = 0, fail = 0;
 for (const [name, fn] of tests) {
   try { await fn(); pass++; console.log("PASS", name); }

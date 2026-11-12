@@ -129,7 +129,7 @@ function anchors(root) {
 }
 const tpl = (h) => { const t = D.createElement("template"); t.innerHTML = h; return t.content; };
 // Text part: the node after the marker; it is inserted when the server sent an empty value.
-export const T = (a, v) => { const n = a.nextSibling; n.nodeType == 3 ? n.data != v && (n.data = v) : a.after(v); };
+export const T = (a, v) => { const n = a.nextSibling; n?.nodeType == 3 ? n.data != v && (n.data = v) : a.after(v); };
 // Attribute part: the element after the marker takes the attribute list v.
 export const A = (a, v, f) => patch(a.nextSibling, tpl("<" + a.nextSibling.nodeName + " " + v + ">").firstChild, f, 1);
 // Block part: keyed morph between the marker and its end marker.
