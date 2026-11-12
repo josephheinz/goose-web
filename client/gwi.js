@@ -25,26 +25,60 @@ export const imod = (a, b) => {
 
 export function component(name, def) { defs[name] = def; }
 
-// Makes from's children match to's, without keys. value and checked sync after recursing so a <select>
-// has its new options first; the focused control keeps its value unless force is set.
+// A child's key is its tag plus its gw-key; a tag change under the same gw-key is a different child.
+const key = (n, k = n.getAttribute?.("gw-key")) => k && n.nodeName + " " + k;
+
+// Makes from's children match to's. A child with gw-key is matched to the old child with the same key
+// wherever it is; the others are matched in order among themselves. value and checked sync after
+// recursing so a <select> has its new options first; the focused control keeps its value unless force is set.
 function morph(from, to, force) {
+  const want = new Set(), old = new Map();
+  for (const n of to.childNodes) {
+    const k = key(n);
+    if (k) want.has(k) ? oops("duplicate gw-key " + k) : want.add(k);
+  }
+  // Old keyed children that are not wanted leave first, so every keyed child still here is claimed below.
+  for (const n of [...from.childNodes]) {
+    const k = key(n);
+    if (k) want.has(k) && !old.has(k) ? old.set(k, n) : n.remove();
+  }
   let a = from.firstChild, b = to.firstChild;
   while (b) {
-    const nb = b.nextSibling;
-    if (!a) { from.append(b); b = nb; continue; }
-    const na = a.nextSibling;
-    if (a.nodeName != b.nodeName) a.replaceWith(b);
-    else if (a.nodeType != 1) { if (a.data != b.data) a.data = b.data; }
+    const nb = b.nextSibling, k = key(b);
+    let o;
+    if (k) {
+      o = old.get(k);
+      old.delete(k);
+      if (o && o != a) {
+        // A keyed child right before its match is stepped over and placed when its own turn comes;
+        // this turns a swap or a move to the end into one move.
+        if (a?.nextSibling == o && key(a)) a = o;
+        else {
+          // insertBefore blurs a focused control inside the moved child.
+          const f = D.activeElement;
+          from.insertBefore(o, a);
+          if (f != D.activeElement) f.focus();
+        }
+      }
+    } else {
+      while (a && key(a)) a = a.nextSibling;
+      o = a;
+    }
+    if (!o) from.insertBefore(b, a);
     else {
-      for (const { name } of [...a.attributes]) if (!b.hasAttribute(name)) a.removeAttribute(name);
-      for (const { name, value } of b.attributes) if (a.getAttribute(name) != value) a.setAttribute(name, value);
-      morph(a, b, force);
-      if ("form" in a) {
-        if ((a != D.activeElement || force) && a.value != b.value) a.value = b.value;
-        a.checked = b.checked;
+      if (o == a) a = a.nextSibling;
+      if (o.nodeName != b.nodeName) o.replaceWith(b);
+      else if (o.nodeType != 1) { if (o.data != b.data) o.data = b.data; }
+      else {
+        for (const { name } of [...o.attributes]) if (!b.hasAttribute(name)) o.removeAttribute(name);
+        for (const { name, value } of b.attributes) if (o.getAttribute(name) != value) o.setAttribute(name, value);
+        morph(o, b, force);
+        if ("form" in o) {
+          if ((o != D.activeElement || force) && o.value != b.value) o.value = b.value;
+          o.checked = b.checked;
+        }
       }
     }
-    a = na;
     b = nb;
   }
   while (a) { b = a.nextSibling; a.remove(); a = b; }

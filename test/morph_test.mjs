@@ -8,11 +8,10 @@ const { JSDOM } = createRequire(process.env.JSDOM_DIR + "/")("jsdom");
 const dom = new JSDOM("<!doctype html><body><div id=root></div></body>");
 const { window } = dom, document = window.document, root = document.getElementById("root");
 
-// Pulls morph, and the key helper above it when there is one, out of a source file without importing it.
+// Pulls morph, and the key helper above it, out of a source file without importing it; v1.js has no key helper.
 function extract(path) {
   const lines = fs.readFileSync(new URL(path, here), "utf8").split("\n");
-  let s = lines.findIndex((l) => l.startsWith("const key ="));
-  if (s < 0) s = lines.findIndex((l) => l.startsWith("function morph("));
+  const s = lines.findIndex((l) => l.startsWith("const key =") || (path.endsWith("v1.js") && l.startsWith("function morph(")));
   const m = lines.findIndex((l) => l.startsWith("function morph("));
   const e = m < 0 ? -1 : lines.findIndex((l, i) => i > m && l == "}");
   if (s < 0 || m < 0 || e < 0) throw new Error("cannot extract morph from " + path);
@@ -24,7 +23,6 @@ function load(path) {
   return { morph, calls };
 }
 const N = load("../client/gwi.js"), O = load("morph/v1.js");
-const keyed = fs.readFileSync(new URL("../client/gwi.js", here), "utf8").includes("\nconst key =");
 
 const ctr = { moves: 0, ops: 0 };
 const NP = window.Node.prototype, EP = window.Element.prototype, CP = window.CharacterData.prototype;
@@ -123,116 +121,114 @@ named("2 empty gw-key is unkeyed", () => {
   eq(kept(rn), kept(ro), "identity");
 });
 
-if (keyed) {
-  named("3 rotate right", () => { const r = run(li(1, 2, 3, 4, 5), li(5, 1, 2, 3, 4)); same(r, [1, 2, 3, 4, 5]); eq(r.moves, 1, "moves"); });
-  named("4 rotate left", () => { const r = run(li(1, 2, 3, 4, 5), li(2, 3, 4, 5, 1)); same(r, [1, 2, 3, 4, 5]); eq(r.moves, 1, "moves"); });
-  named("5 adjacent swap", () => { const r = run(li(1, 2, 3), li(2, 1, 3)); same(r, [1, 2, 3]); eq(r.moves, 1, "moves"); });
-  named("6 remove first of five", () => { const r = run(li(1, 2, 3, 4, 5), li(2, 3, 4, 5)); same(r, [2, 3, 4, 5]); eq(r.moves, 0, "moves"); });
-  named("7 remove three in the middle", () => { const r = run(li(1, 2, 3, 4, 5), li(1, 5)); same(r, [1, 5]); eq(r.moves, 0, "moves"); });
-  named("8 insert at front and middle", () => { const r = run(li(1, 2, 3), li(9, 1, 8, 2, 3)); same(r, [1, 2, 3]); eq(r.moves, 0, "moves"); });
-  named("9 reverse of five", () => { const r = run(li(1, 2, 3, 4, 5), li(5, 4, 3, 2, 1)); same(r, [1, 2, 3, 4, 5]); return "moves=" + r.moves; });
-  named("10 keyed conditional before an unkeyed input", () => {
-    root.innerHTML = `<p><input name="q"></p>`;
-    const inp = root.firstChild.firstChild;
-    morphTo(N, `<p><span gw-key="err">bad</span><input name="q"></p>`);
-    eq(root.firstChild.lastChild, inp, "input after show");
-    morphTo(N, `<p><input name="q"></p>`);
-    eq(root.firstChild.firstChild, inp, "input after hide");
-  });
-  named("11 keyed conditional in the middle", () => {
-    root.innerHTML = `<label>a</label><input>`;
-    const [lab, inp] = root.childNodes;
-    morphTo(N, `<label>a</label><b gw-key="e">x</b><input>`);
-    eq(root.firstChild, lab, "label after show"); eq(root.lastChild, inp, "input after show");
-    morphTo(N, `<label>a</label><input>`);
-    eq(root.firstChild, lab, "label after hide"); eq(root.lastChild, inp, "input after hide");
-  });
-  named("12 duplicate key in new", () => {
-    const r = run(li(1), `<li gw-key="1">a</li><li gw-key="1">b</li>`);
-    eq(r.oops.length, 1, "oops calls");
-    if (!r.oops[0].includes("duplicate gw-key")) throw new Error(r.oops[0]);
-  });
-  named("13 duplicate key in old only", () => {
-    const r = run(`<li gw-key="1">a</li><li gw-key="1">b</li><li gw-key="2">c</li>`, li(2, 1));
-    eq(r.oops.length, 0, "oops");
-    eq(r.after[1], r.before[0], "first duplicate kept");
-  });
-  named("14 same key, other tag", () => {
-    const r = run(`<div gw-key="x">1</div>`, `<span gw-key="x">1</span>`);
-    if (r.after[0] === r.before[0]) throw new Error("reused");
-  });
-  named("15 whitespace between keyed items, swapped", () => {
-    const r = run(`\n<li gw-key=1>a</li>\n<li gw-key=2>b</li>\n`, `\n<li gw-key=2>b</li>\n<li gw-key=1>a</li>\n`);
-    same(r, [1, 2]);
-    if (r.moves > 2) throw new Error("moves " + r.moves);
-    return "moves=" + r.moves;
-  });
-  named("16 nested keyed lists", () => {
-    const inner = (...ks) => `<ul gw-key="L">${li(...ks)}</ul>`;
-    root.innerHTML = inner("a", "b", "c");
-    const ul = root.firstChild, [a, b, c] = ul.children;
-    morphTo(N, inner("c", "a", "b"));
-    eq(root.firstChild, ul, "outer");
-    eq(ul.children[0], c, "c"); eq(ul.children[1], a, "a"); eq(ul.children[2], b, "b");
-  });
-  named("17 keyed list between unkeyed heading and footer", () => {
-    const r = run(`<h2>T</h2>${li(1, 2, 3, 4)}<p>foot</p>`, `<h2>T2</h2>${li(4, 5, 2)}<p>foot2</p>`);
-    same(r, [2, 4]);
-    eq(r.after[0], r.before[0], "heading");
-    eq(r.after[4], r.before[5], "footer");
-  });
-  named("18 key with quote, ampersand and angle bracket", () => {
-    const k1 = `a"b&<c'`, k2 = `x&amp;y`;
-    const mk = (...ks) => ks.map((k) => `<li gw-key="${attr(k)}">v</li>`).join("");
-    const r = run(mk(k1, k2), mk(k2, k1));
-    same(r, [k1, k2]);
-    eq(r.oops.length, 0, "oops");
-  });
-  for (const force of [0, 1]) {
-    named(`${19 + force} focused text input in a moved row, force ${force}`, () => {
-      const row = (n) => `<li gw-key="${n}"><input value="row ${n}"></li>`;
-      root.innerHTML = [1, 2, 3, 4, 5].map(row).join("\n");
-      const inp = root.children[2].firstChild;
-      inp.focus();
-      inp.value = "abc";
-      eq(document.activeElement, inp, "focused before");
-      morphTo(N, [3, 1, 2, 4, 5].map(row).join("\n"), force);
-      eq(root.firstChild, inp.parentNode, "row moved");
-      eq(document.activeElement, inp, "still focused");
-      eq(inp.value, force ? "row 3" : "abc", "value");
-    });
-  }
-
-  const FUZZ = Number(process.env.FUZZ ?? 5000);
-  named(`21 fuzz ${FUZZ} cases, seed ${seed0}`, () => {
-    const check = (oa, na) => {
-      const oh = oa.join(""), nh = na.join("");
-      const r = run(oh, nh, N);
-      const ok = keysOf(oh), nk = keysOf(nh);
-      if (new Set(ok).size != ok.length || new Set(nk).size != nk.length) return;
-      const key = (n) => keyOf(n) && n.nodeName + " " + keyOf(n);
-      const bk = {}, ak = {};
-      r.before.forEach((n) => { const k = key(n); if (k) bk[k] = n; });
-      r.after.forEach((n) => { const k = key(n); if (k) ak[k] = n; });
-      for (const k of nk) if (k in bk && bk[k] !== ak[k]) throw new Error("identity lost for " + k);
-    };
-    const fails = (x, y) => { try { check(x, y); return false; } catch { return true; } };
-    for (let i = 0; i < FUZZ; i++) {
-      const oa = genArr(3, true, 8), na = genArr(3, true, 8);
-      try { check(oa, na); } catch {
-        let A = oa, B = na, again = true;
-        while (again) {
-          again = false;
-          for (let j = 0; j < A.length && !again; j++) { const c = A.filter((_, k) => k != j); if (fails(c, B)) { A = c; again = true; } }
-          for (let j = 0; j < B.length && !again; j++) { const c = B.filter((_, k) => k != j); if (fails(A, c)) { B = c; again = true; } }
-        }
-        let msg = "";
-        try { check(A, B); } catch (e) { msg = e.message; }
-        throw new Error(`case ${i}\n old: ${A.join("")}\n new: ${B.join("")}\n error: ${msg}`);
-      }
-    }
+named("3 rotate right", () => { const r = run(li(1, 2, 3, 4, 5), li(5, 1, 2, 3, 4)); same(r, [1, 2, 3, 4, 5]); eq(r.moves, 1, "moves"); });
+named("4 rotate left", () => { const r = run(li(1, 2, 3, 4, 5), li(2, 3, 4, 5, 1)); same(r, [1, 2, 3, 4, 5]); eq(r.moves, 1, "moves"); });
+named("5 adjacent swap", () => { const r = run(li(1, 2, 3), li(2, 1, 3)); same(r, [1, 2, 3]); eq(r.moves, 1, "moves"); });
+named("6 remove first of five", () => { const r = run(li(1, 2, 3, 4, 5), li(2, 3, 4, 5)); same(r, [2, 3, 4, 5]); eq(r.moves, 0, "moves"); });
+named("7 remove three in the middle", () => { const r = run(li(1, 2, 3, 4, 5), li(1, 5)); same(r, [1, 5]); eq(r.moves, 0, "moves"); });
+named("8 insert at front and middle", () => { const r = run(li(1, 2, 3), li(9, 1, 8, 2, 3)); same(r, [1, 2, 3]); eq(r.moves, 0, "moves"); });
+named("9 reverse of five", () => { const r = run(li(1, 2, 3, 4, 5), li(5, 4, 3, 2, 1)); same(r, [1, 2, 3, 4, 5]); return "moves=" + r.moves; });
+named("10 keyed conditional before an unkeyed input", () => {
+  root.innerHTML = `<p><input name="q"></p>`;
+  const inp = root.firstChild.firstChild;
+  morphTo(N, `<p><span gw-key="err">bad</span><input name="q"></p>`);
+  eq(root.firstChild.lastChild, inp, "input after show");
+  morphTo(N, `<p><input name="q"></p>`);
+  eq(root.firstChild.firstChild, inp, "input after hide");
+});
+named("11 keyed conditional in the middle", () => {
+  root.innerHTML = `<label>a</label><input>`;
+  const [lab, inp] = root.childNodes;
+  morphTo(N, `<label>a</label><b gw-key="e">x</b><input>`);
+  eq(root.firstChild, lab, "label after show"); eq(root.lastChild, inp, "input after show");
+  morphTo(N, `<label>a</label><input>`);
+  eq(root.firstChild, lab, "label after hide"); eq(root.lastChild, inp, "input after hide");
+});
+named("12 duplicate key in new", () => {
+  const r = run(li(1), `<li gw-key="1">a</li><li gw-key="1">b</li>`);
+  eq(r.oops.length, 1, "oops calls");
+  if (!r.oops[0].includes("duplicate gw-key")) throw new Error(r.oops[0]);
+});
+named("13 duplicate key in old only", () => {
+  const r = run(`<li gw-key="1">a</li><li gw-key="1">b</li><li gw-key="2">c</li>`, li(2, 1));
+  eq(r.oops.length, 0, "oops");
+  eq(r.after[1], r.before[0], "first duplicate kept");
+});
+named("14 same key, other tag", () => {
+  const r = run(`<div gw-key="x">1</div>`, `<span gw-key="x">1</span>`);
+  if (r.after[0] === r.before[0]) throw new Error("reused");
+});
+named("15 whitespace between keyed items, swapped", () => {
+  const r = run(`\n<li gw-key=1>a</li>\n<li gw-key=2>b</li>\n`, `\n<li gw-key=2>b</li>\n<li gw-key=1>a</li>\n`);
+  same(r, [1, 2]);
+  if (r.moves > 2) throw new Error("moves " + r.moves);
+  return "moves=" + r.moves;
+});
+named("16 nested keyed lists", () => {
+  const inner = (...ks) => `<ul gw-key="L">${li(...ks)}</ul>`;
+  root.innerHTML = inner("a", "b", "c");
+  const ul = root.firstChild, [a, b, c] = ul.children;
+  morphTo(N, inner("c", "a", "b"));
+  eq(root.firstChild, ul, "outer");
+  eq(ul.children[0], c, "c"); eq(ul.children[1], a, "a"); eq(ul.children[2], b, "b");
+});
+named("17 keyed list between unkeyed heading and footer", () => {
+  const r = run(`<h2>T</h2>${li(1, 2, 3, 4)}<p>foot</p>`, `<h2>T2</h2>${li(4, 5, 2)}<p>foot2</p>`);
+  same(r, [2, 4]);
+  eq(r.after[0], r.before[0], "heading");
+  eq(r.after[4], r.before[5], "footer");
+});
+named("18 key with quote, ampersand and angle bracket", () => {
+  const k1 = `a"b&<c'`, k2 = `x&amp;y`;
+  const mk = (...ks) => ks.map((k) => `<li gw-key="${attr(k)}">v</li>`).join("");
+  const r = run(mk(k1, k2), mk(k2, k1));
+  same(r, [k1, k2]);
+  eq(r.oops.length, 0, "oops");
+});
+for (const force of [0, 1]) {
+  named(`${19 + force} focused text input in a moved row, force ${force}`, () => {
+    const row = (n) => `<li gw-key="${n}"><input value="row ${n}"></li>`;
+    root.innerHTML = [1, 2, 3, 4, 5].map(row).join("\n");
+    const inp = root.children[2].firstChild;
+    inp.focus();
+    inp.value = "abc";
+    eq(document.activeElement, inp, "focused before");
+    morphTo(N, [3, 1, 2, 4, 5].map(row).join("\n"), force);
+    eq(root.firstChild, inp.parentNode, "row moved");
+    eq(document.activeElement, inp, "still focused");
+    eq(inp.value, force ? "row 3" : "abc", "value");
   });
 }
+
+const FUZZ = Number(process.env.FUZZ ?? 5000);
+named(`21 fuzz ${FUZZ} cases, seed ${seed0}`, () => {
+  const check = (oa, na) => {
+    const oh = oa.join(""), nh = na.join("");
+    const r = run(oh, nh, N);
+    const ok = keysOf(oh), nk = keysOf(nh);
+    if (new Set(ok).size != ok.length || new Set(nk).size != nk.length) return;
+    const key = (n) => keyOf(n) && n.nodeName + " " + keyOf(n);
+    const bk = {}, ak = {};
+    r.before.forEach((n) => { const k = key(n); if (k) bk[k] = n; });
+    r.after.forEach((n) => { const k = key(n); if (k) ak[k] = n; });
+    for (const k of nk) if (k in bk && bk[k] !== ak[k]) throw new Error("identity lost for " + k);
+  };
+  const fails = (x, y) => { try { check(x, y); return false; } catch { return true; } };
+  for (let i = 0; i < FUZZ; i++) {
+    const oa = genArr(3, true, 8), na = genArr(3, true, 8);
+    try { check(oa, na); } catch {
+      let A = oa, B = na, again = true;
+      while (again) {
+        again = false;
+        for (let j = 0; j < A.length && !again; j++) { const c = A.filter((_, k) => k != j); if (fails(c, B)) { A = c; again = true; } }
+        for (let j = 0; j < B.length && !again; j++) { const c = B.filter((_, k) => k != j); if (fails(A, c)) { B = c; again = true; } }
+      }
+      let msg = "";
+      try { check(A, B); } catch (e) { msg = e.message; }
+      throw new Error(`case ${i}\n old: ${A.join("")}\n new: ${B.join("")}\n error: ${msg}`);
+    }
+  }
+});
 
 console.log(`\nmorph.sh: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
