@@ -225,6 +225,8 @@ fn fail_login(res: http::Response&, msg: const u8[:]) -> bool {
 fn login_at(req: const http::Request&, ctx: Ctx&, res: http::Response&, uid: i64, ver: i64, opts: LoginOptions, now: i64) -> bool {
     no_store(res);
     if ctx.auth.keys.n == 0 { return fail_login(res, "WEB_SECRET is not set"); }
+    // The cookie parser accepts digits only, so a negative id would make a session that never loads.
+    if uid < 0 || ver < 0 { return fail_login(res, "session unavailable"); }
     var raw: u8[..16] = [0; 16];
     if !random_bytes(raw) { return fail_login(res, "session unavailable"); }
 
