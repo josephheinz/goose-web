@@ -352,7 +352,11 @@ fn valid_log_format(s: const u8[:]) -> bool { s == "text" || s == "json" }
 
 // config_from(args()), then --probe: GET http://127.0.0.1:PORT/__gweb/ready; exit 0 on 200, else 1.
 fn config_from_args() -> Config {
-    let cfg = config_from(args());
+    let argv = args();
+    var a: (const u8[:])[>..] = [];
+    var i = 0;
+    while i < argv.len { a.push(argv[i]); i += 1; }
+    let cfg = config_from(a);
     if cfg.probe { exit(probe(cfg.port)); }
     return cfg;
 }
@@ -370,7 +374,7 @@ fn probe(port: i64) -> i64 {
 // --job-attempts N, --no-schedule, --probe, and the environment: PORT, WEB_WORKERS, GWEB_DRAIN_MS,
 // GWEB_DRAIN_DELAY_MS, GWEB_LOG_FORMAT, GWEB_LOG_LEVEL, GWEB_METRICS=1, GWEB_JOB_RUNNERS, GWEB_SCHEDULE=0 (flags win).
 // a[0] is the program name. Exits with 2 on a bad flag.
-fn config_from(a: const u8[:][:]) -> Config {
+fn config_from(a: (const u8[:])[:]) -> Config {
     var cfg = default_config();
     var e: u8[>..] = [];
     if env("PORT", e) { let p, ok = parse_int(trim(e)); if ok { cfg.port = p; } }
@@ -738,7 +742,7 @@ fn push_server_span(ctx: const Ctx&, req: const http::Request&, route: const u8[
     if route.len > 0 { name.push(' '); name.append(route); }
     let end_ns = c_unix_ns();
     let code = http::code(status);
-    let kind_status = if code >= 500 { 2 } else { 0 };
+    let kind_status: i32 = if code >= 500 { 2 } else { 0 };
     c_span_push(ctx.trace_id, ctx.span_id, ctx.parent_span, name, 2, end_ns - dur_us * 1000, end_ns, kind_status,
                 req.method_text, route, req.path, code as i32, "", "", 0);
 }

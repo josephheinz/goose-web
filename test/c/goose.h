@@ -8,6 +8,7 @@
 
 typedef struct { char *data; int64_t len, cap; } gs_buf;
 typedef gs_buf *gs_rref;
+#define GS_RREF_VALID(r) ((r) != NULL)   /* the real gs_rref is a struct: jobs.c falls back to r.hdr */
 
 static inline void gs_bld_append(gs_rref b, const void *p, int64_t n) {
     if (n <= 0) return;

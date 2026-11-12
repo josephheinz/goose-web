@@ -18,6 +18,11 @@
 #include <string.h>
 #include <time.h>
 
+/* gs_rref is a struct in the real runtime; the test stub defines this for its pointer type. */
+#ifndef GS_RREF_VALID
+#define GS_RREF_VALID(r) ((r).hdr != NULL)
+#endif
+
 #define NAME_MAX_LEN 32
 #define SPEC_MAX_LEN 127
 #define RETRY_BASE_MS 1000
@@ -432,7 +437,7 @@ int32_t gweb_jobs_take(int32_t slot, int64_t timeout_ms, gs_rref out, int64_t *i
             gs_bld_append(out, j->data, j->len);
             if (id) *id = j->id;
             if (attempt) *attempt = j->attempt;
-            if (j->sched >= 0 && sched_name_out) gs_bld_append(sched_name_out, scheds[j->sched].name, (int64_t)strlen(scheds[j->sched].name));
+            if (j->sched >= 0 && GS_RREF_VALID(sched_name_out)) gs_bld_append(sched_name_out, scheds[j->sched].name, (int64_t)strlen(scheds[j->sched].name));
             got = 1;
             break;
         }

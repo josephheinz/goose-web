@@ -41,16 +41,16 @@ fn rendered(e: const web::LogEvent&) -> u8[>..] {
 fn test_escape() {
     var raw: u8[>..] = [];
     raw.append("a\"b\\c");
-    raw.push(1 as u8);
+    raw.push(1);
     raw.push('\n');
-    raw.push(195 as u8);
-    raw.push(169 as u8);
+    raw.push(195);
+    raw.push(169);
     var out: u8[>..] = [];
     web::json_escape(out, raw);
     var want: u8[>..] = [];
     want.append("a\\\"b\\\\c\\u0001\\u000A");
-    want.push(195 as u8);
-    want.push(169 as u8);
+    want.push(195);
+    want.push(169);
     check_eq(out, want, "json_escape: quote, backslash, control bytes; non-ASCII passes through");
 
     var cut: u8[>..] = [];
@@ -75,8 +75,8 @@ fn test_request_id() {
     check(!web::request_id_valid("a\nb"), "newline");
     var accent: u8[>..] = [];
     accent.append("caf");
-    accent.push(195 as u8);
-    accent.push(169 as u8);
+    accent.push(195);
+    accent.push(169);
     check(!web::request_id_valid(accent), "non-ASCII");
 }
 
@@ -158,7 +158,7 @@ fn test_log_json() {
     check(find(rendered(e1), "\"ratio\":") >= 0, "json float field");
 
     var raw: u8[>..] = [];
-    raw.push(2 as u8);
+    raw.push(2);
     raw.append("x");
     let blank = web::new_ctx(0, -1);
     let e2 = web::log(blank, web::Level.Error, raw);
