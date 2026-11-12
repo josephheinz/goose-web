@@ -142,5 +142,83 @@ fresh missing
 printf '# none here\n../nowhere at /x\n' > "$WORK/missing/app/gweb.packages"
 expect_fail missing 'gweb.packages:2: error: ../nowhere: not a folder'
 
+# 4. Nested mounts: ../outer at /admin and ../inner at /admin/shop (inner is a folder of the project in `local`).
+nest() {
+  fresh "$1"
+  cp -R "$HERE/packages/outer" "$WORK/$1/outer"
+  cp -R "$HERE/packages/inner" "$WORK/$1/inner"
+  printf '%s\n' "$2" > "$WORK/$1/app/gweb.packages"
+  rm -f "$WORK/$1/app/app/page.goose"
+  echo '<h1>project-home</h1>' > "$WORK/$1/app/app/page.html"
+}
+nest nest '../outer at /admin
+../inner at /admin/shop'
+routes=$("$GWEB" -C "$WORK/nest/app" routes 2>&1)
+for want in '/admin/shop  ' '/admin/shop/orders' '/admin/c'; do
+  case "$routes" in *"$want"*) ok ;; *) bad "nest: gweb routes lacks '$want':"; echo "$routes" | sed 's/^/    /' ;; esac
+done
+nest rev '../inner at /admin/shop
+../outer at /admin'
+routes=$("$GWEB" -C "$WORK/rev/app" routes 2>&1)
+case "$routes" in *'/admin/shop/orders'*) ok ;; *) bad "rev: reversed lines: gweb routes lacks /admin/shop/orders"; echo "$routes" | sed 's/^/    /' ;; esac
+if [ -n "$goose" ]; then
+  if out=$("$GWEB" -C "$WORK/nest/app" build 2>&1); then
+    "$WORK/nest/app/.gooseweb/server" --port "$PORT" >/dev/null 2>&1 &
+    PID=$!
+    up=""
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      sleep 0.5
+      if curl -s -o /dev/null "$URL/"; then up=yes; break; fi
+    done
+    if [ -z "$up" ]; then
+      bad "nest: the server did not answer on port $PORT"
+    else
+      curl -s -D "$WORK/ord.h" -o "$WORK/ord.b" -w '%{http_code}' "$URL/admin/shop/orders" > "$WORK/ord.s"
+      check "$([ "$(cat "$WORK/ord.s")" = 200 ] && grep -q 'shop-orders' "$WORK/ord.b" && grep -q 'data-root-layout' "$WORK/ord.b" && grep -q 'data-outer-layout' "$WORK/ord.b" && grep -qi '^x-outer: 1' "$WORK/ord.h" && echo ok)" \
+        "GET /admin/shop/orders: the inner page in the project's layout and the outer package's, with the outer middleware's header"
+      curl -s -o "$WORK/shop.b" -w '%{http_code}' "$URL/admin/shop" > "$WORK/shop.s"
+      check "$([ "$(cat "$WORK/shop.s")" = 200 ] && grep -q 'shop-home' "$WORK/shop.b" && echo ok)" "GET /admin/shop: 200"
+    fi
+    kill "$PID" 2>/dev/null
+    wait "$PID" 2>/dev/null
+    PID=""
+  else
+    bad "gweb build of the nested project"; echo "$out"
+  fi
+fi
+
+nest deep '../outer at /admin
+../inner at /admin/shop/x/y'
+expect_ok() { if out=$("$GWEB" -C "$WORK/$1/app" gen 2>&1); then ok; else bad "$1: gweb gen failed"; echo "$out" | sed 's/^/    /'; fi; }
+expect_ok deep
+
+nest nestclash '../outer at /admin
+../inner at /admin/shop'
+mkdir -p "$WORK/nestclash/outer/app/shop"
+expect_fail nestclash 'gweb.packages:2: error: shop: mounted at /admin/shop, but package outer (mounted at /admin, gweb.packages:1) has the folder '
+case "$out" in *"outer/app/shop"*) ok ;; *) bad "nestclash: the error does not name the folder" ;; esac
+
+nest nestdeep '../inner at /admin/shop
+../outer at /admin'
+mkdir -p "$WORK/nestdeep/outer/app/shop/z"
+expect_fail nestdeep 'gweb.packages:1: error: shop: mounted at /admin/shop, but package outer'
+
+nest same '../outer at /admin
+../inner at /admin'
+expect_fail same 'is also the mount of package'
+
+nest inside '../outer at /admin
+./app/shop at /admin/shop'
+cp -R "$HERE/packages/inner" "$WORK/inside/app/app/shop"
+expect_fail inside "this package folder is inside the project's app/ folder"
+
+nest local '../outer at /admin
+./admin/shop at /admin/shop'
+mkdir -p "$WORK/local/app/admin"
+cp -R "$HERE/packages/inner" "$WORK/local/app/admin/shop"
+expect_ok local
+routes=$("$GWEB" -C "$WORK/local/app" routes 2>&1)
+case "$routes" in *'/admin/shop/orders'*) ok ;; *) bad "local: a package inside the project folder: routes lacks /admin/shop/orders" ;; esac
+
 echo "packages.sh: $pass of $((pass + fail)) checks passed"
 [ "$fail" -eq 0 ]

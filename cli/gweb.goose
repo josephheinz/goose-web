@@ -41,7 +41,7 @@ struct Dir {
 }
 
 // A gweb package (DESIGN-ADDENDUM-18, D6). mount is the URL prefix without its leading slash, "" when the package has no `at`.
-struct Pkg { name: u8[..64], dir: u8[..512], mount: u8[..512], git: bool }
+struct Pkg { name: u8[..64], dir: u8[..512], mount: u8[..512], git: bool, line: i64 }
 
 struct Static { url: u8[..512], file: u8[..512], ctype: u8[..64], etag: u8[..24] }
 
@@ -323,6 +323,18 @@ fn read_manifest(path: const u8[:], text: const u8[:], name: u8[..64]&) -> bool 
     return true;
 }
 
+// Resolves . and .. segments of an absolute path, so folders compare by name.
+fn clean_path(p: const u8[:], out: u8[>..]&) {
+    var segs: u8[..256][>..] = [];
+    for seg in split(p, '/') {
+        if seg.len == 0 || seg == "." { continue; }
+        if seg == ".." { if segs.len > 0 { segs.pop(); } continue; }
+        segs.push(seg);
+    }
+    for seg in segs { out.push('/'); out.append(seg); }
+    if out.len == 0 { out.push('/'); }
+}
+
 fn load_packages() {
     pkgs.clear();
     if !file_exists(PKG_LIST) { return; }
@@ -369,7 +381,7 @@ fn load_packages() {
             err(PKG_LIST, ln, m);
             continue;
         }
-        var pk = Pkg { name: "", dir: "", mount: "", git: is_git_source(source) };
+        var pk = Pkg { name: "", dir: "", mount: "", git: is_git_source(source), line: ln };
         if !read_manifest(manifest, mtext, pk.name) { continue; }
         pk.dir.append(dir);
         pk.mount.append(prefix);
@@ -377,8 +389,8 @@ fn load_packages() {
         for r in PKG_RESERVED { if pk.name == r { format(m, pk.name, ": this package name is taken by a module; rename it"); } }
         for o in pkgs {
             if o.name == pk.name { format(m, pk.name, ": a second package with this name (", o.dir, ")"); }
-            if prefix.len > 0 && o.mount.len > 0 && (is_ancestor(o.mount, prefix) || is_ancestor(prefix, o.mount)) {
-                format(m, pk.name, ": its mount /", prefix, " overlaps /", o.mount, " of package ", o.name);
+            if prefix.len > 0 && o.mount.len > 0 && o.mount == prefix {
+                format(m, pk.name, ": its mount /", prefix, " is also the mount of package ", o.name);
             }
         }
         if m.len > 0 { err(manifest, 0, m); continue; }
@@ -400,7 +412,44 @@ fn load_packages() {
                 continue;
             }
         }
+        // A package folder inside the project's own scanned folders would be read twice.
+        for own in ["app", "components", "lib", "public"] {
+            var ob: u8[>..] = [];
+            format(ob, cwd, "/", own);
+            var clean: u8[>..] = [];
+            clean_path(dir, clean);
+            if is_ancestor(ob, clean) {
+                format(m, pk.name, ": this package folder is inside the project's ", own, "/ folder; move it elsewhere in the project");
+                err(PKG_LIST, ln, m);
+                break;
+            }
+        }
+        if m.len > 0 { continue; }
         pkgs.push(pk);
+    }
+    check_nested_mounts();
+}
+
+// A mount B = A + "/rest" inside mount A is allowed when A's package has no app/rest folder.
+// The innermost enclosing mount is the one checked; the order of lines does not matter.
+fn check_nested_mounts() {
+    for b in pkgs {
+        if b.mount.len == 0 { continue; }
+        var best = -1;
+        for a, ai in pkgs {
+            if a.mount.len == 0 || a.mount.len >= b.mount.len || !is_ancestor(a.mount, b.mount) { continue; }
+            if best < 0 || a.mount.len > pkgs[best].mount.len { best = ai; }
+        }
+        if best < 0 { continue; }
+        let a = pkgs[best];
+        let rest = b.mount[a.mount.len + 1..];
+        var f: u8[>..] = [];
+        format(f, a.dir, "/app/", rest);
+        if is_dir(f) {
+            var m: u8[>..] = [];
+            format(m, b.name, ": mounted at /", b.mount, ", but package ", a.name, " (mounted at /", a.mount, ", ", PKG_LIST, ":", a.line, ") has the folder ", f);
+            err(PKG_LIST, b.line, m);
+        }
     }
 }
 

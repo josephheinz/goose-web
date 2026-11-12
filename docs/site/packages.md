@@ -20,8 +20,13 @@ cached tag is never updated. Delete the folder to fetch it again.
 - **`at /prefix`** mounts the package's `app/` at `app/prefix/`, and its
   `public/` at `/prefix/`. The prefix is literal folder names: no `[id]`, no
   catch-all, not `/`. The project must not have `app/prefix/`, and two mounts
-  must not overlap. Layouts and middleware above the mount wrap the package's
-  pages.
+  must not use the same prefix. Layouts and middleware above the mount wrap the
+  package's pages.
+- **Nested mounts.** A package may be mounted inside another's mount:
+  `./admin/shop at /admin/shop` beside `../cms at /admin`. The outer package
+  must not have the folder `app/shop`. The inner pages get the outer layouts and
+  middleware. Line order does not matter. A package folder must not sit inside
+  the project's `app/`, `components/`, `lib/` or `public/`.
 - **Components** join one flat namespace: call `@Badge(...)` as if it were in your
   `components/`. Two sources with the same name are an error naming both files.
 - **Goose code** in the package's `lib/` is imported as `import NAME.file;`,
