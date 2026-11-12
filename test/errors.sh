@@ -227,7 +227,7 @@ dev_rc=$?
 ET="$WORK/bad/.gooseweb.dev/errors.txt"
 check "$([ "$plain_rc" != 0 ] && [ "$dev_rc" != 0 ] && echo ok)" "a type error in page.html fails build and dev --once"
 check "$(grep -q '^app/broken/page.html:4:' "$ET" 2>/dev/null && echo ok)" "errors.txt has the path:line: error line"
-check "$(grep -qF '>    4 | <p>{no_such_name}</p>' "$ET" 2>/dev/null && echo ok)" "errors.txt marks the error line with > and its number"
+check "$(grep -qF '>   4 | <p>{no_such_name}</p>' "$ET" 2>/dev/null && echo ok)" "errors.txt marks the error line with > and its number"
 check "$(grep -qF '   2 | <p>two</p>' "$ET" 2>/dev/null && grep -qF '   3 | <p>three</p>' "$ET" && grep -qF '   5 | <p>five</p>' "$ET" && grep -qF '   6 | <p>six</p>' "$ET" && echo ok)" "errors.txt has 2 lines before and 2 after"
 check "$(! grep -qF ' | <p>seven</p>' "$ET" 2>/dev/null && ! grep -qF ' | <h1>one</h1>' "$ET" 2>/dev/null && echo ok)" "errors.txt has no lines beyond the 2-line window"
 check "$(! grep -qF ' | ' "$WORK/bad.plain" && echo ok)" "plain gweb build output has no excerpt"
