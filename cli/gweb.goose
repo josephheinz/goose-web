@@ -178,17 +178,25 @@ fn scan_dir(rel: const u8[:], todo: u8[..512][>..]&) {
     if rel.len >= 512 { err(path, 0, "path too long"); return; }
     d.rel.append(rel);
     var subdirs: u8[>..] = [];
+    var catch_alls = 0;
     for name in split(names, '\n') {
         if name.len == 0 { continue; }
         var full: u8[>..] = [];
         format(full, path, "/", name);
         if is_dir(full) {
             if name[0] == '_' || name[0] == '.' { continue; }
-            if name[0] == '[' {
-                if name.len < 3 || name[name.len - 1] != ']' || !is_ident(name[1..name.len - 1]) {
-                    err(full, 0, "a dynamic segment folder is [name], where name is an identifier");
-                    continue;
-                }
+            if catch_kind(rel) > 0 {
+                err(full, 0, "a catch-all folder is the last segment of its route; move this folder out of it");
+                continue;
+            }
+            let kind = seg_kind(name);
+            if kind < 0 {
+                err(full, 0, "a dynamic segment folder is [name], [...name] or [[...name]], where name is an identifier");
+                continue;
+            }
+            if kind >= 2 {
+                catch_alls += 1;
+                if catch_alls > 1 { err(full, 0, "a folder holds one catch-all folder at most"); continue; }
             }
             subdirs.append(name);
             subdirs.push('\n');
@@ -359,6 +367,42 @@ fn scan() {
         var u: u8[>..] = [];
         url_of(u, d.rel);
         for s in statics { if s.url == u { err(s.file, 0, "this file has the same URL as a route"); } }
+    }
+    check_route_shapes();
+}
+
+fn check_route_shapes() {
+    for d in dirs {
+        if !d.route && !d.page_html { continue; }
+        var path: u8[>..] = [];
+        app_path(path, d.rel, "");
+        if path[path.len - 1] == '/' { path.pop(); }
+        let segs = split(d.rel, '/');
+        if segs.len > 16 { err(path, 0, "a route is at most 16 folders deep"); }
+        let kind = catch_kind(d.rel);
+        if kind == 0 { continue; }
+        let name = catch_name(last_seg(d.rel));
+        for k in segs.len - 1 {
+            if seg_kind(segs[k]) == 1 && segs[k][1..segs[k].len - 1] == name {
+                var m: u8[>..] = [];
+                format(m, "the catch-all name ", name, " is already a parameter of this path");
+                err(path, 0, m);
+            }
+        }
+        if kind == 3 {
+            let parent = parent_of(d.rel);
+            for p in dirs {
+                if p.rel != parent || (!p.route && !p.page_html) { continue; }
+                var pp: u8[>..] = [];
+                app_path(pp, parent, "");
+                if pp[pp.len - 1] == '/' { pp.pop(); }
+                var u: u8[>..] = [];
+                url_of(u, parent);
+                var m: u8[>..] = [];
+                format(m, path, " and ", pp, " both answer ", u, "; use [...", name, "] or remove one");
+                err(path, 0, m);
+            }
+        }
     }
 }
 
@@ -1038,6 +1082,50 @@ fn route_before(a: const u8[:], b: const u8[:]) -> bool {
         if da != db { return !da; }
     }
     return false;
+}
+
+// 0 literal, 1 [name], 2 [...name], 3 [[...name]], -1 a malformed dynamic folder name.
+fn seg_kind(s: const u8[:]) -> i64 {
+    if s.len == 0 || s[0] != '[' { return 0; }
+    if starts_with(s, "[[...") {
+        if s.len >= 7 && s[s.len - 1] == ']' && s[s.len - 2] == ']' && is_ident(s[5..s.len - 2]) { return 3; }
+        return -1;
+    }
+    if starts_with(s, "[...") {
+        if s.len >= 5 && s[s.len - 1] == ']' && is_ident(s[4..s.len - 1]) { return 2; }
+        return -1;
+    }
+    if s.len >= 3 && s[s.len - 1] == ']' && is_ident(s[1..s.len - 1]) { return 1; }
+    return -1;
+}
+
+fn last_seg(rel: const u8[:]) -> const u8[:] {
+    for k in rel.len {
+        let i = rel.len - 1 - k;
+        if rel[i] == '/' { return rel[i + 1..]; }
+    }
+    return rel;
+}
+
+fn parent_of(rel: const u8[:]) -> const u8[:] {
+    let n = rel.len - last_seg(rel).len;
+    if n == 0 { return ""; }
+    return rel[..n - 1];
+}
+
+// The kind of the last segment when it is a catch-all (2 or 3), else 0.
+fn catch_kind(rel: const u8[:]) -> i64 {
+    let k = seg_kind(last_seg(rel));
+    if k >= 2 { return k; }
+    return 0;
+}
+
+fn prefix_len(rel: const u8[:]) -> i64 { return seg_count(rel) - 1; }
+
+// The name inside [...name] or [[...name]].
+fn catch_name(seg: const u8[:]) -> const u8[:] {
+    if seg_kind(seg) == 3 { return seg[5..seg.len - 2]; }
+    return seg[4..seg.len - 1];
 }
 
 fn seg_count(rel: const u8[:]) -> i64 {
