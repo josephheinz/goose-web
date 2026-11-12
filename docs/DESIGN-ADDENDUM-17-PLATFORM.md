@@ -397,3 +397,18 @@ No Goose compiler exists on this machine (`$GOOSE` unset, none on `PATH`, the Ad
 - Local fixed arrays of slices (`const u8[:][16]`).
 - `u8` to `i64` casts.
 - A sub-module of package `sqlite` that does `import sqlite;`.
+
+### Compiled and tested (Goose v2026.4)
+
+A compiler arrived after the build, so the "untested" status above no longer holds. Every step now compiles without warnings and passes:
+- **goose-sqlite:** `test_query` and `test_sqlite` pass. One redundant cast was removed (`2c57ed8`).
+- **goose-web unit tests:** `testing_test` 21/21, `i18n_test` 66/66, `cookie_test` 59/59, `csrf_test` 52/52, `catchall_test` 62/62. They run from a copy with absolute imports, because `".."` and `"../../goose-net"` do not resolve from a worktree.
+- **goose-web suites:** `components.sh` 46, `templates.sh` 33, `fragments.sh` 82, `catchall.sh` 50, `routes.sh` 16, `i18n.sh` 32.
+- **`release_check.sh`:** all 12 steps pass. A builder saw `templates.sh` fail once, with the dev reload script in its output, and could not reproduce it.
+
+Fixes:
+- `testing_test` passed a temporary `Response` to a `const&` parameter, which Goose refuses. `expect_status` and `expect_header` keep `const&`, and callers bind the response first. Passing it by value would have forced `copy(res)` at every named call.
+- A redundant `as i64` in `i18n.goose` was removed.
+- `routes.sh` check 4 now allows goose's "instantiated from routes_main.goose" trace lines. It still fails if a copied `t_` path leaks.
+
+Of the unverified Goose points above, all compile as written. The one exception is passing a temporary to `const&`.
