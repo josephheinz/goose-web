@@ -135,7 +135,7 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     check "$([ "$(status tk8)" = 200 ] && body_has tk8 'saved' && echo ok)" "POST /save with the cookie and header: 200"
     req tk9 POST /webhook -H 'Sec-Fetch-Site: cross-site'
     check "$([ "$(status tk9)" = 200 ] && body_has tk9 'hook' && echo ok)" "POST /webhook (const CSRF = false) with no token, cross-site: 200"
-    check "$(grep -qF '::CSRF && !web::csrf_ok(req, res)' "$WORK/ok/.gooseweb/main.goose" && echo ok)" "the generated main checks the CSRF constant"
+    check "$(grep -qF '::CSRF && !web::csrf_ok(r, res)' "$WORK/ok/.gooseweb/main.goose" && echo ok)" "the generated main checks the CSRF constant"
   fi
   kill "$PID" 2>/dev/null
   wait "$PID" 2>/dev/null
