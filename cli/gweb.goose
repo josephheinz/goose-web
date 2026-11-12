@@ -1426,15 +1426,15 @@ fn gen_test_main() -> u8[>..] {
     gen_main_body(m, true);
     m.append("\n");
     gen_site_fns(m);
-    m.append("\nfn main() {\n    var t = web::Tester { .. };\n    var before = 0;\n");
+    m.append("\nfn main() {\n    var gw_t = web::Tester { .. };\n    var before = 0;\n");
     if has_state && has_state_init { m.append("    state::init();\n"); }
     for f in test_fns {
-        format(m, "    t.name.clear();\n    t.name.append(\"", f.ns, "::", f.name, "\");\n");
-        format(m, "    print(\"== ", f.ns, "::", f.name, "\");\n    before = t.failures;\n    ", f.ns, "::", f.name, "(t);\n");
-        format(m, "    if t.failures == before { print(\"ok ", f.ns, "::", f.name, "\"); }\n");
+        format(m, "    gw_t.name.clear();\n    gw_t.name.append(\"", f.ns, "::", f.name, "\");\n");
+        format(m, "    print(\"== ", f.ns, "::", f.name, "\");\n    before = gw_t.failures;\n    ", f.ns, "::", f.name, "(gw_t);\n");
+        format(m, "    if gw_t.failures == before { print(\"ok ", f.ns, "::", f.name, "\"); }\n");
     }
-    format(m, "    print(\"routes: ", test_fns.len, " tests, \", t.checks, \" checks, \", t.failures, \" failed\");\n");
-    m.append("    if t.failures > 0 { exit(1); }\n}\n");
+    format(m, "    print(\"routes: ", test_fns.len, " tests, \", gw_t.checks, \" checks, \", gw_t.failures, \" failed\");\n");
+    m.append("    if gw_t.failures > 0 { exit(1); }\n}\n");
     return m;
 }
 
