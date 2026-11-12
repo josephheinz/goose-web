@@ -38,7 +38,8 @@ struct Ctx {
     title: u8[..256],
     set_cookies: u8[..2048],  // pending Set-Cookie lines; run_worker moves them to res
     auth: AuthConfig = AuthConfig { .. }, // copied from Config by run_worker; the keys live here so handlers need no globals
-    session: Session = Session { .. }
+    session: Session = Session { .. },
+    conn_fd: i32 = -1         // the worker's connection, for rate::client_ip
 }
 
 struct Config { port: i64, host: u8[..64], workers: i64, log: bool, idle_ms: i64, max_body: i64,
@@ -616,6 +617,7 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                         } else {
                             var ctx = new_ctx(slot, owner_fd);
                             ctx.auth = cfg.auth;
+                            ctx.conn_fd = conn.fd;
                             static_index = D(req, ctx, res);
                             if !apply_cookies(ctx, res) { static_index = -1; }
                             if !ctx.fragment { dev_inject(res, cfg.dev_id); }
