@@ -49,7 +49,7 @@ token() { sed -n 's/.*name="_csrf" value="\([^"]*\)".*/\1/p' "$WORK/$1.b" | head
 
 # start [ENV=VALUE ...]: the built server on $PORT, waiting until it answers.
 start() {
-  (cd "$WORK/ok" && env "$@" ./.gooseweb/server --port "$PORT" --dev-id 5 >/dev/null 2>&1) &
+  (cd "$WORK/ok" && exec env "$@" ./.gooseweb/server --port "$PORT" --dev-id 5 >/dev/null 2>&1) &
   PID=$!
   for i in 1 2 3 4 5 6 7 8 9 10; do
     sleep 0.5
@@ -149,8 +149,9 @@ if ! start WEB_CSP=1; then
   bad "the server with WEB_CSP=1 did not answer on port $PORT"
 else
   req cs GET /
-  NONCE=$(sed -n "s/^content-security-policy: .*'nonce-\([A-Za-z0-9_-]*\)'.*/\1/p" "$WORK/cs.h" | head -n 1)
-  check "$([ "${#NONCE}" = 22 ] && has_header cs "content-security-policy: script-src 'self' 'nonce-$NONCE'" && echo ok)" "WEB_CSP=1: a CSP header with a 22-byte nonce"
+  # The nonce is case-sensitive, so it is read from the raw headers, not the lower-cased copy.
+  NONCE=$(tr -d '\r' < "$WORK/cs.h.raw" | sed -n "s/^[Cc]ontent-[Ss]ecurity-[Pp]olicy: .*'nonce-\([A-Za-z0-9_-]*\)'.*/\1/p" | head -n 1)
+  check "$([ "${#NONCE}" = 22 ] && grep -qF "script-src 'self' 'nonce-$NONCE'" "$WORK/cs.h.raw" && echo ok)" "WEB_CSP=1: a CSP header with a 22-byte nonce"
   check "$([ -n "$NONCE" ] && [ "$(grep -oF "<script nonce=\"$NONCE\">" "$WORK/cs.b" | wc -l | tr -d ' ')" -ge 2 ] && echo ok)" "WEB_CSP=1: the page script and the dev script carry the nonce"
   stop
 fi
@@ -161,7 +162,7 @@ rm -f "$WORK/prod/.env.development" "$WORK/prod/.env.local" "$WORK/prod/.env.pro
 rm -rf "$WORK/prod/.gooseweb.dev"
 out=$(cd "$WORK/prod" && env -u WEB_SECRET GWEB_ENV=production ./.gooseweb/server --port "$PORT" 2>&1)
 code=$?
-check "$([ "$code" = 2 ] && case "$out" in *"set WEB_SECRET"*) echo ok ;; esac)" "production without WEB_SECRET: exit 2 and the message, got $code '$out'"
+check "$([ "$code" = 2 ] && case "$out" in (*"set WEB_SECRET"*) echo ok ;; esac)" "production without WEB_SECRET: exit 2 and the message, got $code '$out'"
 
 echo "auth.sh: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
