@@ -19,6 +19,8 @@ Guides:
 - [Cookies](cookies.md)
 - [State and SQLite](state-and-sqlite.md)
 - [The `gweb` command](cli.md)
+- [Packages](packages.md)
+- [Editor support](editor.md)
 
 Policy:
 

@@ -8,6 +8,8 @@ gweb start [flags]           build and run
 gweb dev [flags]             build, run, rebuild on change
 gweb routes                  the route table
 gweb test                    component parity tests
+gweb check                   goose check on the generated code
+gweb lsp                     language server for editors
 gweb version                 the version and the package sources
 ```
 
@@ -22,6 +24,8 @@ gweb version                 the version and the package sources
 | `dev` | like `start`, with `--log`, 2 workers and port 60053 unless `--port` is given. Rebuilds on change under `app/`, `lib/`, `public/` and `components/`. |
 | `routes` | prints the route table, with a `frag` line for each fragment. |
 | `test` | runs each component's `test_*` functions as Goose and as JavaScript. Needs `node`. Writes `.gooseweb.test/`. |
+| `check` | generates into `.gooseweb.check/` and runs `goose check`. Errors name `.gshtml`, `.html` and app `.goose` lines. Exit 1 on any error. |
+| `lsp` | runs the language server over stdio. Needs `node`. See [Editor support](editor.md). |
 | `version` | prints the gweb version and the three sources it declares. |
 
 ## Rules
@@ -30,8 +34,9 @@ gweb version                 the version and the package sources
 - It finds the `web` package beside its own binary, or in `$GOOSE_WEB_HOME`.
   A checkout older or newer than the binary stops with "rebuild gweb".
 - `GWEB_WEB`, `GWEB_NET` and `GWEB_SQLITE` override a package source.
-- Generated files go in `.gooseweb/`, `.gooseweb.dev/` and `.gooseweb.test/`.
+- Generated files go in `.gooseweb/`, `.gooseweb.dev/`, `.gooseweb.test/`, `.gooseweb.check/` and `.gooseweb.lsp/`.
   Keep them out of git. They are not part of any stable interface.
+- Packages are listed in `gweb.packages`. See [Packages](packages.md).
 - `WEB_WORKERS` sets the worker count. The default is the lesser of the
   performance cores and 4.
 
