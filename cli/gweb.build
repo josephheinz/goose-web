@@ -1,2 +1,3 @@
 // gweb's native helpers.
-c_sources = ["proc.c"];
+c_sources = ["proc.c", "gzip.c", "gzip_core.c"];
+c_libs = ["z"];

@@ -7,6 +7,7 @@ import std;
 import os;
 import net;   // the root file declares it: import net from "OWNER/goose-net@<tag>";
 import net.http;
+import net.hub;
 import json;
 
 // ---------------------------------------------------------------- types
@@ -25,6 +26,12 @@ enum SessionState { Unread, Absent, Valid }
 struct Session { state: SessionState = SessionState.Unread, sid: u8[..22] = "", uid: i64 = 0, ver: i64 = 0,
                  iat: i64 = 0, exp: i64 = 0, remember: bool = false, data: u8[..256] = "" }
 
+// What run_worker does with the connection after the handler: hand it to the hub as an SSE stream or a WebSocket.
+enum Detach { None, Stream, WebSocket }
+
+// Fixed-size fields, so Ctx stays free of references; the setters in meta.goose cut at a UTF-8 boundary.
+struct Meta { description: u8[..320] = "", canonical: u8[..512] = "", image: u8[..512] = "", robots: u8[..64] = "" }
+
 // Ctx holds no references or slices, so a handler may shrink res while it still reads req and ctx.
 struct Ctx {
     params: Params,
@@ -36,6 +43,7 @@ struct Ctx {
     redirect_status: i64,
     location: u8[..1024],
     title: u8[..256],
+    meta: Meta,
     set_cookies: u8[..2048],  // pending Set-Cookie lines; run_worker moves them to res
     status: i64 = 0,          // a page's status override; 0 = none (set_status, unprocessable)
     spool: u8[..256] = "",    // the spool file of an Event.Spooled request; "" otherwise. run_worker deletes it after the reply
@@ -46,9 +54,15 @@ struct Ctx {
     error_message: u8[..512] = "",
     auth: AuthConfig = AuthConfig { .. }, // copied from Config by run_worker; the keys live here so handlers need no globals
     session: Session = Session { .. },
-    conn_fd: i32 = -1,        // the worker's connection, for rate::client_ip
+    conn_fd: i32 = -1,        // the worker's connection, for rate::client_ip and web::stream_begin
     default_headers: bool = true,   // false: the handler writes its own frame and sniffing headers
-    nonce: u8[..24] = ""      // the CSP nonce; "" until run_worker or web::csp_begin makes it
+    nonce: u8[..24] = "",     // the CSP nonce; "" until run_worker or web::csp_begin makes it
+    streamed: bool = false,   // the handler sent its own reply through a Stream
+    stream_ended: bool = false,
+    hub: u64 = 0,             // 0 = no hub in this build
+    detach: Detach = Detach.None,
+    topic: u8[..64] = "",
+    heartbeat: u8[..64] = ""
 }
 
 // A file of a multipart post (web::upload). Lives here because Ctx holds it.
@@ -66,13 +80,15 @@ struct Config { port: i64, host: u8[..64], workers: i64, log: bool, idle_ms: i64
                 spool_over: i64,    // a multipart body over this many bytes is spooled to a file
                 upload_dir: u8[..256],    // spool and upload files (--upload-dir); one server per dir
                 auth: AuthConfig,
-                security_headers: bool, hsts: i64, csp: i64 }   // csp: 0 off, 1 on, 2 report-only
+                security_headers: bool, hsts: i64, csp: i64,   // csp: 0 off, 1 on, 2 report-only
+                export_dir: u8[..512],   // "" = serve; else the generated main writes the site here and exits
+                hub: u64 = 0 }          // the net::Hub handle; 0 when the app uses no streams or WebSockets
 
 fn no_params() -> Params { Params { n: 0, names: [""; 8], values: [""; 8] } }
 
-fn new_ctx(worker: i64, owner_fd: i32) -> Ctx {
+fn new_ctx(worker: i64, owner_fd: i32, hub: u64 = 0) -> Ctx {
     Ctx { params: no_params(), worker: worker, owner_fd: owner_fd, outcome: Outcome.Continue,
-          redirect_status: 302, location: "", title: "", set_cookies: "" }
+          redirect_status: 302, location: "", title: "", meta: Meta { .. }, set_cookies: "", hub: hub }
 }
 
 // ---------------------------------------------------------------- params and query
@@ -375,11 +391,11 @@ fn default_config() -> Config {
     Config { port: 3000, host: "0.0.0.0", workers: default_workers(), log: false,
              idle_ms: 5000, max_body: 1048576, dev_id: 0,
              max_upload: 33554432, spool_over: 65536, upload_dir: ".gooseweb.uploads",
-             auth: AuthConfig { .. }, security_headers: true, hsts: 0, csp: 0 }
+             auth: AuthConfig { .. }, security_headers: true, hsts: 0, csp: 0, export_dir: "" }
 }
 
 // Reads --port N, --host H, --workers N, --log, --idle-ms N, --max-body N, --max-upload N, --upload-dir D,
-// --csp, and the PORT, WEB_WORKERS, WEB_SECRET, WEB_SESSION_IDLE, WEB_SESSION_MAX, WEB_TRUST_PROXY,
+// --csp, --export DIR, and the PORT, WEB_WORKERS, WEB_SECRET, WEB_SESSION_IDLE, WEB_SESSION_MAX, WEB_TRUST_PROXY,
 // WEB_SECURITY_HEADERS, WEB_HSTS and WEB_CSP environment variables (flags win), after loading the .env files.
 // Exits with status 2 on a bad .env file, secret, session lifetime, WEB_HSTS or WEB_CSP.
 fn config_from_args() -> Config {
@@ -413,10 +429,11 @@ fn config_from_args() -> Config {
             if flag == "--max-upload" && ok && n > 0 { cfg.max_upload = n; i += 2; continue; }
             if flag == "--dev-id" && ok { cfg.dev_id = n; i += 2; continue; }
             if flag == "--upload-dir" && v.len > 0 && v.len <= 256 { cfg.upload_dir.clear(); cfg.upload_dir.append(v); i += 2; continue; }
+            if flag == "--export" && v.len > 0 && v.len <= 512 { cfg.export_dir.clear(); cfg.export_dir.append(v); i += 2; continue; }
             if flag == "--host" { cfg.host.clear(); cfg.host.append(v[..min(v.len, 64)]); i += 2; continue; }
         }
         print("unknown or incomplete flag: ", flag);
-        print("flags: --port N --host H --workers N --log --idle-ms N --max-body N --max-upload N --upload-dir D --csp (--dev-id N: gweb dev only)");
+        print("flags: --port N --host H --workers N --log --idle-ms N --max-body N --max-upload N --upload-dir D --csp --export DIR (--dev-id N: gweb dev only)");
         exit(2);
     }
     var secret_err: u8[>..] = [];
@@ -734,7 +751,7 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
         var res = http::new_response();
         match ev {
             Request, Spooled => {
-                var ctx = new_ctx(slot, owner_fd);
+                var ctx = new_ctx(slot, owner_fd, cfg.hub);
                 ctx.upload_dir.append(cfg.upload_dir);
                 var spool_ok = true;
                 if ev == net::Event.Spooled {
@@ -747,6 +764,11 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                 var keep = false;
                 var static_index = -1;
                 var dev_request = false;
+                var streamed = false;
+                var stream_ended = false;
+                var detach = Detach.None;
+                var topic: u8[..64] = "";
+                var heartbeat: u8[..64] = "";
                 match parsed {
                     Ready => {
                         keep = http::wants_keep_alive(req);
@@ -770,8 +792,13 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                                 http::json_error(res, http::Status.InternalServerError, "csp nonce unavailable");
                             } else {
                                 static_index = D(req, ctx, res);
-                                if !apply_cookies(ctx, res) { static_index = -1; }
-                                if !apply_security(ctx, res, cfg) { static_index = -1; }
+                                if !apply_cookies(ctx, res) { static_index = -1; ctx.detach = Detach.None; }
+                                if !ctx.streamed && !apply_security(ctx, res, cfg) { static_index = -1; ctx.detach = Detach.None; }
+                                streamed = ctx.streamed;
+                                stream_ended = ctx.stream_ended;
+                                detach = ctx.detach;
+                                topic.append(ctx.topic);
+                                heartbeat.append(ctx.heartbeat);
                                 if !ctx.fragment { dev_inject(res, cfg.dev_id, ctx.nonce); }
                             }
                         }
@@ -780,6 +807,24 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                     Closed => {},
                 }
                 let head_only = req.method == http::Method.Head;
+                // A stream wrote its own reply; the connection survives only if its body was framed (chunked), ended, and keep-alive was asked for.
+                if streamed {
+                    if !(keep && stream_ended && http::supports_chunked(req)) { lp.close_connection(conn); }
+                    continue;
+                }
+                // The hub owns the socket after the head is out; a failed head or a full hub closes it.
+                if detach != Detach.None {
+                    var rest: u8[>..] = [];
+                    let kind = if detach == Detach.Stream { net::HubKind.Stream } else { net::HubKind.WebSocket };
+                    let head_ok = if detach == Detach.Stream { http::begin_chunked(conn, res, false, false, true) }
+                                  else { http::send_head(conn, res, "Upgrade") };
+                    if head_ok {
+                        lp.detach(conn, rest);
+                        net::add(net::Hub { handle: cfg.hub }, conn, kind, topic, rest, heartbeat);
+                    } else { lp.close_connection(conn); }
+                    if cfg.log { print("[", slot, "] ", req.method_text, " ", req.target, " -> ", res.status, " (", if detach == Detach.Stream { "stream" } else { "websocket" }, ")"); }
+                    continue;
+                }
                 let sent = if static_index >= 0 {
                     http::send_response_with(conn, res, S(static_index), head_only, keep)
                 } else {

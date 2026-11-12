@@ -71,6 +71,15 @@ csrf_test() {
   "$WORK/csrf/csrf_test"
 }
 
+meta_test() {
+  mkdir "$WORK/meta"
+  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+      -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
+      "$HERE/meta_test.goose" > "$WORK/meta/meta_test.goose"
+  "$GOOSE" build -o "$WORK/meta/meta_test" "$WORK/meta/meta_test.goose"
+  "$WORK/meta/meta_test"
+}
+
 catchall_test() {
   mkdir "$WORK/catchall"
   sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
@@ -102,6 +111,7 @@ c_test() {
 
 step cookie_test cookie_test
 step csrf_test csrf_test
+step meta_test meta_test
 step catchall_test catchall_test
 step crypto_test goose_test crypto_test
 step env_test goose_test env_test
@@ -121,6 +131,9 @@ step frag sh "$HERE/frag.sh"
 step upload_c sh "$HERE/upload_c.sh"
 step inflight_c sh "$HERE/inflight_c.sh"
 step auth env PORT="${PORT:-3997}" sh "$HERE/auth.sh"
+step sitemap env PORT="${PORT:-3993}" sh "$HERE/sitemap.sh"
+step cache env PORT="${PORT:-3998}" sh "$HERE/cache.sh"
+step push env PORT="${PORT:-3999}" sh "$HERE/push.sh"
 
 gweb_new() {
   mkdir "$WORK/lone"

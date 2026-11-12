@@ -65,7 +65,13 @@ flowchart LR
 5. **Check links**: every `gw-target` must point at a page that has that
    fragment. Otherwise the build fails.
 6. **Generate the dispatcher**: a static route index, then `goose build` makes
-   one native binary. Static files and the runtime are compiled into it.
+   one native binary. Static files and the runtime are compiled into it, with
+   their hashed URLs and gzip variants. CSS is minified first (`--no-minify` skips it).
+   `@asset`, `@image` and `@meta` are resolved here: hashed URLs and image sizes
+   are read from `public/`.
+
+`gweb export` runs the same build, then starts the binary with `--export DIR`: it
+renders each static page in process and writes HTML files and assets, with no port.
 
 Templates are type-checked by the Goose compiler. A wrong field name is a build
 error, not a blank space on the page.
@@ -84,7 +90,9 @@ flowchart TB
         disp["dispatcher<br/>(static route index)"]
         page["page: middleware → load(req, ctx) → template → layout"]
         route["route.goose: GET / POST / ..."]
-        stat["static files<br/>/_gw/*.js, public/*<br/>(ETag, 304)"]
+        stat["static files<br/>/_gw/*.js, public/*<br/>(hashed URLs, immutable,<br/>gzip variants, ETag, 304)"]
+        cache[("page cache<br/>REVALIDATE, per worker")]
+        hub["hub thread (net::Hub)<br/>SSE streams, WebSockets,<br/>one poll loop"]
         owner["owner thread (main)<br/>shared state over socketpairs"]
         db[("SQLite<br/>per-thread read connections")]
     end
@@ -96,6 +104,11 @@ flowchart TB
     disp --> page
     disp --> route
     disp --> stat
+    page -.-> cache
+    w1 -.->|"detach: subscribe, websocket"| hub
+    w2 -.->|detach| hub
+    hub <-->|long-lived connections| client
+    hub -.->|"socket::open, message, close"| owner
     page -.->|state::ask| owner
     route -.->|state::ask| owner
     page -.-> db
@@ -131,6 +144,26 @@ flowchart TB
   `run_worker` copies the keys into `Ctx`. A session is a signed cookie that handlers load on demand.
   A GCRA rate table in C is shared by all workers behind one mutex. `run_worker` adds three security
   headers to every response, and a CSP nonce when CSP is on.
+- **Static files.** Each file is embedded once and served at a plain URL
+  (`max-age=0, must-revalidate`) and a hashed one (`/css/site.3f9a1c2b.css`,
+  `max-age=31536000, immutable`). Text files of 1 KB or more also have a gzip
+  variant made at build time, sent when the request accepts gzip. `@asset()`
+  writes the hashed URL; `/_gw/` files are hashed too.
+- **Page cache.** A page with `const REVALIDATE = N;` keeps its 200 GET reply
+  for N seconds in a per-worker thread-local cache (`src/cache.c`), with an ETag.
+  No lock and no owner round trip; the cost is up to one render per worker.
+- **Streaming.** `web::stream_begin`, `write` and `end` send a chunked body from
+  the handler. The stream holds its worker until it ends.
+- **The hub thread.** `web::subscribe` (SSE) and `web::websocket` (after the
+  handshake) set `ctx.detach`. After the handler returns, `run_worker` sends the
+  head, takes the socket out of the worker's loop (`Loop.detach`) and gives it to
+  one `net::Hub`, which runs every long-lived connection in one poll loop on its own
+  thread. Workers and the owner call `web::publish` or `web::send` from any thread.
+  Connection events (`Open`, `Text`, `Binary`, `Close`) reach `app/socket.goose`
+  on the hub thread, which can use `state::ask`. The hub exists only when the app
+  uses it.
+- **Behind a proxy.** TLS, HTTP/2 and compression belong to Caddy or nginx; see
+  `DEPLOY-PROXY.md`.
 
 ## 4. The browser runtime: what `gwi.min.js` does
 
@@ -293,13 +326,19 @@ readable `gwi.js`.
 | `valid.goose` | Field errors, checks, template partials and the `form_*` helpers the generated `decode` calls. |
 | `upload.goose`, `src/upload.c` | Multipart parser, `web::Upload`, `save_upload`, `check_upload`; file helpers in C. |
 | `errors.goose`, `src/inflight.c` | `ErrorInfo`, `web::fail`, crash replies, dev error detail; the in-flight request table. |
-| `static.goose` | Static files with ETag and 304. |
+| `static.goose` | Static files: hashed URLs, immutable caching, gzip variants, ETag and 304. |
+| `meta.goose` | `ctx.meta` setters, `@meta()` rendering and `web::site_url`. |
+| `sitemap.goose` | `/sitemap.xml` and `/robots.txt` builders (`web::Sitemap`, `sitemap_add`). |
+| `cache.goose`, `src/cache.c`, `src/cache_core.[ch]` | The `REVALIDATE` page cache: per-worker store and ETag replies. |
+| `stream.goose` | Chunked response bodies: `stream_begin`, `write`, `end`. |
+| `push.goose` | `subscribe`, `websocket`, `publish`, `send` and the Origin check; the hub side of `run_worker`. |
+| `cli/gzip.c`, `cli/gzip_core.[ch]` | Build-time gzip for gweb (zlib; the server never links it). |
 | `template.goose` | Runtime helpers that compiled templates call (`put`, `raw`, `arg`, JSON). |
 | `cli/gweb.goose` | The CLI: scan, generate, build, dev loop, routes, tests. |
 | `cli/tscan.goose` | The template scanner shared by both compilers: braces, `@` calls, script and style blocks. |
 | `cli/component.goose` | The `.gshtml` compiler: Goose subset parser, type checker, JS emitter. |
 | `client/gwi.js` | The browser runtime. `client/build.sh` minifies it to `gwi.min.js`. |
-| `test/components.sh`, `templates.sh`, `fragments.sh`, `auth.sh` | The test suites. |
+| `test/components.sh`, `templates.sh`, `fragments.sh`, `auth.sh`, `cache.sh`, `sitemap.sh`, `push.sh` | The test suites. |
 | `test/forms.sh`, `errors.sh` | Site suites: forms, uploads, `error.html`, crash replies. |
 | `test/frag.sh` | `gwi.js` fragments (422, FormData, loading) against jsdom. |
 | `test/upload_c.sh`, `inflight_c.sh` | The C helpers against a stub `goose.h`. |

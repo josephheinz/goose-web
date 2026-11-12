@@ -1,8 +1,9 @@
 // gweb: the goose-web command line.
 //
 //   gweb [-C dir] new <dir>
-//   gweb [-C dir] gen | build [--debug] | routes
-//   gweb [-C dir] start [server flags...]
+//   gweb [-C dir] gen [--no-minify]
+//   gweb [-C dir] build [--debug] [--no-minify] | routes
+//   gweb [-C dir] start [--no-minify] [server flags...]
 //   gweb [-C dir] dev [server flags...]
 //   gweb [-C dir] test
 //   gweb version
@@ -26,6 +27,9 @@ extern fn c_cwd(out: u8[>..]&) -> i32 = "gweb_cwd";
 extern fn c_remove_tree(path: const u8[:]) -> i32 = "gweb_remove_tree";
 extern fn c_tree_stamp(path: const u8[:], count: i64&) -> i64 = "gweb_tree_stamp";
 
+// gzip.c: appends the gzip of data to out; 0 when it failed.
+extern fn c_gzip(data: const u8[:], out: u8[>..]&) -> i32 = "gweb_gzip";
+
 // ---------------------------------------------------------------- model
 
 struct Dir {
@@ -40,10 +44,16 @@ struct Dir {
     page_csrf: bool = false, layout_csrf: bool = false, csrf_const: bool = false,   // csrf_const: route.goose declares const CSRF
     max_upload: bool = false,     // page.goose or route.goose declares const MAX_UPLOAD
     error_html: bool = false, error_ns: u8[..32] = "", error_csrf: bool = false,   // error.html in this folder (DESIGN-ADDENDUM-14, D10)
-    loading: bool = false, loading_ns: u8[..32] = ""   // loading.html in this folder (DESIGN-ADDENDUM-14, section 4)
+    loading: bool = false, loading_ns: u8[..32] = "",   // loading.html in this folder (DESIGN-ADDENDUM-14, section 4)
+    in_sitemap: bool = true,                                                         // false: page.goose has const SITEMAP = false;
+    revalidate: i64 = 0,                                                             // seconds from const REVALIDATE = N;, 0 = not cached
+    static_paths: bool = false                                                       // page.goose defines fn static_paths(
 }
 
-struct Static { url: u8[..512], file: u8[..512], ctype: u8[..64], etag: u8[..24] }
+// hashed is url with the first 8 hex digits of etag before the last extension; both URLs serve the same bytes.
+// embed is the file the binary embeds when that is not file (minified CSS); min says file must be minified to get the served bytes.
+// gz is the static_bytes index of the gzip variant, or -1.
+struct Static { url: u8[..512], file: u8[..512], ctype: u8[..64], etag: u8[..24], hashed: u8[..520], embed: u8[..512], min: bool, gz: i64 }
 
 // own is the page's dir index, or -1 in a layout, not-found.html or a component.
 struct Target { path: u8[..512], line: i64, url: u8[..512], name: u8[..64], post: bool, own: i64 }
@@ -63,12 +73,22 @@ var errors = 0;
 var has_state = false;
 var has_state_init = false;
 var has_config = false;
+var has_sitemap = false;               // app/sitemap.goose exists
+var has_entries = false;               // and defines fn entries(
+var has_socket = false;                // app/socket.goose exists
+var socket_open = false;               // and defines these handlers
+var socket_message = false;
+var socket_close = false;
+var uses_hub = false;                  // socket.goose, or a file under app/ or lib/ calls web::subscribe( or web::websocket(
 var has_not_found = false;
 var not_found_csrf = false;
 var uses_sqlite = false;
 var uses_keys = false;   // code or templates call web::login, web::session or the signed cookie functions
 var map_text: u8[>..];
 var gen_root: u8[>..];
+var minify = false;                    // gweb build, start and gen turn it on; dev and test leave it off
+var rt_js: u8[>..];                    // the client runtime, hashed before any page or component names it
+var rt_file: u8[>..];                  // its file name, gwi.<hash>.js
 // gweb test must never touch BUILD_DIR: a built server or a running gweb dev depends on it.
 let TEST_DIR = ".gooseweb.test";
 let BUILD_DIR = ".gooseweb";
@@ -169,6 +189,49 @@ fn csrf_const(path: const u8[:], code: const u8[:], route: bool) -> bool {
     return found;
 }
 
+// False when code has const SITEMAP = false; a malformed declaration is reported and leaves the page listed.
+fn sitemap_listed(path: const u8[:], code: const u8[:]) -> bool {
+    var listed = true;
+    for line, i in split(code, '\n') {
+        let t = trim_start(line);
+        if !starts_with(t, "const SITEMAP") { continue; }
+        if t.len > 13 && (is_ident(t[13..14]) || (t[13] >= '0' && t[13] <= '9')) { continue; }
+        if starts_with(t, "const SITEMAP = false;") { listed = false; }
+        else if !starts_with(t, "const SITEMAP = true;") { err(path, i + 1, "write const SITEMAP = false; to leave this page out of /sitemap.xml (or const SITEMAP = true;)"); }
+    }
+    return listed;
+}
+
+// N of const REVALIDATE = N; or 0 when absent; a declaration that is not a whole number above 0 is reported and counts as absent.
+fn revalidate_const(path: const u8[:], code: const u8[:]) -> i64 {
+    var secs = 0;
+    for line, i in split(code, '\n') {
+        let t = trim_start(line);
+        if !starts_with(t, "const REVALIDATE") { continue; }
+        if t.len > 16 && (is_ident(t[16..17]) || (t[16] >= '0' && t[16] <= '9')) { continue; }
+        var n = -1;
+        let r = trim(t[16..]);
+        if r.len > 2 && r[0] == '=' && r[r.len - 1] == ';' {
+            let digits = trim(r[1..r.len - 1]);
+            if digits.len > 0 && digits.len <= 9 {
+                n = 0;
+                for c in digits {
+                    if c < '0' || c > '9' { n = -1; break; }
+                    n = n * 10 + (c - '0');
+                }
+            }
+        }
+        if n > 0 { secs = n; }
+        else { err(path, i + 1, "write const REVALIDATE = N; with N the seconds to cache this page, a whole number above 0"); }
+    }
+    return secs;
+}
+
+fn has_static(url: const u8[:]) -> bool {
+    for s in statics { if s.url == url { return true; } }
+    return false;
+}
+
 fn read(path: const u8[:], out: u8[>..]&) -> bool {
     if !read_file(path, out) { err(path, 0, "cannot read"); return false; }
     return true;
@@ -244,6 +307,12 @@ fn scan_dir(rel: const u8[:], todo: u8[..512][>..]&) {
         }
         else if name == "config.goose" {
             if rel.len == 0 { has_config = true; } else { err(full, 0, "config.goose belongs in app/ only"); }
+        }
+        else if name == "socket.goose" {
+            if rel.len == 0 { has_socket = true; } else { err(full, 0, "socket.goose belongs in app/ only"); }
+        }
+        else if name == "sitemap.goose" {
+            if rel.len == 0 { has_sitemap = true; } else { err(full, 0, "sitemap.goose belongs in app/ only"); }
         }
     }
     if d.route && d.page_html { err(path, 0, "a folder has route.goose or page.html, not both"); }
@@ -321,6 +390,20 @@ fn etag_of(data: const u8[:]) -> u8[..24] {
     return t;
 }
 
+// The hash goes before the last extension of the last path segment; a dot that starts the segment is not an extension.
+fn hashed_url(url: const u8[:], etag: const u8[:]) -> u8[..520] {
+    var seg = 0;
+    for c, i in url { if c == '/' { seg = i + 1; } }
+    var dot = -1;
+    for i in seg..url.len { if url[i] == '.' && i > seg { dot = i; } }
+    var h: u8[..520] = "";
+    if dot < 0 { h.append(url); } else { h.append(url[..dot]); }
+    h.push('.');
+    h.append(etag[1..9]);
+    if dot >= 0 { h.append(url[dot..]); }
+    return h;
+}
+
 fn scan_public_dir(rel: const u8[:], todo: u8[..512][>..]&) {
     var path: u8[>..] = [];
     path.append("public");
@@ -338,11 +421,18 @@ fn scan_public_dir(rel: const u8[:], todo: u8[..512][>..]&) {
         if r.len >= 500 { err(full, 0, "path too long"); continue; }
         var data: u8[>..] = [];
         if !read(full, data) { continue; }
-        var s = Static { url: "/", file: "", ctype: "", etag: "" };
+        var s = Static { url: "/", file: "", ctype: "", etag: "", hashed: "", embed: "", min: false, gz: -1 };
         s.url.append(r);
         s.file.append(full);
         s.ctype.append(content_type(name));
-        s.etag = etag_of(data);
+        var mined: u8[>..] = [];
+        if minify && starts_with(s.ctype, "text/css") && minify_css(data, mined) {
+            s.min = true;
+            s.etag = etag_of(mined);
+        } else {
+            s.etag = etag_of(data);
+        }
+        s.hashed = hashed_url(s.url, s.etag);
         statics.push(s);
     }
 }
@@ -391,6 +481,9 @@ fn scan() {
     has_state = false;
     has_state_init = false;
     has_config = false;
+    has_sitemap = false;
+    has_entries = false;
+    has_socket = false;
     has_not_found = false;
     if !is_dir("app") { err("app", 0, "no app/ folder here; run gweb in a project, or gweb new <dir>"); return; }
     scan_app();
@@ -404,6 +497,19 @@ fn scan() {
         for s in statics { if s.url == u { err(s.file, 0, "this file has the same URL as a route"); } }
     }
     check_route_shapes();
+    if has_sitemap {
+        if has_static("/sitemap.xml") { err("app/sitemap.goose", 0, "public/sitemap.xml exists; remove it, or remove app/sitemap.goose, which generates /sitemap.xml"); }
+        for d in dirs {
+            if !d.route && !d.page_html { continue; }
+            if d.rel != "sitemap.xml" && d.rel != "robots.txt" { continue; }
+            var path: u8[>..] = [];
+            app_path(path, d.rel, "");
+            path.pop();
+            var m: u8[>..] = [];
+            format(m, "/", d.rel, " is generated by app/sitemap.goose; remove this folder", if d.rel == "robots.txt" { " or add public/robots.txt" } else { "" });
+            err(path, 0, m);
+        }
+    }
 }
 
 fn check_route_shapes() {
@@ -629,6 +735,31 @@ fn scan_lib_for_sqlite() {
     }
 }
 
+// The hub (one extra thread and its sockets) is built only for apps that use it.
+fn scan_for_hub(root: const u8[:]) {
+    var todo: u8[..512][>..] = [];
+    var first: u8[..512] = "";
+    first.append(root);
+    todo.push(first);
+    while todo.len > 0 && !uses_hub {
+        let dir: u8[..512] = todo[todo.len - 1];
+        todo.pop();
+        var names: u8[>..] = [];
+        if !list_dir(dir, names) { continue; }
+        for name in split(names, '\n') {
+            if name.len == 0 || name[0] == '.' { continue; }
+            var full: u8[>..] = [];
+            format(full, dir, "/", name);
+            if is_dir(full) {
+                if full.len < 512 { var t: u8[..512] = ""; t.append(full); todo.push(t); }
+            } else if ends_with(name, ".goose") {
+                var code: u8[>..] = [];
+                if read_file(full, code) && (find(code, "web::subscribe(") >= 0 || find(code, "web::websocket(") >= 0) { uses_hub = true; }
+            }
+        }
+    }
+}
+
 fn imports_of(src: const u8[:], out: u8[>..]&) {
     for line in split(src, '\n') {
         let t = trim(line);
@@ -637,7 +768,7 @@ fn imports_of(src: const u8[:], out: u8[>..]&) {
 }
 
 fn add_default_imports(imports: u8[>..]&) {
-    for imp in ["import std;", "import net.http;", "import web;", "import web.template;", "import web.valid;"] {
+    for imp in ["import std;", "import net.http;", "import web;", "import web.template;", "import web.valid;", "import web.meta;"] {
         if find(imports, imp) < 0 { imports.append(imp); imports.push(' '); }
     }
     for n in component_names {
@@ -775,10 +906,291 @@ fn template_tag(path: const u8[:], ln: i64, inner: const u8[:], line: const u8[:
     }
 }
 
-let GW_SCRIPT = "<script type=\"module\" src=\"/_gw/gwi.js\"></script>";
-
 fn script_tag(out: u8[>..]&) {
-    out.append("out.append(\""); lit(out, GW_SCRIPT); out.append("\"); ");
+    out.append("out.append(\"");
+    lit(out, "<script type=\"module\" src=\"/_gw/");
+    lit(out, rt_file);
+    lit(out, "\"></script>");
+    out.append("\"); ");
+}
+
+// -1, after reporting the error, when no public file has this URL.
+fn static_index(path: const u8[:], ln: i64, want: const u8[:]) -> i64 {
+    for s, i in statics { if s.url == want { return i; } }
+    var m: u8[>..] = [];
+    format(m, "no public file at ", want, " (looked for public/", if want.len > 0 && want[0] == '/' { want[1..] } else { want }, ")");
+    err(path, ln, m);
+    return -1;
+}
+
+// A string literal with no escapes, as the whole of arg; its text, or "" and false.
+fn plain_literal(arg: const u8[:]) -> const u8[:], bool {
+    if arg.len < 2 || arg[0] != '"' || arg[arg.len - 1] != '"' || find(arg[1..arg.len - 1], "\"") >= 0 || find(arg, "\\") >= 0 { return "", false; }
+    return arg[1..arg.len - 1], true;
+}
+
+// The hashed URL is written at build time, so a missing file fails the build instead of 404ing.
+fn asset_call(path: const u8[:], ln: i64, args: const u8[:], out: u8[>..]&) {
+    let want, ok = plain_literal(args);
+    if !ok {
+        err(path, ln, "@asset() takes one string literal, as in @asset(\"/css/site.css\")");
+        return;
+    }
+    let i = static_index(path, ln, want);
+    if i >= 0 { out.append("out.append(\""); lit(out, statics[i].hashed); out.append("\"); "); }
+}
+
+// ---------------------------------------------------------------- image sizes
+
+fn img_byte(d: const u8[:], i: i64) -> i64 { if i < 0 || i >= d.len { return 0; } return d[i]; }
+fn img_be(d: const u8[:], at: i64, n: i64) -> i64 {
+    var v = 0;
+    for k in n { v = v * 256 + img_byte(d, at + k); }
+    return v;
+}
+fn img_le(d: const u8[:], at: i64, n: i64) -> i64 {
+    var v = 0;
+    for k in n { v = v * 256 + img_byte(d, at + n - 1 - k); }
+    return v;
+}
+fn img_space(c: u8) -> bool { c == ' ' || c == '\t' || c == '\n' || c == '\r' }
+
+// A length of digits, an optional fraction and an optional px unit; rounded to whole pixels. Any other unit is not a pixel size.
+fn svg_dim(v: const u8[:]) -> i64, bool {
+    let t = trim(v);
+    var i = 0;
+    var whole = 0;
+    while i < t.len && t[i] >= '0' && t[i] <= '9' { whole = whole * 10 + (t[i] - '0'); i += 1; }
+    var digits = i;
+    if i < t.len && t[i] == '.' {
+        i += 1;
+        if i < t.len && t[i] >= '0' && t[i] <= '9' { if t[i] >= '5' { whole += 1; } digits += 1; }
+        while i < t.len && t[i] >= '0' && t[i] <= '9' { i += 1; digits += 1; }
+    }
+    if digits == 0 { return 0, false; }
+    if i < t.len && !(t[i..] == "px") { return 0, false; }
+    return whole, whole > 0;
+}
+
+// The value of attribute name in an <svg ...> tag, or "". A name inside another (stroke-width) is skipped by requiring space before it.
+fn svg_attr(tag: const u8[:], name: const u8[:]) -> const u8[:] {
+    var pos = 0;
+    while pos < tag.len {
+        let k = find(tag[pos..], name);
+        if k < 0 { return ""; }
+        let at = pos + k;
+        pos = at + name.len;
+        if at == 0 || !img_space(tag[at - 1]) { continue; }
+        var j = pos;
+        while j < tag.len && img_space(tag[j]) { j += 1; }
+        if j >= tag.len || tag[j] != '=' { continue; }
+        j += 1;
+        while j < tag.len && img_space(tag[j]) { j += 1; }
+        if j >= tag.len || (tag[j] != '"' && tag[j] != '\'') { continue; }
+        let q = tag[j];
+        var e = j + 1;
+        while e < tag.len && tag[e] != q { e += 1; }
+        if e >= tag.len { return ""; }
+        return tag[j + 1..e];
+    }
+    return "";
+}
+
+fn svg_size(d: const u8[:]) -> i64, i64, bool {
+    let at = find(d, "<svg");
+    if at < 0 { return 0, 0, false; }
+    var end = at;
+    var quote: u8 = 0;
+    while end < d.len {
+        let c = d[end];
+        if quote != 0 { if c == quote { quote = 0; } }
+        else if c == '"' || c == '\'' { quote = c; }
+        else if c == '>' { break; }
+        end += 1;
+    }
+    let tag = d[at..end];
+    let w, wok = svg_dim(svg_attr(tag, "width"));
+    let h, hok = svg_dim(svg_attr(tag, "height"));
+    if wok && hok { return w, h, true; }
+    // viewBox is "min-x min-y width height", separated by spaces or commas.
+    let vb = svg_attr(tag, "viewBox");
+    var n = 0;
+    var vw = 0;
+    var vh = 0;
+    var vok = true;
+    var i = 0;
+    while i < vb.len {
+        while i < vb.len && (img_space(vb[i]) || vb[i] == ',') { i += 1; }
+        var j = i;
+        while j < vb.len && !img_space(vb[j]) && vb[j] != ',' { j += 1; }
+        if j > i {
+            if n == 2 { let x, ok = svg_dim(vb[i..j]); vw = x; vok = vok && ok; }
+            if n == 3 { let x, ok = svg_dim(vb[i..j]); vh = x; vok = vok && ok; }
+            n += 1;
+        }
+        i = j;
+    }
+    if n == 4 && vok { return vw, vh, true; }
+    return 0, 0, false;
+}
+
+// Reads the pixel size from the file's header; false for an unknown format or a truncated file.
+fn image_size(d: const u8[:]) -> i64, i64, bool {
+    if d.len >= 24 && img_be(d, 0, 4) == 2303741511 && img_be(d, 4, 4) == 218765834 && d[12..16] == "IHDR" {
+        let w = img_be(d, 16, 4);
+        let h = img_be(d, 20, 4);
+        return w, h, w > 0 && h > 0;
+    }
+    if d.len >= 10 && (starts_with(d, "GIF87a") || starts_with(d, "GIF89a")) {
+        let w = img_le(d, 6, 2);
+        let h = img_le(d, 8, 2);
+        return w, h, w > 0 && h > 0;
+    }
+    if d.len >= 4 && img_byte(d, 0) == 255 && img_byte(d, 1) == 216 {
+        var i = 2;
+        while i + 4 <= d.len {
+            if d[i] != 255 { i += 1; continue; }
+            let m = img_byte(d, i + 1);
+            if m == 255 { i += 1; continue; }
+            // Markers with no length: TEM, RSTn, SOI, and a stuffed zero.
+            if m == 0 || m == 1 || m == 216 || (m >= 208 && m <= 215) { i += 2; continue; }
+            if m == 217 { break; }
+            let seg = img_be(d, i + 2, 2);
+            if seg < 2 { break; }
+            if m >= 192 && m <= 207 && m != 196 && m != 200 && m != 204 {
+                if i + 9 > d.len { break; }
+                let h = img_be(d, i + 5, 2);
+                let w = img_be(d, i + 7, 2);
+                return w, h, w > 0 && h > 0;
+            }
+            i += 2 + seg;
+        }
+        return 0, 0, false;
+    }
+    if d.len >= 30 && starts_with(d, "RIFF") && d[8..12] == "WEBP" {
+        let kind = d[12..16];
+        if kind == "VP8 " && img_byte(d, 23) == 157 && img_byte(d, 24) == 1 && img_byte(d, 25) == 42 {
+            let w = img_le(d, 26, 2) & 16383;
+            let h = img_le(d, 28, 2) & 16383;
+            return w, h, w > 0 && h > 0;
+        }
+        if kind == "VP8L" && img_byte(d, 20) == 47 {
+            let b = img_le(d, 21, 4);
+            return (b & 16383) + 1, ((b >> 14) & 16383) + 1, true;
+        }
+        if kind == "VP8X" {
+            return img_le(d, 24, 3) + 1, img_le(d, 27, 3) + 1, true;
+        }
+        return 0, 0, false;
+    }
+    return svg_size(d);
+}
+
+// ---------------------------------------------------------------- @image
+
+// Where the top-level comma after from is, or args.len: quotes and brackets hide the commas inside them.
+fn arg_end(args: const u8[:], from: i64) -> i64 {
+    var depth = 0;
+    var i = from;
+    while i < args.len {
+        let c = args[i];
+        if c == '"' || c == '\'' {
+            let j = tscan::skip_literal(args, i);
+            if j > i { i = j; continue; }
+        }
+        if c == '(' || c == '[' || c == '{' { depth += 1; }
+        else if c == ')' || c == ']' || c == '}' { depth -= 1; }
+        else if c == ',' && depth == 0 { return i; }
+        i += 1;
+    }
+    return args.len;
+}
+
+// The text of a string literal, with \" \\ \n \t decoded; false when arg is not exactly one literal.
+fn decode_literal(arg: const u8[:], out: u8[>..]&) -> bool {
+    if arg.len < 2 || arg[0] != '"' || tscan::skip_literal(arg, 0) != arg.len || arg[arg.len - 1] != '"' { return false; }
+    var i = 1;
+    while i < arg.len - 1 {
+        let c = arg[i];
+        if c == '\\' && i + 1 < arg.len - 1 {
+            i += 1;
+            out.push(if arg[i] == 'n' { '\n' } else if arg[i] == 't' { '\t' } else { arg[i] });
+        } else { out.push(c); }
+        i += 1;
+    }
+    return true;
+}
+
+// True when attrs sets the attribute name: it starts a word and is followed by = or a space or the end.
+fn sets_attr(attrs: const u8[:], name: const u8[:]) -> bool {
+    var pos = 0;
+    while pos < attrs.len {
+        let k = find(attrs[pos..], name);
+        if k < 0 { return false; }
+        let at = pos + k;
+        let e = at + name.len;
+        pos = e;
+        if (at == 0 || img_space(attrs[at - 1])) && (e == attrs.len || attrs[e] == '=' || img_space(attrs[e])) { return true; }
+    }
+    return false;
+}
+
+// name.ext becomes name@2x.ext; "" when the last segment has no extension.
+fn retina_url(url: const u8[:]) -> u8[..520] {
+    var seg = 0;
+    for c, i in url { if c == '/' { seg = i + 1; } }
+    var dot = -1;
+    for i in seg..url.len { if url[i] == '.' && i > seg { dot = i; } }
+    var r: u8[..520] = "";
+    if dot < 0 || url.len + 3 > 512 { return r; }
+    r.append(url[..dot]);
+    r.append("@2x");
+    r.append(url[dot..]);
+    return r;
+}
+
+fn image_call(path: const u8[:], ln: i64, args: const u8[:], out: u8[>..]&) {
+    let usage = "@image() needs a string literal path and an alt text, as in @image(\"/img/a.png\", \"A\")";
+    var starts: i64[>..] = [];
+    var ends: i64[>..] = [];
+    var from = 0;
+    loop {
+        let e = arg_end(args, from);
+        starts.push(from);
+        ends.push(e);
+        if e >= args.len { break; }
+        from = e + 1;
+    }
+    let n = starts.len;
+    if n < 2 || n > 3 { err(path, ln, usage); return; }
+    let a_path = trim(args[starts[0]..ends[0]]);
+    let a_alt = trim(args[starts[1]..ends[1]]);
+    if a_alt.len == 0 { err(path, ln, usage); return; }
+    let want, ok = plain_literal(a_path);
+    if !ok { err(path, ln, usage); return; }
+    var attrs: u8[>..] = [];
+    if n == 3 && !decode_literal(trim(args[starts[2]..ends[2]]), attrs) { err(path, ln, usage); return; }
+    let i = static_index(path, ln, want);
+    if i < 0 { return; }
+    var data: u8[>..] = [];
+    if !read(statics[i].file, data) { return; }
+    let w, h, known = image_size(data);
+    var tag: u8[>..] = [];
+    format(tag, "<img src=\"", statics[i].hashed, "\"");
+    if known { format(tag, " width=\"", w, "\" height=\"", h, "\""); }
+    tag.append(" alt=\"");
+    out.append("out.append(\""); lit(out, tag); out.append("\"); web::put(out, "); out.append(a_alt); out.append("); ");
+    tag.clear();
+    tag.push('"');
+    if !sets_attr(attrs, "loading") { tag.append(" loading=\"lazy\""); }
+    if !sets_attr(attrs, "decoding") { tag.append(" decoding=\"async\""); }
+    let retina = retina_url(statics[i].url);
+    for r in statics {
+        if retina.len > 0 && r.url == retina { format(tag, " srcset=\"", statics[i].hashed, " 1x, ", r.hashed, " 2x\""); }
+    }
+    if attrs.len > 0 { tag.push(' '); tag.append(attrs); }
+    tag.push('>');
+    out.append("out.append(\""); lit(out, tag); out.append("\"); ");
 }
 
 fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:], kind: i64, in_frag: bool, out: u8[>..]&) {
@@ -787,6 +1199,14 @@ fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:
         if args.len > 0 { err(path, ln, "@slot() takes no arguments"); }
         if kind == K_LAYOUT && tpl_script { script_tag(out); }
         out.append("F(); ");
+    } else if name == "asset" {
+        asset_call(path, ln, args, out);
+    } else if name == "image" {
+        image_call(path, ln, args, out);
+    } else if name == "meta" {
+        if kind != K_LAYOUT { err(path, ln, "@meta() is for layout.html only"); }
+        if args.len > 0 { err(path, ln, "@meta() takes no arguments"); }
+        out.append("web::render_meta(out, req, ctx); ");
     } else if name[0] >= 'A' && name[0] <= 'Z' && find(name, "::") < 0 {
         if in_frag {
             var m: u8[>..] = [];
@@ -1268,6 +1688,11 @@ fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
         m.append("    if !web::csrf_ok(r, res) { return; }\n");
     }
     middleware_before(m, d, rq);
+    if d.revalidate > 0 {
+        m.append("    if web::cache_serve(req, ctx, res) {\n");
+        middleware_after(m, d, rq);
+        m.append("        return;\n    }\n");
+    }
     m.append("    web::html(res, http::Status.Ok);\n");
     if starts_token(d) { format(m, "    if !web::csrf_begin(", rq, ", ctx, res) { return; }\n"); }
     if d.frags.len > 0 {
@@ -1287,6 +1712,7 @@ fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
         if d.has_load { format(m, "    let props = ", d.page_ns, "::load(req, ctx", if d.has_load_res { ", res" } else { "" }, ");\n"); }
         gen_page_reply(m, d, d.has_load, "    ", rq);
     }
+    if d.revalidate > 0 { format(m, "    web::cache_store(req, ctx, res, ", d.revalidate, ");\n"); }
     middleware_after(m, d, rq);
     m.append("}\n");
 }
@@ -1368,6 +1794,10 @@ fn gen_dispatch(m: u8[>..]&) {
         m.append("        if hit { return i; }\n");
         m.append("    }\n");
     }
+    if has_sitemap {
+        m.append("    if req.path == \"/sitemap.xml\" { sitemap_xml(req, ctx, res); finish(req, ctx, res); return -1; }\n");
+        if !has_static("/robots.txt") { m.append("    if req.path == \"/robots.txt\" { robots_txt(req, ctx, res); finish(req, ctx, res); return -1; }\n"); }
+    }
     m.append("    var seg: const u8[:][16] = [\"\"; 16];\n");
     m.append("    var starts: i64[16] = [0; 16];\n");
     m.append("    var ends: i64[16] = [0; 16];\n");
@@ -1426,30 +1856,86 @@ fn gen_dispatch(m: u8[>..]&) {
 
 fn gen_static(m: u8[>..]&) {
     for s, i in statics {
-        format(m, "let S", i, " = embed_file(\"../"); lit(m, s.file); m.append("\");\n");
+        format(m, "let S", i, " = embed_file(\"../"); lit(m, if s.embed.len > 0 { s.embed } else { s.file }); m.append("\");\n");
+        if s.gz >= 0 { format(m, "let S", s.gz, " = embed_file(\"../"); lit(m, gen_root); format(m, "/_gz/", i, ".gz\");\n"); }
     }
     m.append("fn static_bytes(i: i64) -> const u8[:] {\n");
-    for s, i in statics { format(m, "    if i == ", i, " { return S", i, "; }\n"); }
+    for s, i in statics {
+        format(m, "    if i == ", i, " { return S", i, "; }\n");
+        if s.gz >= 0 { format(m, "    if i == ", s.gz, " { return S", s.gz, "; }\n"); }
+    }
     m.append("    return \"\";\n}\n");
     m.append("fn static_file(req: const http::Request&, res: http::Response&) -> i64, bool {\n");
     if statics.len > 0 {
         m.append("    let p = req.path;\n    match p.len {\n");
         var lens: i64[>..] = [];
-        for s in statics { if !contains(lens, s.url.len) { lens.push(s.url.len); } }
+        for s in statics {
+            if !contains(lens, s.url.len) { lens.push(s.url.len); }
+            if !contains(lens, s.hashed.len) { lens.push(s.hashed.len); }
+        }
         sort(lens);
         for l in lens {
             format(m, "        ", l, " => {\n");
             for s, i in statics {
-                if s.url.len != l { continue; }
-                m.append("            if p == \""); lit(m, s.url);
-                format(m, "\" { return web::send_static(req, res, ", i, ", \"", s.ctype, "\", \""); lit(m, s.etag);
-                m.append("\"), true; }\n");
+                for hashed in [false, true] {
+                    var u: const u8[:] = s.url;
+                    if hashed { u = s.hashed; }
+                    if u.len != l { continue; }
+                    m.append("            if p == \""); lit(m, u);
+                    format(m, "\" { return web::send_static(req, res, ", i, ", ", s.gz, ", \"", s.ctype, "\", \""); lit(m, s.etag);
+                    format(m, "\", ", if hashed { "true" } else { "false" }, "), true; }\n");
+                }
             }
             m.append("        },\n");
         }
         m.append("        _ => {},\n    }\n");
     }
     m.append("    return -1, false;\n}\n");
+}
+
+// For URLs known only at run time; an unknown path comes back unchanged.
+fn gen_asset_url(m: u8[>..]&) {
+    m.append("fn web::asset_url(path: const u8[:]) -> const u8[:] {\n");
+    if statics.len > 0 {
+        m.append("    match path.len {\n");
+        var lens: i64[>..] = [];
+        for s in statics { if !contains(lens, s.url.len) { lens.push(s.url.len); } }
+        sort(lens);
+        for l in lens {
+            format(m, "        ", l, " => {\n");
+            for s in statics {
+                if s.url.len != l { continue; }
+                m.append("            if path == \""); lit(m, s.url);
+                m.append("\" { return \""); lit(m, s.hashed); m.append("\"; }\n");
+            }
+            m.append("        },\n");
+        }
+        m.append("        _ => {},\n    }\n");
+    }
+    m.append("    return path;\n}\n");
+}
+
+// Both routes answer GET and HEAD only, like a route.goose with those two methods.
+fn gen_sitemap(m: u8[>..]&) {
+    if !has_sitemap { return; }
+    for name in ["sitemap_xml", "robots_txt"] {
+        if name == "robots_txt" && has_static("/robots.txt") { continue; }
+        format(m, "fn ", name, SIG, " {\n");
+        m.append("    match req.method {\n        Get, Head => {},\n");
+        m.append("        Options => { web::options(res, \"GET, HEAD, OPTIONS\"); return; },\n");
+        m.append("        _ => { web::method_not_allowed(res, \"GET, HEAD, OPTIONS\"); return; },\n    }\n");
+        if name == "robots_txt" { m.append("    web::robots_reply(req, res);\n}\n"); continue; }
+        m.append("    var s = web::Sitemap { base: [], body: [], count: 0 };\n    web::sitemap_init(req, s);\n");
+        for d in dirs {
+            if !d.page_html || !d.in_sitemap || find(d.rel, "[") >= 0 { continue; }
+            var u: u8[>..] = [];
+            url_of(u, d.rel);
+            m.append("    web::sitemap_add(s, \""); lit(m, u); m.append("\");\n");
+        }
+        if has_entries { m.append("    smap::entries(req, ctx, s);\n"); }
+        m.append("    web::sitemap_reply(res, s);\n}\n");
+    }
+    m.append("\n");
 }
 
 fn gen_finish(m: u8[>..]&) {
@@ -1537,6 +2023,124 @@ fn gen_error_reply(m: u8[>..]&) {
     m.append("    if web::dev_mode() { web::dev_error_script(res.body, info); }\n}\n");
 }
 
+// The generated main's export mode: each page is rendered in process through dispatch with a synthetic request.
+let EXPORT_RUNTIME = """
+struct Export { pages: i64, files: i64, failed: bool }
+
+fn export_error(a: const u8[:], b: const u8[:], c: const u8[:], st: Export&) {
+    var s: u8[>..] = [];
+    format(s, "gweb: ", a, b, c, "\n");
+    write_stderr(s);
+    st.failed = true;
+}
+
+fn export_get(path: const u8[:], owner_fd: i32, st: Export&, out: u8[>..]&) -> bool {
+    var raw: u8[>..] = [];
+    format(raw, "GET ", path, " HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    let req, parsed = http::parse_request(raw);
+    var ready = false;
+    match parsed { Ready => { ready = true; }, _ => {}, }
+    if !ready { export_error(path, ": not a valid request path", "", st); return false; }
+    var ctx = web::new_ctx(0, owner_fd);
+    var res = http::new_response();
+    let hit = dispatch(req, ctx, res);
+    if res.status != http::Status.Ok {
+        var code: u8[>..] = [];
+        format(code, http::code(res.status));
+        export_error(path, ": the reply is ", code, st);
+        return false;
+    }
+    if hit >= 0 { out.append(static_bytes(hit)); } else { out.append(res.body); }
+    return true;
+}
+
+fn export_write(file: const u8[:], data: const u8[:], st: Export&) -> bool {
+    for c, i in file { if c == '/' && i > 0 { make_dir(file[..i]); } }
+    if write_file(file, data) { return true; }
+    export_error("cannot write ", file, "", st);
+    return false;
+}
+
+fn export_page(dir: const u8[:], path: const u8[:], owner_fd: i32, st: Export&) {
+    var body: u8[>..] = [];
+    if !export_get(path, owner_fd, st, body) { return; }
+    var file: u8[>..] = [];
+    format(file, dir, if path == "/" { "/index" } else { path }, ".html");
+    if export_write(file, body, st) { st.pages += 1; }
+}
+
+fn export_generated(dir: const u8[:], path: const u8[:], owner_fd: i32, st: Export&) {
+    var body: u8[>..] = [];
+    if !export_get(path, owner_fd, st, body) { return; }
+    var file: u8[>..] = [];
+    format(file, dir, path);
+    if export_write(file, body, st) { st.files += 1; }
+}
+
+fn export_static(dir: const u8[:], url: const u8[:], data: const u8[:], st: Export&) {
+    var file: u8[>..] = [];
+    format(file, dir, url);
+    if export_write(file, data, st) { st.files += 1; }
+}
+
+""";
+
+// Pages without a dynamic segment, then each static_paths() path, then the static files at both URLs, then the generated routes.
+fn gen_export(m: u8[>..]&) {
+    m.append(EXPORT_RUNTIME);
+    m.append("fn run_export(out_dir: const u8[:], owner_fd: i32) -> bool {\n");
+    m.append("    var dir: u8[>..] = [];\n    dir.append(out_dir);\n");
+    m.append("    while dir.len > 1 && dir[dir.len - 1] == '/' { dir.pop(); }\n");
+    m.append("    var st = Export { pages: 0, files: 0, failed: false };\n");
+    for d in dirs {
+        if !d.page_html { continue; }
+        var u: u8[>..] = [];
+        url_of(u, d.rel);
+        if find(d.rel, "[") < 0 { m.append("    export_page(dir, \""); lit(m, u); m.append("\", owner_fd, st);\n"); }
+        else if d.static_paths { format(m, "    for p in ", d.page_ns, "::static_paths() { export_page(dir, p, owner_fd, st); }\n"); }
+        else { m.append("    print(\"gweb: skipped "); lit(m, u); m.append(": it has a dynamic segment and no fn static_paths() in its page.goose\");\n"); }
+    }
+    for s, i in statics {
+        for hashed in [false, true] {
+            m.append("    export_static(dir, \""); lit(m, if hashed { s.hashed } else { s.url });
+            format(m, "\", static_bytes(", i, "), st);\n");
+        }
+    }
+    if has_sitemap {
+        m.append("    export_generated(dir, \"/sitemap.xml\", owner_fd, st);\n");
+        if !has_static("/robots.txt") { m.append("    export_generated(dir, \"/robots.txt\", owner_fd, st);\n"); }
+    }
+    m.append("    print(\"gweb: exported \", st.pages, \" pages and \", st.files, \" files to \", dir);\n");
+    m.append("    return !st.failed;\n}\n\n");
+    if has_state { m.append("thread_fn export_thread(owner_fd: i32, cfg: web::Config) {\n    exit(if run_export(cfg.export_dir, owner_fd) { 0 } else { 1 });\n}\n\n"); }
+}
+
+// One thread reads every hub event and forwards it to the handlers app/socket.goose defines; without one, messages are dropped.
+// The handlers get a fresh Ctx per event: id and topic say which connection, and web::send, publish and state::ask work as in a route.
+fn gen_hub_thread(m: u8[>..]&) {
+    m.append("thread_fn hub_thread(cfg: web::Config, owner_fd: i32) {\n");
+    m.append("    let h = net::Hub { handle: cfg.hub };\n    var msg: u8[>..] = [];\n    var topic: u8[>..] = [];\n");
+    m.append("    loop {\n        msg.clear();\n        topic.clear();\n        let id, ev = h.next(msg, topic);\n");
+    m.append("        var ctx = web::new_ctx(cfg.workers, owner_fd, cfg.hub);\n        match ev {\n");
+    if socket_open { m.append("            Open => { socket::open(ctx, id, topic); },\n"); }
+    if socket_message {
+        m.append("            Text => { socket::message(ctx, id, topic, msg, false); },\n");
+        m.append("            Binary => { socket::message(ctx, id, topic, msg, true); },\n");
+    }
+    if socket_close { m.append("            Close => { socket::close(ctx, id, topic); },\n"); }
+    m.append("            Failed => { print(\"goose-web: the hub stopped\"); return; },\n            _ => {},\n        }\n    }\n}\n\n");
+    m.append("""
+thread_fn hub_supervisor(cfg: web::Config, owner_fd: i32) {
+    var why: u8[>..] = [];
+    while !thread_wait(thread_spawn_contained(hub_thread, cfg, owner_fd), why) {
+        print("goose-web: the hub thread stopped: ", why, "; restarting it");
+        why.clear();
+    }
+}
+
+""");
+}
+
 fn gen_main() -> u8[>..] {
     var m: u8[>..] = [];
     m.append("// Generated by gweb. Do not edit; it is rewritten on every build.\n");
@@ -1544,7 +2148,8 @@ fn gen_main() -> u8[>..] {
     m.append("import web from \""); lit(m, pkg_source(0)); m.append("\";\n");
     m.append("import net from \""); lit(m, pkg_source(1)); m.append("\";\n");
     if uses_sqlite { m.append("import sqlite from \""); lit(m, pkg_source(2)); m.append("\";\n"); }
-    m.append("import net.http;\nimport web.template;\nimport web.static;\nimport web.owner;\nimport web.form;\nimport web.csrf;\nimport web.valid;\nimport web.upload;\nimport web.errors;\nimport web.crypto;\nimport web.session;\nimport web.rate;\nimport web.cors;\n");
+    m.append("import os;\nimport net.http;\nimport web.template;\nimport web.meta;\nimport web.sitemap;\nimport web.static;\nimport web.owner;\nimport web.form;\nimport web.csrf;\nimport web.valid;\nimport web.upload;\nimport web.errors;\nimport web.crypto;\nimport web.session;\nimport web.rate;\nimport web.cors;\nimport web.cache;\nimport web.stream;\nimport web.push;\n");
+    if uses_hub { m.append("import net.hub;\n"); }
     for d in dirs {
         if d.route { format(m, "import ", d.route_ns, ";\n"); }
         if d.page_html { format(m, "import ", d.page_ns, "_html;\n"); if d.page_goose { format(m, "import ", d.page_ns, ";\n"); } }
@@ -1555,6 +2160,8 @@ fn gen_main() -> u8[>..] {
     }
     if has_not_found { m.append("import nf;\n"); }
     if has_config { m.append("import config;\n"); }
+    if has_sitemap { m.append("import smap;\n"); }
+    if has_socket { m.append("import socket;\n"); }
     if has_state {
         m.append("import state;\n");
         m.append("fn state::ask(ctx: const web::Ctx&, msg: state::Msg) -> state::Reply, bool {\n");
@@ -1562,6 +2169,7 @@ fn gen_main() -> u8[>..] {
     }
     m.append("\n");
     gen_static(m);
+    gen_asset_url(m);
     m.append("\n");
     for d, i in dirs {
         if d.route { gen_route_fn(m, d, i); }
@@ -1570,9 +2178,12 @@ fn gen_main() -> u8[>..] {
     m.append("\n");
     gen_error_reply(m);
     m.append("\n");
+    gen_sitemap(m);
     gen_finish(m);
     m.append("\n");
     gen_dispatch(m);
+    m.append("\n");
+    gen_export(m);
     m.append("""
 thread_fn worker(slot: i64, server: net::Socket, owner_fd: i32, cfg: web::Config) {
     web::run_worker(slot, server, owner_fd, cfg, dispatch, static_bytes);
@@ -1622,11 +2233,24 @@ thread_fn supervisor(slot: i64, server: net::Socket, owner_fd: i32, cfg: web::Co
     }
 }
 
+""");
+    if uses_hub { gen_hub_thread(m); }
+    m.append("""
 fn main() {
-    let cfg = web::config_from_args();
+    var cfg = web::config_from_args();
 """);
     if uses_keys { m.append("    if cfg.auth.keys.n == 0 { print(\"goose-web: set WEB_SECRET (32 to 64 bytes; openssl rand -hex 32)\"); exit(2); }\n"); }
     if has_config { m.append("    if !config::check() { exit(2); }\n"); }
+    // Export renders in process: no socket and no workers, but pages that ask the state owner still need it.
+    if has_state {
+        m.append("    if cfg.export_dir.len > 0 {\n");
+        if has_state_init { m.append("        state::init();\n"); }
+        m.append("        let chans = web::owner_channels(1);\n");
+        m.append("        thread_spawn(export_thread, web::worker_end(chans, 0), cfg);\n");
+        m.append("        web::owner_loop<state::Msg, state::Reply>(chans, state::handle);\n        return;\n    }\n");
+    } else {
+        m.append("    if cfg.export_dir.len > 0 { exit(if run_export(cfg.export_dir, -1) { 0 } else { 1 }); }\n");
+    }
     m.append("""
     let server = net::listen(cfg.port, cfg.host, 1024);
     guard server.ok() else { print("goose-web: cannot listen on port ", cfg.port, ": ", net::last_error()); exit(1); }
@@ -1635,11 +2259,13 @@ fn main() {
 """);
     if has_state {
         if has_state_init { m.append("    state::init();\n"); }
-        m.append("    let chans = web::owner_channels(cfg.workers);\n");
+        format(m, "    let chans = web::owner_channels(cfg.workers", if uses_hub { " + 1" } else { "" }, ");\n");
     }
     m.append("    web::prepare_uploads(cfg);\n");
+    if uses_hub { m.append("    let hb = net::hub();\n    cfg.hub = hb.handle;\n"); }
     m.append("    print(\"goose-web: http://localhost:\", cfg.port, \" (\", cfg.workers, \" workers)\");\n");
     m.append("    var ids: i64[>..] = [];\n");
+    if uses_hub { m.append(if has_state { "    ids.push(thread_spawn(hub_supervisor, cfg, web::worker_end(chans, cfg.workers)));\n" } else { "    ids.push(thread_spawn(hub_supervisor, cfg, -1));\n" }); }
     if has_state { m.append("    for i in cfg.workers { ids.push(thread_spawn(supervisor, i, server, web::worker_end(chans, i), cfg)); }\n"); }
     else { m.append("    for i in cfg.workers { ids.push(thread_spawn(supervisor, i, server, -1, cfg)); }\n"); }
     if has_state { m.append("    web::owner_loop<state::Msg, state::Reply>(chans, state::handle);\n"); }
@@ -1723,26 +2349,260 @@ fn check_version() {
     }
 }
 
+// ---------------------------------------------------------------- CSS minification
+
+fn css_space(c: u8) -> bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 12; }
+
+fn css_lower(c: u8) -> u8 { if c >= 'A' && c <= 'Z' { return c + 32; } return c; }
+
+fn css_ident(c: u8) -> bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+}
+
+// Index just past the string that opens at i, or -1 when it never closes.
+fn css_string_end(src: const u8[:], i: i64) -> i64 {
+    let q = src[i];
+    var k = i + 1;
+    while k < src.len {
+        if src[k] == '\\' { k += 2; continue; }
+        if src[k] == q { return k + 1; }
+        if src[k] == '\n' { return -1; }
+        k += 1;
+    }
+    return -1;
+}
+
+// i is just past "url(". A quoted argument may hold a ")".
+fn css_url_end(src: const u8[:], i: i64) -> i64 {
+    var k = i;
+    while k < src.len {
+        let c = src[k];
+        if c == '"' || c == '\'' {
+            let e = css_string_end(src, k);
+            if e < 0 { return -1; }
+            k = e;
+            continue;
+        }
+        if c == '\\' { k += 2; continue; }
+        if c == ')' { return k + 1; }
+        k += 1;
+    }
+    return -1;
+}
+
+// Writes the space that pending whitespace stands for, unless a neighbour makes it meaningless. The
+// combinators > ~ + keep their spaces inside parentheses, where + is calc's operator and > a range
+// comparison. A space before ":" stays: "a :hover" and "a:hover" select different elements.
+fn css_gap(res: u8[>..]&, next: u8, paren: i64, lit_end: bool) {
+    if res.len == 0 { return; }
+    let last = res[res.len - 1];
+    if !lit_end && (last == '{' || last == '}' || last == ';' || last == ',' || last == ':'
+                    || (paren == 0 && (last == '>' || last == '~' || last == '+'))) { return; }
+    if next == '{' || next == '}' || next == ';' || next == ',' || (paren == 0 && (next == '>' || next == '~' || next == '+')) { return; }
+    res.push(' ');
+}
+
+// Appends the minified src to out and returns true; returns false, leaving out alone, when strings, url(),
+// comments, parentheses or braces do not balance, so a file this cannot read is served as written.
+fn minify_css(src: const u8[:], out: u8[>..]&) -> bool {
+    var res: u8[>..] = [];
+    var depth = 0;
+    var paren = 0;
+    var pending = false;      // whitespace or a dropped comment came since the last byte written
+    var lit_end = false;      // the last bytes written were copied verbatim, so they say nothing about the next space
+    var i = 0;
+    while i < src.len {
+        let c = src[i];
+        if css_space(c) { pending = true; i += 1; continue; }
+        if c == '/' && i + 1 < src.len && src[i + 1] == '*' {
+            var e = i + 2;
+            while e + 1 < src.len && !(src[e] == '*' && src[e + 1] == '/') { e += 1; }
+            if e + 1 >= src.len { return false; }
+            if i + 2 < src.len && src[i + 2] == '!' {
+                if pending { css_gap(res, '/', paren, lit_end); pending = false; }
+                res.append(src[i..e + 2]);
+                lit_end = true;
+            } else {
+                pending = true;
+            }
+            i = e + 2;
+            continue;
+        }
+        let spaced = pending;
+        if pending { css_gap(res, c, paren, lit_end); pending = false; }
+        if c == '"' || c == '\'' {
+            let e = css_string_end(src, i);
+            if e < 0 { return false; }
+            res.append(src[i..e]);
+            lit_end = true;
+            i = e;
+            continue;
+        }
+        if c == '\\' && i + 1 < src.len {
+            res.push(c);
+            res.push(src[i + 1]);
+            lit_end = true;
+            i += 2;
+            continue;
+        }
+        let n = res.len;
+        if c == '(' && !spaced && n >= 3 && css_lower(res[n - 3]) == 'u' && css_lower(res[n - 2]) == 'r' && css_lower(res[n - 1]) == 'l'
+           && (n == 3 || !css_ident(res[n - 4])) {
+            let e = css_url_end(src, i + 1);
+            if e < 0 { return false; }
+            res.append(src[i..e]);
+            lit_end = true;
+            i = e;
+            continue;
+        }
+        if c == '{' { depth += 1; }
+        if c == '}' { depth -= 1; if depth < 0 { return false; } }
+        if c == '(' { paren += 1; }
+        if c == ')' { paren -= 1; if paren < 0 { return false; } }
+        res.push(c);
+        lit_end = false;
+        i += 1;
+    }
+    if depth != 0 || paren != 0 { return false; }
+    out.append(res);
+    return true;
+}
+
+fn css_case(src: const u8[:], ok: bool, want: const u8[:]) -> bool {
+    var out: u8[>..] = [];
+    let got = minify_css(src, out);
+    if got == ok && (!ok || out == want) && (ok || out.len == 0) { return true; }
+    var m: u8[>..] = [];
+    format(m, "test-css: for '", src, "' wanted ", if ok { "true" } else { "false" }, " ", want, ", got ", if got { "true" } else { "false" }, " ", out, "\n");
+    write_stderr(m);
+    return false;
+}
+
+// gweb test-css: the minifier's cases; it needs no project.
+fn test_css() -> bool {
+    var ok = true;
+    ok = css_case("p { color: red; }\n", true, "p{color:red;}") && ok;
+    ok = css_case("a::after { content: \"a  b\"; }", true, "a::after{content:\"a  b\";}") && ok;
+    ok = css_case("a { content: 'x  ; }'; }", true, "a{content:'x  ; }';}") && ok;
+    ok = css_case("a { background: url( x ) no-repeat; }", true, "a{background:url( x ) no-repeat;}") && ok;
+    ok = css_case("a { background: URL(\"a b)\" ) }", true, "a{background:URL(\"a b)\" )}") && ok;
+    ok = css_case("a { width: calc(1px + 2px); }", true, "a{width:calc(1px + 2px);}") && ok;
+    ok = css_case("a { margin: calc( 1px - 2px ) 0 }", true, "a{margin:calc( 1px - 2px ) 0}") && ok;
+    ok = css_case("/*! keep */ a { b: c } /* drop */", true, "/*! keep */ a{b:c}") && ok;
+    ok = css_case("a/* x */b { c: d }", true, "a b{c:d}") && ok;
+    ok = css_case("a  >  b ~ c + d , e { f: g }", true, "a>b~c+d,e{f:g}") && ok;
+    ok = css_case("a :hover { b: c }", true, "a :hover{b:c}") && ok;
+    ok = css_case("@media screen and (min-width: 5px) { a { b: c; } d { e: f } }", true,
+                  "@media screen and (min-width:5px){a{b:c;}d{e:f}}") && ok;
+    ok = css_case("a { b: c;", false, "") && ok;
+    ok = css_case("a { b: c } }", false, "") && ok;
+    ok = css_case("a { b: \"c; }", false, "") && ok;
+    ok = css_case("a { b: c } /* open", false, "") && ok;
+    ok = css_case("a { b: url(x }", false, "") && ok;
+    if ok { write_stdout("test-css: ok\n"); }
+    return ok;
+}
+
+// ---------------------------------------------------------------- embedded variants
+
+fn gzippable(ctype: const u8[:]) -> bool {
+    return starts_with(ctype, "text/") || starts_with(ctype, "application/json") || starts_with(ctype, "application/xml")
+        || starts_with(ctype, "image/svg+xml") || starts_with(ctype, "application/wasm");
+}
+
+// The bytes a static serves: its file, minified when min says so.
+fn served_bytes(s: const Static&, out: u8[>..]&) -> bool {
+    var raw: u8[>..] = [];
+    if !read(s.file, raw) { return false; }
+    if !s.min { out.append(raw); return true; }
+    return minify_css(raw, out);
+}
+
+// Writes what the binary embeds besides public/ and _gw/: minified CSS and gzip variants. Runs once every
+// static is known, because a gz index counts on from statics.len.
+fn gen_variants() {
+    var dir: u8[>..] = [];
+    format(dir, gen_root, "/_pub");
+    make_dir(dir);
+    dir.clear();
+    format(dir, gen_root, "/_gz");
+    make_dir(dir);
+    var next = statics.len;
+    for &s, i in statics {
+        var data: u8[>..] = [];
+        if !served_bytes(s, data) { continue; }
+        if s.min {
+            var p: u8[>..] = [];
+            format(p, gen_root, "/_pub/", i, ".css");
+            write(p, data);
+            s.embed.append(p);
+        }
+        if data.len < 1024 || !gzippable(s.ctype) { continue; }
+        var z: u8[>..] = [];
+        // A variant that saves under a tenth costs a header and a second ETag for nothing.
+        if c_gzip(data, z) == 0 || z.len * 10 > data.len * 9 { continue; }
+        var zp: u8[>..] = [];
+        format(zp, gen_root, "/_gz/", i, ".gz");
+        write(zp, z);
+        s.gz = next;
+        next += 1;
+    }
+}
+
 // ---------------------------------------------------------------- components
 
 fn push_gw_static(url: const u8[:], file: const u8[:], data: const u8[:]) {
-    var s = Static { url: "", file: "", ctype: "text/javascript; charset=utf-8", etag: "" };
+    var s = Static { url: "", file: "", ctype: "text/javascript; charset=utf-8", etag: "", hashed: "", embed: "", min: false, gz: -1 };
     s.url.append(url);
     s.file.append(file);
     s.etag = etag_of(data);
+    s.hashed = hashed_url(s.url, s.etag);
     statics.push(s);
 }
 
-fn gen_runtime(dev: bool) {
+// Hashed before components and templates, which name the file; written only when something uses it.
+fn prepare_runtime(dev: bool) {
+    rt_js.clear();
+    runtime_js(!dev, rt_js);
+    rt_file.clear();
+    let e = etag_of(rt_js);
+    format(rt_file, "gwi.", e[1..9], ".js");
+}
+
+fn gen_runtime() {
     var gw_dir: u8[>..] = [];
     format(gw_dir, gen_root, "/_gw");
     make_dir(gw_dir);
-    var rt: u8[>..] = [];
-    runtime_js(!dev, rt);
     var js_path: u8[>..] = [];
     format(js_path, gw_dir, "/gwi.js");
-    write(js_path, rt);
-    push_gw_static("/_gw/gwi.js", js_path, rt);
+    write(js_path, rt_js);
+    push_gw_static("/_gw/gwi.js", js_path, rt_js);
+}
+
+// A hashed URL may not collide with another file's URLs or a literal route.
+fn check_hashed() {
+    for s, i in statics {
+        for o, k in statics {
+            if k == i { continue; }
+            let hit_url = s.hashed == o.url;
+            let hit_hash = k > i && s.hashed == o.hashed;
+            if !hit_url && !hit_hash { continue; }
+            var m: u8[>..] = [];
+            format(m, "this file's hashed URL ", s.hashed, " is taken by ");
+            if hit_url { m.append(o.url); } else { m.append(o.hashed); }
+            err(s.file, 0, m);
+        }
+        for d in dirs {
+            if !d.route && !d.page_html { continue; }
+            var u: u8[>..] = [];
+            url_of(u, d.rel);
+            if s.hashed == u {
+                var m: u8[>..] = [];
+                format(m, "this file's hashed URL ", s.hashed, " is taken by ", u);
+                err(s.file, 0, m);
+            }
+        }
+    }
 }
 
 // gen goes on after translator errors, so the Goose compiler reports its errors too.
@@ -1765,7 +2625,7 @@ fn gen_components(dev: bool) {
         var g: u8[>..] = [];
         var j: u8[>..] = [];
         var e: u8[>..] = [];
-        if !component::compile(n, path, src, !dev, g, j, e) {
+        if !component::compile(n, path, src, !dev, rt_file, g, j, e) {
             write_stderr(e);
             note_errors(e);
             for c in e { if c == '\n' { component_errors += 1; } }
@@ -1797,8 +2657,12 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     component_errors = 0;
     uses_fragments = false;
     targets.clear();
+    prepare_runtime(dev);
     gen_components(dev);
     if is_dir("lib") { scan_lib_for_sqlite(); }
+    uses_hub = has_socket;
+    scan_for_hub("app");
+    if is_dir("lib") { scan_for_hub("lib"); }
     if is_dir("lib") {
         var lib_link: u8[>..] = [];
         format(lib_link, root, "/lib");
@@ -1872,6 +2736,9 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
                     d.has_post_res = takes_res(code, "POST");
                     if d.has_post && !d.has_load { err(src, 0, "fn POST( needs fn load( beside it"); }
                     csrf_const(src, code, false);
+                    d.in_sitemap = sitemap_listed(src, code);
+                    d.revalidate = revalidate_const(src, code);
+                    d.static_paths = defines(code, "static_paths");
                     if mentions_csrf(code) { d.page_csrf = true; }
                     imports_of(code, imports);
                 }
@@ -1893,6 +2760,13 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
             d.frags.append(frags);
         }
     }
+    for d in dirs {
+        if d.revalidate > 0 && starts_token(d) {
+            var src: u8[>..] = [];
+            app_path(src, d.rel, "page.goose");
+            err(src, 0, "a page with REVALIDATE cannot use a CSRF token; its HTML would be shared by every visitor");
+        }
+    }
     not_found_csrf = false;
     if has_not_found {
         var text: u8[>..] = [];
@@ -1902,6 +2776,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
         var frags: u8[>..] = [];
         gen_template("app/not-found.html", "nf", "nf", "fn render(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&)", imports, K_NOT_FOUND, -1, frags);
     }
+    var code_sm: u8[>..] = [];
     if has_state {
         var code: u8[>..] = [];
         if copy_prefixed("app/state.goose", "state", code) {
@@ -1917,9 +2792,18 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
             if !defines(code, "check") { err("app/config.goose", 0, "config.goose needs fn check() -> bool"); }
         }
     }
+    if has_sitemap && copy_prefixed("app/sitemap.goose", "smap", code_sm) { has_entries = defines(code_sm, "entries"); }
+    var code_so: u8[>..] = [];
+    if has_socket && copy_prefixed("app/socket.goose", "socket", code_so) {
+        socket_open = defines(code_so, "open");
+        socket_message = defines(code_so, "message");
+        socket_close = defines(code_so, "close");
+    }
     check_targets();
     if errors > 0 { return false; }
-    if component_names.len > 0 || uses_fragments { gen_runtime(dev); }
+    if component_names.len > 0 || uses_fragments { gen_runtime(); }
+    check_hashed();
+    gen_variants();
     var main_file: u8[>..] = [];
     format(main_file, root, "/main.goose");
     write(main_file, gen_main());
@@ -2094,7 +2978,7 @@ fn test_cmd() -> bool {
             var g: u8[>..] = [];
             var j: u8[>..] = [];
             var e: u8[>..] = [];
-            component::compile(n, path, src, compact, g, j, e);
+            component::compile(n, path, src, compact, "gwi.js", g, j, e);
             p.clear();
             format(p, dir, "/", n, ".js");
             write(p, j);
@@ -2305,14 +3189,28 @@ fn print_routes() {
         }
         write_stdout(line);
     }
+    if has_sitemap {
+        for u in ["/sitemap.xml", "/robots.txt"] {
+            if u == "/robots.txt" && has_static(u) { continue; }
+            var line: u8[>..] = [];
+            format(line, "  route  GET,HEAD");
+            while line.len < 30 { line.push(' '); }
+            format(line, u);
+            while line.len < 62 { line.push(' '); }
+            format(line, "app/sitemap.goose\n");
+            write_stdout(line);
+        }
+    }
     for s in statics {
-        var line: u8[>..] = [];
-        format(line, "  static GET");
-        while line.len < 30 { line.push(' '); }
-        format(line, s.url);
-        while line.len < 62 { line.push(' '); }
-        format(line, s.file, "\n");
-        write_stdout(line);
+        for hashed in [false, true] {
+            var line: u8[>..] = [];
+            format(line, "  static GET");
+            while line.len < 30 { line.push(' '); }
+            if hashed { format(line, s.hashed); } else { format(line, s.url); }
+            while line.len < 62 { line.push(' '); }
+            format(line, s.file, "\n");
+            write_stdout(line);
+        }
     }
 }
 
@@ -2335,7 +3233,7 @@ fn server_cmd(extra: u8[:][:], dev: bool) -> u8[>..] {
         // A fresh build id per spawn: open pages poll it and reload when it changes.
         format(cmd, " --dev-id ", (time() * 1000.0) as i64);
     }
-    for a in extra { cmd.push(' '); shq(cmd, a); }
+    for a in extra { if a != "--no-minify" { cmd.push(' '); shq(cmd, a); } }
     return cmd;
 }
 
@@ -2530,6 +3428,11 @@ nav a { margin-right: 1rem; }
 
 // ---------------------------------------------------------------- main
 
+fn has_flag(rest: u8[:][:], flag: const u8[:]) -> bool {
+    for a in rest { if a == flag { return true; } }
+    return false;
+}
+
 fn usage() {
     write_stderr("""
 usage: gweb [-C dir] <command>
@@ -2537,6 +3440,8 @@ usage: gweb [-C dir] <command>
   gen               write .gooseweb/ only
   build [--debug]   gen, then goose build to .gooseweb/server
   start [flags]     build, then run the server (flags go to it: --port N --workers N --log ...)
+  --no-minify       with gen, build or start: serve public/**/*.css as written
+  export [-o DIR]   build, then write the site as static files to DIR (default out/)
   dev [flags]       build, run on port 60053 (unless --port), and rebuild on every change under app/, lib/, public/, components/
   routes            print the route table
   version           print the version and the package sources a build declares
@@ -2559,9 +3464,11 @@ fn main() {
     if cmd == "version" { print_version(); return; }
     check_version();
     if cmd == "new" { if rest.len != 1 { usage(); } scaffold(rest[0]); return; }
+    if cmd == "test-css" { if !test_css() { exit(1); } return; }
+    minify = !has_flag(rest, "--no-minify");
     if cmd == "gen" { if !gen(false, BUILD_DIR) || component_errors > 0 { exit(1); } write_stdout("gweb: wrote .gooseweb/\n"); return; }
     if cmd == "test" { if !test_cmd() { exit(1); } return; }
-    if cmd == "build" { if !build(rest.len > 0 && rest[0] == "--debug", false) { exit(1); } return; }
+    if cmd == "build" { if !build(has_flag(rest, "--debug"), false) { exit(1); } return; }
     if cmd == "routes" { print_routes(); return; }
     if cmd == "start" {
         if !build(false, false) { exit(1); }
@@ -2569,6 +3476,23 @@ fn main() {
         write_stderr("gweb: could not start .gooseweb/server\n");
         exit(1);
     }
-    if cmd == "dev" { dev(rest); return; }
+    if cmd == "export" {
+        var dir: u8[>..] = [];
+        dir.append("out");
+        var k = 0;
+        while k < rest.len {
+            if rest[k] == "-o" && k + 1 < rest.len && rest[k + 1].len > 0 { dir.clear(); dir.append(rest[k + 1]); k += 2; }
+            else if rest[k] == "--no-minify" { k += 1; }
+            else { usage(); }
+        }
+        if !build(false, false) { exit(1); }
+        var cmd: u8[>..] = [];
+        cmd.append("./.gooseweb/server --export ");
+        shq(cmd, dir);
+        c_exec(cmd);
+        write_stderr("gweb: could not start .gooseweb/server\n");
+        exit(1);
+    }
+    if cmd == "dev" { minify = false; dev(rest); return; }
     usage();
 }

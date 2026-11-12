@@ -46,7 +46,7 @@ fn route(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) -> i64
         return -1;
     }
     if n == 1 && seg[0] == "old" { web::redirect(ctx, "/items/7", 301); return -1; }
-    if n == 1 && seg[0] == "site.css" { return web::send_static(req, res, 0, "text/css", "\"abc123\""); }
+    if n == 1 && seg[0] == "site.css" { return web::send_static(req, res, 0, -1, "text/css", "\"abc123\"", false); }
     web::not_found(ctx);
     return -1;
 }

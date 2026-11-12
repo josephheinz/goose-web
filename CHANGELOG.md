@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-Needs the goose-net spool API (goose-net `arch/forms-errors`).
+Needs the matching goose-net release (spool mode, `net::Hub`, `Loop.detach`, chunked responses, `http::accepts`).
 
 - Forms: a `*Form` struct in `page.goose` or `route.goose` gets a generated `decode`. New `web::valid`: `FieldErrors`, `check_email`, `check_range`, `check_length`, `check_one_of`, `field_error`, `invalid`, `field_value`, `errors_json`, `set_status`, `unprocessable`.
 - 422: a form with errors answers 422. `gwi.js` morphs a 422 fragment reply instead of refusing it.
@@ -21,6 +21,20 @@ Needs the goose-net spool API (goose-net `arch/forms-errors`).
 - Behaviour change: every response now carries `X-Content-Type-Options`, `Referrer-Policy` and `X-Frame-Options` headers. Opt out with `WEB_SECURITY_HEADERS=0`.
 - Behaviour change: `web::login` rotates the CSRF token.
 - Apps that use sessions refuse to start in production without `WEB_SECRET`.
+- Behaviour change: `/_gw/` URLs are hashed. Pages now load `/_gw/gwi.<hash>.js` and `/_gw/Name.<hash>.js`; the plain names still work. Expected HTML in tests that render components changes.
+- Behaviour change: `gweb build`, `start` and `export` minify `public/**/*.css`. `gweb dev` does not. Pass `--no-minify` to keep the files as written.
+- Static files are served at a hashed URL too (`/css/site.3f9a1c2b.css`) with `Cache-Control: public, max-age=31536000, immutable`. The plain URL is unchanged. A hashed URL that equals another URL is a build error.
+- Text static files of 1 KB or more get a gzip variant at build time, sent to clients that accept it. gweb now links zlib.
+- `@asset("/path")` writes the hashed URL; `web::asset_url(path)` does the same at run time.
+- `@image(path, alt[, attrs])` writes an `<img>` with its size read at build time, lazy loading and an `@2x` `srcset`.
+- `ctx.meta` with `web::meta_description`, `meta_canonical`, `meta_image` and `meta_robots`, and `@meta()` in `layout.html` for description, canonical, robots, Open Graph and Twitter tags. `web::site_url(req, out)` and the `SITE_URL` variable give the base URL.
+- `app/sitemap.goose` turns on `/sitemap.xml` and `/robots.txt`; `web::sitemap_add` adds entries and `const SITEMAP = false;` leaves a page out.
+- `const REVALIDATE = N;` in `page.goose` caches a page's GET reply per worker for N seconds, with an ETag. A page that uses a CSRF token cannot have it.
+- `gweb export [-o DIR]` writes the site as static files. A dynamic page lists its paths in `fn static_paths()`.
+- Streaming responses: `web::stream_begin`, `web::write` and `web::end(ctx, s)`.
+- Server push: `web::subscribe` (SSE) and `web::websocket`, with `web::publish`, `web::send`, `web::close_socket` and `web::subscribers`, over one `net::Hub` thread. `app/socket.goose` handles `open`, `message` and `close`. `web::websocket` refuses a cross-origin `Origin`.
+- New `Config` flag `--export DIR`; new `Ctx` fields `meta`, `hub`, `conn_fd`.
+- New `docs/DEPLOY-PROXY.md`: Caddy and nginx in front of goose-web.
 
 ## v0.2.1
 

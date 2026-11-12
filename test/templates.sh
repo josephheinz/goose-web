@@ -29,22 +29,78 @@ bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 # 1. The page renders as expected.
 cp -R "$HERE/templates/site" "$WORK/ok"
 if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
-  "$WORK/ok/.gooseweb/server" --port "$PORT" >/dev/null 2>&1 &
+  # SITE_URL, with a trailing slash, makes the @meta() URLs independent of the port.
+  SITE_URL=https://example.com/ "$WORK/ok/.gooseweb/server" --port "$PORT" >/dev/null 2>&1 &
   PID=$!
   got=""
   for i in 1 2 3 4 5 6 7 8 9 10; do
     sleep 0.5
     if curl -s -o "$WORK/got.html" "http://127.0.0.1:$PORT/"; then got=yes; break; fi
   done
+  # A component's hash depends on bytes only a build knows, so the page is compared with it replaced by HASH.
+  sed -E 's|(/_gw/Brace)\.[0-9a-f]{8}\.js|\1.HASH.js|' "$WORK/got.html" > "$WORK/got.norm.html"
+  if [ -z "$got" ]; then bad "the server did not answer on port $PORT"
+  elif cmp -s "$WORK/got.norm.html" "$HERE/templates/expect.html"; then ok
+  else bad "GET / differs from expect.html:"; diff "$HERE/templates/expect.html" "$WORK/got.norm.html" | sed 's/^/    /'; fi
+  if [ -n "$got" ]; then
+    # @asset wrote /site.<hash>.css; the hash is the first 8 digits of the file's FNV-1a 64.
+    h=$(node "$ROOT/client/fnv.mjs" "$HERE/templates/site/public/site.css" | cut -c1-8)
+    curl -s -D "$WORK/hashed.h" -o "$WORK/hashed.b" "http://127.0.0.1:$PORT/site.$h.css"
+    curl -s -D "$WORK/plain.h" -o "$WORK/plain.b" "http://127.0.0.1:$PORT/site.css"
+    if grep -qi '^cache-control: public, max-age=31536000, immutable' "$WORK/hashed.h"; then ok; else bad "the hashed URL lacks the immutable Cache-Control"; fi
+    if grep -qi '^cache-control: public, max-age=0, must-revalidate' "$WORK/plain.h"; then ok; else bad "the plain URL lost must-revalidate"; fi
+    if cmp -s "$WORK/hashed.b" "$WORK/plain.b" && cmp -s "$WORK/hashed.b" "$HERE/templates/site/public/site.css"; then ok; else bad "the hashed and plain URLs serve different bytes"; fi
+    if [ "$(grep -ci '^etag:' "$WORK/hashed.h")" = 1 ] && [ "$(grep -i '^etag:' "$WORK/hashed.h")" = "$(grep -i '^etag:' "$WORK/plain.h")" ]; then ok; else bad "the hashed and plain URLs have different ETags"; fi
+    # @image's hashed URLs, the 1x and the @2x file, serve the file's bytes as immutable.
+    for pair in "logo.a13ebe70.png logo.png" "logo@2x.bf8fa421.png logo@2x.png"; do
+      set -- $pair
+      curl -s -D "$WORK/img.h" -o "$WORK/img.b" "http://127.0.0.1:$PORT/img/$1"
+      if grep -qi '^cache-control: .*immutable' "$WORK/img.h" && cmp -s "$WORK/img.b" "$HERE/templates/site/public/img/$2"; then ok; else bad "/img/$1 is not served immutable with the file's bytes"; fi
+    done
+    # The minifier ran on loose.css, and the already-minified site.css came through unchanged (checked above).
+    curl -s -o "$WORK/loose.b" "http://127.0.0.1:$PORT/loose.css"
+    if cmp -s "$WORK/loose.b" "$HERE/templates/loose.min.css"; then ok; else bad "public/loose.css was not served minified"; fi
+    # The gzip variant: site.css is over 1 KB, so it has one.
+    U="http://127.0.0.1:$PORT/site.css"
+    curl -s -H 'Accept-Encoding: gzip' -D "$WORK/gz.h" -o "$WORK/gz.b" "$U"
+    if grep -qi '^content-encoding: gzip' "$WORK/gz.h" && grep -qi '^vary: .*accept-encoding' "$WORK/gz.h"; then ok; else bad "Accept-Encoding: gzip did not give Content-Encoding and Vary"; fi
+    if gzip -dc "$WORK/gz.b" 2>/dev/null | cmp -s - "$WORK/plain.b"; then ok; else bad "the gzip body does not inflate to the plain body"; fi
+    curl -s -H 'Accept-Encoding: gzip;q=0' -D "$WORK/q0.h" -o "$WORK/q0.b" "$U"
+    if ! grep -qi '^content-encoding:' "$WORK/q0.h" && grep -qi '^vary: .*accept-encoding' "$WORK/q0.h" && cmp -s "$WORK/q0.b" "$WORK/plain.b"; then ok; else bad "gzip;q=0 did not give the plain body with Vary"; fi
+    curl -s --compressed -o "$WORK/cz.b" "$U"
+    if cmp -s "$WORK/cz.b" "$WORK/plain.b"; then ok; else bad "curl --compressed body differs from the plain body"; fi
+    pe=$(grep -i '^etag:' "$WORK/plain.h" | cut -d' ' -f2 | tr -d '\r')
+    ge=$(grep -i '^etag:' "$WORK/gz.h" | cut -d' ' -f2 | tr -d '\r')
+    if [ "$ge" = "$(printf '%s' "$pe" | sed 's/"$/-gz"/')" ]; then ok; else bad "gzip ETag '$ge' is not the plain ETag '$pe' with -gz"; fi
+    c1=$(curl -s -o /dev/null -w '%{http_code}' -H "If-None-Match: $pe" "$U")
+    c2=$(curl -s -o /dev/null -w '%{http_code}' -H 'Accept-Encoding: gzip' -H "If-None-Match: $ge" "$U")
+    c3=$(curl -s -o /dev/null -w '%{http_code}' -H 'Accept-Encoding: gzip' -H "If-None-Match: $pe" "$U")
+    c4=$(curl -s -o /dev/null -w '%{http_code}' -H "If-None-Match: $ge" "$U")
+    if [ "$c1 $c2 $c3 $c4" = "304 304 200 200" ]; then ok; else bad "If-None-Match statuses are '$c1 $c2 $c3 $c4', wanted '304 304 200 200'"; fi
+    # The component's own URL: its hash is that of the JS it serves.
+    cu=$(grep -o '/_gw/Brace\.[0-9a-f]\{8\}\.js' "$WORK/got.html" | head -1)
+    curl -s -D "$WORK/cjs.h" -o "$WORK/cjs.b" "http://127.0.0.1:$PORT$cu"
+    curl -s -o "$WORK/cjs0.b" "http://127.0.0.1:$PORT/_gw/Brace.js"
+    ch=$(node "$ROOT/client/fnv.mjs" "$WORK/cjs.b" | cut -c1-8)
+    if [ "$cu" = "/_gw/Brace.$ch.js" ] && grep -qi '^cache-control: .*immutable' "$WORK/cjs.h" && cmp -s "$WORK/cjs.b" "$WORK/cjs0.b"; then ok; else bad "component URL $cu: wrong hash, no immutable, or differs from /_gw/Brace.js"; fi
+    # It imports the runtime by its hashed name, and that name exists.
+    rt=$(grep -o 'gwi\.[0-9a-f]\{8\}\.js' "$WORK/cjs.b" | head -1)
+    curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/_gw/$rt" > "$WORK/rt.status"
+    if [ -n "$rt" ] && [ "$(cat "$WORK/rt.status")" = 200 ]; then ok; else bad "Brace.js imports '$rt', which is not served"; fi
+  fi
   kill "$PID" 2>/dev/null
   wait "$PID" 2>/dev/null
   PID=""
-  if [ -z "$got" ]; then bad "the server did not answer on port $PORT"
-  elif cmp -s "$WORK/got.html" "$HERE/templates/expect.html"; then ok
-  else bad "GET / differs from expect.html:"; diff "$HERE/templates/expect.html" "$WORK/got.html" | sed 's/^/    /'; fi
 else
   bad "gweb build of the site"; echo "$out"
 fi
+
+# CSS minifier cases, and --no-minify.
+if "$GWEB" test-css >"$WORK/css.out" 2>&1; then ok; else bad "gweb test-css:"; sed 's/^/    /' "$WORK/css.out"; fi
+cp -R "$HERE/templates/site" "$WORK/nm"
+rm -rf "$WORK/nm/.gooseweb"
+"$GWEB" -C "$WORK/nm" gen --no-minify >/dev/null 2>&1
+if [ -d "$WORK/nm/.gooseweb" ] && [ -z "$(ls "$WORK/nm/.gooseweb/_pub" 2>/dev/null)" ] && [ -n "$(ls "$WORK/ok/.gooseweb/_pub" 2>/dev/null)" ]; then ok; else bad "--no-minify did not skip the minified copies, or the default did not write them"; fi
 
 # 2. Expected failures. The page is <p>x</p>, the case on line 2, <p>y</p>.
 cp -R "$HERE/templates/site" "$WORK/f"
@@ -116,6 +172,34 @@ expect_fail components/C.gshtml '@C(s)' 5 "'@C()' is not available in client cod
 expect_fail $P '{#raw }' 2 "{#raw e} needs an expression"
 expect_fail $P '<script>var a = 1;' 2 "<script> is never closed with </script>"
 expect_fail $P '<style>p { color: red; }' 2 "<style> is never closed with </style>"
+# @asset.
+expect_fail $P '@asset()' 2 '@asset() takes one string literal, as in @asset("/css/site.css")'
+expect_fail $P '@asset(x)' 2 '@asset() takes one string literal, as in @asset("/css/site.css")'
+expect_fail $P '@asset("/nope.css")' 2 "no public file at /nope.css (looked for public/nope.css)"
+expect_fail app/layout.html '@asset("/css/none.css")' 2 "no public file at /css/none.css (looked for public/css/none.css)"
+# @image and @meta.
+U1='@image() needs a string literal path and an alt text, as in @image("/img/a.png", "A")'
+expect_fail $P '@image()' 2 "$U1"
+expect_fail $P '@image("/img/logo.png")' 2 "$U1"
+expect_fail $P '@image(x, "A")' 2 "$U1"
+expect_fail $P '@image("/img/logo.png", "A", x)' 2 "$U1"
+expect_fail $P '@image("/img/logo.png", "A", "b", "c")' 2 "$U1"
+expect_fail $P '@image("/img/logo.png", )' 2 "$U1"
+expect_fail $P '@image("/img/nope.png", "A")' 2 "no public file at /img/nope.png (looked for public/img/nope.png)"
+expect_fail app/layout.html '@image("/img/none.png", "A")' 2 "no public file at /img/none.png (looked for public/img/none.png)"
+expect_fail $P '@meta()' 2 "@meta() is for layout.html only"
+expect_fail app/layout.html '@meta(1)' 2 "@meta() takes no arguments"
+# A hashed URL may not be another file's URL.
+cp "$HERE/templates/site/app/page.html" "$WORK/f/app/page.html"
+cp "$HERE/templates/site/app/layout.html" "$WORK/f/app/layout.html"
+rm -f "$WORK/f/components/C.gshtml"
+h=$(node "$ROOT/client/fnv.mjs" "$HERE/templates/site/public/site.css" | cut -c1-8)
+printf 'x\n' > "$WORK/f/public/site.$h.css"
+want="public/site.css: error: this file's hashed URL /site.$h.css is taken by /site.$h.css"
+if out=$("$GWEB" -C "$WORK/f" build 2>&1); then bad "a file at the hashed URL: gweb build succeeded"
+else case "$out" in *"$want"*) ok ;; *) bad "wanted '$want', got:"; echo "$out" | sed 's/^/    /' ;; esac; fi
+rm -f "$WORK/f/public/site.$h.css"
+
 # A Goose error inside a tag reports the template's own line.
 expect_fail $P '{ctx.nope}' 2 "struct Ctx has no field nope"
 
