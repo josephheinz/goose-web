@@ -401,3 +401,11 @@ Review notes and fixes:
 - Step 6: login posts to `app/login/submit/route.goose` (open question 6).
 
 First things to fix when a compiler is available, by the builders' notes: passing `u8[..N]&` to extern `u8[:]` parameters, `split_once` with three results, `time() as i64`, the `$` in a string literal, reassigning a `const u8[:]` local, NUL bytes in literals, and an unreachable `return` after `exit(2)`. Then run, in order: the five Goose tests, `test/auth.sh`, `test/release_check.sh`, and `bench_shop.py` for the `Ctx` growth and the default headers.
+
+### Compiled and tested (Goose v2026.4)
+
+Everything now builds and passes: Goose tests crypto 56, env 89, session 163, rate 20, security 58, cookie 59, csrf 52, catchall 62; C tests 59, 12, 18; suites components 46, templates 33, fragments 82, catchall 50; `auth.sh` 24; `release_check.sh` all passed. No behaviour change.
+
+Fixes (cd1fa39, 98117d3, 47a81a1): `block` is a keyword; `web::split` shadows std `split` inside the namespace, so `split_on` was added; a `const u8[:]` local cannot be re-bound in a loop; struct literal fields must follow declaration order; a multi-line string's text starts on the next line. Three wrong test assertions were corrected (session refresh cap, a stale cached session, a raw space in a request target). `auth.sh` now kills the real server PID and reads the nonce case-sensitively.
+
+Not run: `bench_shop.py` (goose-bench is not on this machine).
