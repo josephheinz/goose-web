@@ -2344,8 +2344,8 @@ fn excerpts(text: const u8[:]) -> u8[>..] {
             var n: u8[>..] = [];
             format(n, k);
             out.push(if k == num { '>' } else { ' ' });
-            var pad = 4 - n.len;
-            while pad > 0 { out.push(' '); pad -= 1; }
+            var fill = 4 - n.len;
+            while fill > 0 { out.push(' '); fill -= 1; }
             format(out, n, " | ", sl[k - 1], "\n");
             k += 1;
         }
