@@ -28,7 +28,7 @@ fn escape(out: u8[>..]&, s: const u8[:]) {
     }
 }
 
-// {{ expr }} in a template: the value's text, escaped.
+// {expr} in a template: the value's text, escaped.
 fn put(out: u8[>..]&, s: const u8[:]) { escape(out, s); }
 fn put(out: u8[>..]&, v: i64) { format(out, v); }
 fn put(out: u8[>..]&, v: f64) { format(out, v); }
@@ -39,7 +39,7 @@ fn put<T>(out: u8[>..]&, v: const T&) {
     escape(out, tmp);
 }
 
-// {{{ expr }}} in a template: the value's text, not escaped.
+// {#raw expr} in a template: the value's text, not escaped.
 fn raw<T>(out: u8[>..]&, v: const T&) { format(out, v); }
 
 

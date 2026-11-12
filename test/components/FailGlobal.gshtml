@@ -3,4 +3,4 @@
 let LIMIT = 5;
 struct State { n: i64 }
 </script>
-<p>{{ s.n }}</p>
+<p>{s.n}</p>

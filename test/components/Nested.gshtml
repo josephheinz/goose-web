@@ -1,5 +1,5 @@
 <script goose>
-// Nested {{#for}} and {{#if}}, {{#let}}, bind:value and bind:checked, and
+// Nested {#for} and {#if}, {#let}, bind:value and bind:checked, and
 // on: arguments of each kind.
 struct Cell { v: i64, mark: bool }
 struct State { title: u8[..32], show: bool, size: i64, cells: Cell[>..<] }
@@ -23,15 +23,15 @@ fn test_hidden(s: State&) {
     tap(s, 2, false, "off");
 }
 </script>
-<h3 title="{{ s.title }}">{{ s.title }}</h3>
+<h3 title="{s.title}">{s.title}</h3>
 <input bind:value="title"> <input type="checkbox" bind:checked="show"> <input type="number" bind:value="size">
-{{#if s.show}}
+{#if s.show}
 <table>
-{{#for r in s.size}}
-<tr>{{#for c in s.size}}{{#let k = r * s.size + c}}{{#if k < s.cells.len}}{{#let cell = s.cells[k]}}<td class="{{#if cell.mark}}m{{#else if cell.v > 10}}big{{#else}}n{{/if}}" on:click="tap(k, cell.mark, s.title)">{{ cell.v }}</td>{{#else}}<td></td>{{/if}}{{/for}}</tr>
-{{/for}}
+{#for r in s.size}
+<tr>{#for c in s.size}{#let k = r * s.size + c}{#if k < s.cells.len}{#let cell = s.cells[k]}<td class="{#if cell.mark}m{#else if cell.v > 10}big{#else}n{/if}" on:click="tap(k, cell.mark, s.title)">{cell.v}</td>{#else}<td></td>{/if}{/for}</tr>
+{/for}
 </table>
-{{#else}}
+{#else}
 <p>hidden</p>
-{{/if}}
-<p>{{#for c, i in s.cells}}{{#if i > 0}}, {{/if}}{{ i }}={{ c.v }}{{#if c.mark}}*{{/if}}{{/for}}</p>
+{/if}
+<p>{#for c, i in s.cells}{#if i > 0}, {/if}{i}={c.v}{#if c.mark}*{/if}{/for}</p>

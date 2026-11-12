@@ -1,0 +1,28 @@
+<script goose>
+// DESIGN-ADDENDUM-6: one-brace tags, nested braces, literal text, raw
+// <script> and <style> text, and on: values that hold braces and @.
+struct State { n: i64, msg: u8[..32] }
+
+fn say(s: State&, t: const u8[:]) {
+    s.msg.clear();
+    s.msg.append(t);
+}
+
+fn pick(s: State&, v: i64) { s.n = v; }
+
+fn test_syntax(s: State&) {
+    s.n = 3;
+    say(s, "hi");
+}
+</script>
+<p>{if s.n > 2 { "}" } else { "{" }} ${s.n} $38.61 @user a@b.co</p>
+<p>&#123;literal&#125; {s.msg}</p>
+<style>
+p.x { color: red; }
+@media(min-width: 10px) { p.x { color: blue; } }
+</style>
+<script>
+var o = {"a": {s.n}, b: "@x(1)"};
+</script>
+<button on:click='say("{ @Foo(1) }")'>a</button> <button on:click="pick(if s.n > 1 { 1 } else { 2 })">b</button>
+<p>{#raw s.n}{-- a note with { } and @x() --}</p>

@@ -1,7 +1,7 @@
 <h1>Featured products</h1>
-<p>{{ props.count }} products in the catalog. <a href="/products">See them all</a>.</p>
+<p>{props.count} products in the catalog. <a href="/products">See them all</a>.</p>
 <ul class="grid">
-{{#for p in catalog::ITEMS}}{{#if p.featured}}
-<li class="card"><div class="cat">{{ p.category }}</div><a href="/products/{{ p.id }}">{{ p.name }}</a> <span class="price">{{> shop::price(p.cents)}}</span></li>
-{{/if}}{{/for}}
+{#for p in catalog::ITEMS}{#if p.featured}
+<li class="card"><div class="cat">{p.category}</div><a href="/products/{p.id}">{p.name}</a> <span class="price">@shop::price(p.cents)</span></li>
+{/if}{/for}
 </ul>

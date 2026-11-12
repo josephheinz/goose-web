@@ -1,7 +1,7 @@
 <h1>Todos</h1>
-{{#if !props.ok}}<p>The todo list is not available.</p>{{/if}}
+{#if !props.ok}<p>The todo list is not available.</p>{/if}
 <ul>
-{{#for t in props.reply.todos}}
-<li>{{#if t.done}}<s>{{ t.title }}</s>{{#else}}{{ t.title }}{{/if}} <span class="cat">#{{ t.id }}</span></li>
-{{/for}}
+{#for t in props.reply.todos}
+<li>{#if t.done}<s>{t.title}</s>{#else}{t.title}{/if} <span class="cat">#{t.id}</span></li>
+{/for}
 </ul>

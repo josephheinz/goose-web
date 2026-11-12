@@ -15,6 +15,7 @@
 import std;
 import os;
 import component;
+import tscan;
 
 // ---------------------------------------------------------------- C helpers (proc.c)
 
@@ -415,6 +416,64 @@ fn add_default_imports(imports: u8[>..]&) {
 
 // ---------------------------------------------------------------- templates
 
+// One tag's inside, inner (trimmed), at line ln: its Goose code.
+fn template_tag(path: const u8[:], ln: i64, inner: const u8[:], stack: u8[>..]&, stack_lines: i64[>..]&, out: u8[>..]&) {
+    if starts_with(inner, "#if ") {
+        format(out, "if ", trim(inner[4..]), " { ");
+        stack.push('i'); stack_lines.push(ln);
+    } else if starts_with(inner, "#else if ") {
+        if stack.len == 0 || stack[stack.len - 1] != 'i' { err(path, ln, "{#else if} outside {#if}"); }
+        format(out, "} else if ", trim(inner[9..]), " { ");
+    } else if inner == "#else" {
+        if stack.len == 0 || stack[stack.len - 1] != 'i' { err(path, ln, "{#else} outside {#if}"); }
+        out.append("} else { ");
+    } else if starts_with(inner, "#for ") {
+        let body = trim(inner[5..]);
+        if find(body, " in ") < 0 { err(path, ln, "{#for x in e} or {#for x, i in e}"); }
+        format(out, "for ", body, " { ");
+        stack.push('f'); stack_lines.push(ln);
+    } else if starts_with(inner, "#let ") {
+        format(out, "let ", trim(inner[5..]), "; ");
+    } else if inner == "#raw" || inner == "#if" {
+        var m: u8[>..] = [];
+        format(m, "{", inner, " e} needs an expression");
+        err(path, ln, m);
+    } else if starts_with(inner, "#raw ") {
+        format(out, "web::raw(out, ", trim(inner[5..]), "); ");
+    } else if inner == "/if" || inner == "/for" {
+        let want: u8 = if inner == "/if" { 'i' } else { 'f' };
+        if stack.len == 0 || stack[stack.len - 1] != want {
+            var m: u8[>..] = [];
+            format(m, "{", inner, "} does not close an open {#", inner[1..], "}");
+            err(path, ln, m);
+        } else { stack.pop(); stack_lines.pop(); }
+        out.append("} ");
+    } else if starts_with(inner, "#") || starts_with(inner, "/") {
+        var m: u8[>..] = [];
+        format(m, "unknown tag {", inner, "}");
+        err(path, ln, m);
+    } else {
+        if inner.len == 0 { err(path, ln, "empty { }"); }
+        format(out, "web::put(out, ", inner, "); ");
+    }
+}
+
+// @name(args): slot, a component, or a function that writes to out.
+fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:], layout: bool, out: u8[>..]&) {
+    if name == "slot" {
+        if !layout { err(path, ln, "@slot() is for layout.html only"); }
+        if args.len > 0 { err(path, ln, "@slot() takes no arguments"); }
+        out.append("F(); ");
+    } else if name[0] >= 'A' && name[0] <= 'Z' && find(name, "::") < 0 {
+        if !has_component(name) {
+            var m: u8[>..] = [];
+            format(m, "no component named ", name, " (there is no components/", name, ".gshtml); for a literal @ write &#64;");
+            err(path, ln, m);
+        } else { format(out, name, "::component(out, ", args, "); "); }
+    } else if args.len == 0 { format(out, name, "(out); "); }
+    else { format(out, name, "(out, ", args, "); "); }
+}
+
 // Compiles a template. header ends with `{ `; every HTML line becomes one
 // Goose line, so errors keep their line numbers. False on a template error.
 fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], layout: bool, out: u8[>..]&) -> bool {
@@ -422,6 +481,9 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], la
     out.append(header);
     var stack: u8[>..] = [];      // 'i' for if, 'f' for for
     var stack_lines: i64[>..] = [];
+    var raw = tscan::MARKUP;      // <script> and <style> text holds no tags
+    var slots = 0;
+    var raw_line = 0;             // the line where the open <script>/<style> began
     let lines = split(src, '\n');
     for line, li in lines {
         let ln = li + 1;
@@ -429,99 +491,53 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], la
         var text: u8[>..] = [];
         var pos = 0;
         while pos < line.len {
-            let k = find(line[pos..], "{{");
-            if k < 0 { text.append(line[pos..]); break; }
-            text.append(line[pos..pos + k]);
-            if text.len > 0 { out.append("out.append(\""); lit(out, text); out.append("\"); "); text.clear(); }
-            let at = pos + k;
-            let rest = line[at..];
-            if starts_with(rest, "{{--") {
-                let e = find(rest, "--}}");
-                if e < 0 { err(path, ln, "{{-- needs --}} on the same line"); return false; }
-                pos = at + e + 4;
+            if tscan::is_raw(raw) {
+                let e = tscan::raw_end(line, pos, raw);
+                text.append(line[pos..e]);
+                pos = e;
                 continue;
             }
-            if starts_with(rest, "{{{") {
-                let e = find(rest, "}}}");
-                if e < 0 { err(path, ln, "{{{ needs }}} on the same line"); return false; }
-                let expr = trim(rest[3..e]);
-                if expr.len == 0 { err(path, ln, "empty {{{ }}}"); }
-                format(out, "web::raw(out, ", expr, "); ");
+            let at = tscan::next(line, pos, raw, false);
+            text.append(line[pos..at]);
+            pos = at;
+            if at == line.len || tscan::is_raw(raw) { continue; }
+            if text.len > 0 { out.append("out.append(\""); lit(out, text); out.append("\"); "); text.clear(); }
+            let rest = line[at..];
+            if line[at] == '}' { err(path, ln, "'}' without '{'; for a literal brace write &#125;"); return false; }
+            if line[at] == '@' {
+                let open = tscan::call_open(line, at);
+                let close = tscan::paren_end(line, open);
+                if close < 0 { err(path, ln, "@name( needs its ) on the same line; for a literal @ write &#64;"); return false; }
+                let name = line[at + 1..open];
+                if name == "slot" { slots += 1; }
+                template_call(path, ln, name, trim(line[open + 1..close]), layout, out);
+                pos = close + 1;
+                continue;
+            }
+            if starts_with(rest, "{{") { err(path, ln, tscan::old_syntax(rest)); return false; }
+            if starts_with(rest, "{--") {
+                let e = find(rest, "--}");
+                if e < 0 { err(path, ln, "{-- needs --} on the same line"); return false; }
                 pos = at + e + 3;
                 continue;
             }
-            let e = find(rest, "}}");
-            if e < 0 { err(path, ln, "{{ needs }} on the same line"); return false; }
-            let inner = trim(rest[2..e]);
-            pos = at + e + 2;
-            if starts_with(inner, "#if ") {
-                format(out, "if ", trim(inner[4..]), " { ");
-                stack.push('i'); stack_lines.push(ln);
-            } else if starts_with(inner, "#else if ") {
-                if stack.len == 0 || stack[stack.len - 1] != 'i' { err(path, ln, "{{#else if}} outside {{#if}}"); }
-                format(out, "} else if ", trim(inner[9..]), " { ");
-            } else if inner == "#else" {
-                if stack.len == 0 || stack[stack.len - 1] != 'i' { err(path, ln, "{{#else}} outside {{#if}}"); }
-                out.append("} else { ");
-            } else if starts_with(inner, "#for ") {
-                let body = trim(inner[5..]);
-                if find(body, " in ") < 0 { err(path, ln, "{{#for x in e}} or {{#for x, i in e}}"); }
-                format(out, "for ", body, " { ");
-                stack.push('f'); stack_lines.push(ln);
-            } else if starts_with(inner, "#let ") {
-                format(out, "let ", trim(inner[5..]), "; ");
-            } else if inner == "/if" || inner == "/for" {
-                let want: u8 = if inner == "/if" { 'i' } else { 'f' };
-                if stack.len == 0 || stack[stack.len - 1] != want {
-                    var m: u8[>..] = [];
-                    format(m, "{{", inner, "}} does not close an open {{#", inner[1..], "}}");
-                    err(path, ln, m);
-                } else { stack.pop(); stack_lines.pop(); }
-                out.append("} ");
-            } else if starts_with(inner, ">") {
-                let call = trim(inner[1..]);
-                let open = find(call, "(");
-                if open <= 0 || call[call.len - 1] != ')' { err(path, ln, "{{> f(args)}} calls a function"); }
-                else {
-                    let args = trim(call[open + 1..call.len - 1]);
-                    if args.len == 0 { format(out, call[..open], "(out); "); }
-                    else { format(out, call[..open], "(out, ", args, "); "); }
-                }
-            } else if inner == "slot" {
-                if !layout { err(path, ln, "{{slot}} is for layout.html only"); }
-                out.append("F(); ");
-            } else if starts_with(inner, "component ") {
-                // {{component Name(expr)}}: the component, rendered with state expr.
-                let call = trim(inner["component ".len..]);
-                let open = find(call, "(");
-                if open <= 0 || call[call.len - 1] != ')' { err(path, ln, "{{component Name(expr)}} takes a component name and its state"); }
-                else {
-                    let nm = trim(call[..open]);
-                    if !has_component(nm) {
-                        var m: u8[>..] = [];
-                        format(m, "no component named ", nm, " (there is no components/", nm, ".gshtml)");
-                        err(path, ln, m);
-                    } else { format(out, nm, "::component(out, ", trim(call[open + 1..call.len - 1]), "); "); }
-                }
-            } else if starts_with(inner, "#") || starts_with(inner, "/") {
-                var m: u8[>..] = [];
-                format(m, "unknown tag {{", inner, "}}");
-                err(path, ln, m);
-            } else {
-                if inner.len == 0 { err(path, ln, "empty {{ }}"); }
-                format(out, "web::put(out, ", inner, "); ");
-            }
+            let e = tscan::brace_end(line, at);
+            if e < 0 { err(path, ln, "{ needs } on the same line; for a literal brace write &#123;"); return false; }
+            template_tag(path, ln, trim(line[at + 1..e]), stack, stack_lines, out);
+            pos = e + 1;
         }
+        if raw == tscan::MARKUP { raw_line = 0; } else if raw_line == 0 { raw_line = ln; }
         if !last { text.push('\n'); }
         if text.len > 0 { out.append("out.append(\""); lit(out, text); out.append("\"); "); }
         if last { out.append("}"); }
         out.push('\n');
     }
     if stack.len > 0 {
-        let what = if stack[stack.len - 1] == 'i' { "{{#if}} is never closed with {{/if}}" } else { "{{#for}} is never closed with {{/for}}" };
+        let what = if stack[stack.len - 1] == 'i' { "{#if} is never closed with {/if}" } else { "{#for} is never closed with {/for}" };
         err(path, stack_lines[stack_lines.len - 1], what);
     }
-    if layout && find(src, "{{slot}}") < 0 { err(path, 0, "a layout needs {{slot}} where the page goes"); }
+    if tscan::unclosed(raw).len > 0 { err(path, raw_line, tscan::unclosed(raw)); }
+    if layout && slots == 0 { err(path, 0, "a layout needs @slot() where the page goes"); }
     return errors == before;
 }
 
@@ -1388,13 +1404,13 @@ fn scaffold(dir: const u8[:]) {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>{{ ctx.title }}</title>
+<title>{ctx.title}</title>
 <link rel="stylesheet" href="/site.css">
 </head>
 <body>
 <nav><a href="/">Home</a> <a href="/hello/goose">Hello</a> <a href="/api/time">API</a></nav>
 <main>
-{{slot}}
+@slot()
 </main>
 </body>
 </html>
@@ -1402,7 +1418,7 @@ fn scaffold(dir: const u8[:]) {
 """],
         ["app/page.html", """
 <h1>goose-web</h1>
-<p>Edit <code>app/page.html</code>. Worker {{ ctx.worker }} rendered this page.</p>
+<p>Edit <code>app/page.html</code>. Worker {ctx.worker} rendered this page.</p>
 
 """],
         ["app/hello/[name]/page.goose", """
@@ -1422,11 +1438,11 @@ fn load(req: const http::Request&, ctx: web::Ctx&) -> Props {
 
 """],
         ["app/hello/[name]/page.html", """
-<h1>Hello, {{ props.name }}{{#if props.shout}}!!!{{#else}}.{{/if}}</h1>
+<h1>Hello, {props.name}{#if props.shout}!!!{#else}.{/if}</h1>
 <ul>
-{{#for i in 3}}
-  <li>line {{ i + 1 }}</li>
-{{/for}}
+{#for i in 3}
+  <li>line {i + 1}</li>
+{/for}
 </ul>
 
 """],
@@ -1443,7 +1459,7 @@ fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
 """],
         ["app/not-found.html", """
 <h1>Not found</h1>
-<p>No page at {{ req.path }}.</p>
+<p>No page at {req.path}.</p>
 
 """],
         [".gitignore", ".gooseweb/\n.gooseweb.dev/\n"],

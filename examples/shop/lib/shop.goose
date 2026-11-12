@@ -5,7 +5,7 @@ import std;
 import json;
 import lib.catalog;
 
-// "$12.34", for templates: {{> shop::price(p.cents)}}
+// "$12.34", for templates: @shop::price(p.cents)
 fn price(out: u8[>..]&, cents: i64) {
     format(out, "$", cents / 100, ".");
     if cents % 100 < 10 { out.push('0'); }

@@ -3,4 +3,4 @@
 struct State { n: i64 }
 fn count(s: const State&) -> i64 { s.n }
 </script>
-<button on:click="count">{{ count(s) }}</button>
+<button on:click="count">{count(s)}</button>

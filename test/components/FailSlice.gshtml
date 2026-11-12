@@ -5,4 +5,4 @@ fn f(s: State&) {
     s.u.append(s.t[0..2]);
 }
 </script>
-<p>{{ s.t }}</p>
+<p>{s.t}</p>

@@ -1,6 +1,8 @@
 <!-- Produced by goose-architect on claude-fable-5-2 -->
 
 > **Rename (2026-11-12, the user's request):** islands are now called components. The text below keeps the old names. Read `islands/` as `components/`, `{{island Name(expr)}}` as `{{component Name(expr)}}`, `data-island` as `data-component`, `cli/island.goose` as `cli/component.goose`, `test/islands` as `test/components`, `--islands` as `--components`, and the `/islands` demo pages as `/components`.
+
+> **Syntax changed (2026-11-12):** the template and markup tags in this file (`{{ e }}`, `{{{ e }}}`, `{{#if}}`, `{{component Name(e)}}`, `{{slot}}`, `{{> f()}}`) are replaced by DESIGN-ADDENDUM-6-SYNTAX.md. The text stays as history.
 # Implementation spec: live reload (A) and `.gshtml` islands (E v1)
 
 Build in the order A, E phase 1, 2, 3. Everything below is decided unless it is listed in section 8, where six defaults need the user's confirmation.

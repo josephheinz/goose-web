@@ -19,6 +19,7 @@
 namespace component;
 
 import std;
+import tscan;
 
 enum Kind { Int, Bool, Str, Struct, Array }
 
@@ -186,6 +187,7 @@ var s_var = -1;                // render's state variable
 var gtext: u8[>..];            // markup text not yet written to the Goose line
 var gline: u8[>..];            // the Goose line being built
 var chk: u8[>..];              // the body of gw_check
+var raw_st = 0;                // tscan's <script>/<style> state across markup lines
 
 // ---------------------------------------------------------------- errors
 
@@ -827,7 +829,7 @@ recursive fn parse_if_stmt() -> i64 {
 }
 
 // for x[, i] in e[..e2]: the header, after `for`, into node n. Shared by
-// statements and {{#for}}.
+// statements and {#for}.
 recursive fn parse_for_head(n: i64) -> bool {
     if is("&") { bad_tok(pos); return false; }
     if !at_k(K_ID) || is_keyword(pos) { bad_tok(pos); return false; }
@@ -1416,7 +1418,7 @@ fn is_lvalue(n: i64) -> bool {
     return k == E_NAME || k == E_FIELD || k == E_INDEX;
 }
 
-// The variables of a for header in node n (statement or {{#for}}).
+// The variables of a for header in node n (statement or {#for}).
 fn check_for_head(n: i64) {
     let it = nodes[n].a;
     check_expr(it);
@@ -2159,7 +2161,7 @@ fn parse_tag_expr(s: i64, e: i64, line: i64) -> i64 {
     return n;
 }
 
-// {{ e }} (raw: {{{ e }}}).
+// {e} (raw: {#raw e}).
 fn m_expr(s: i64, e: i64, line: i64, raw: bool) {
     g_flush();
     format(gline, if raw { "web::raw(out, " } else { "web::put(out, " }, text[s..e], "); ");
@@ -2183,7 +2185,7 @@ fn open_tag(kind: u8, line: i64) {
     opens.push(Open { kind: kind, line: line, mark: scope.len });
 }
 
-// {{#if c}} and {{#else if c}}.
+// {#if c} and {#else if c}.
 fn m_if(s: i64, e: i64, line: i64, else_if: bool) {
     g_flush();
     var head: u8[>..] = [];
@@ -2193,7 +2195,7 @@ fn m_if(s: i64, e: i64, line: i64, else_if: bool) {
     chk_line(head, line);
     cat_close();
     if else_if {
-        if opens.len == 0 || opens[opens.len - 1].kind != 'i' { report(line, "{{#else if}} outside {{#if}}"); return; }
+        if opens.len == 0 || opens[opens.len - 1].kind != 'i' { report(line, "{#else if} outside {#if}"); return; }
         scope.resize(opens[opens.len - 1].mark);
         ind -= 1;
     } else {
@@ -2216,7 +2218,7 @@ fn m_else(line: i64) {
     g_code("} else { ");
     chk_line("} else {", line);
     cat_close();
-    if opens.len == 0 || opens[opens.len - 1].kind != 'i' { report(line, "{{#else}} outside {{#if}}"); return; }
+    if opens.len == 0 || opens[opens.len - 1].kind != 'i' { report(line, "{#else} outside {#if}"); return; }
     scope.resize(opens[opens.len - 1].mark);
     ind -= 1;
     nl();
@@ -2229,7 +2231,7 @@ fn m_close(want: u8, line: i64) {
     chk_line("}", line);
     cat_close();
     if opens.len == 0 || opens[opens.len - 1].kind != want {
-        report(line, if want == 'i' { "{{/if}} does not close an open {{#if}}" } else { "{{/for}} does not close an open {{#for}}" });
+        report(line, if want == 'i' { "{/if} does not close an open {#if}" } else { "{/for} does not close an open {#for}" });
         return;
     }
     scope.resize(opens[opens.len - 1].mark);
@@ -2377,7 +2379,7 @@ fn m_bind(what: const u8[:], vs: i64, ve: i64, line: i64) {
         mtext(t);
         return;
     }
-    // checked: {{#if s.field}}checked{{/if}} data-bind="field"
+    // checked: {#if s.field}checked{/if} data-bind="field"
     format(code, "if s.", field, " { ");
     g_code(code);
     gtext.append("checked");
@@ -2463,52 +2465,66 @@ fn trim_e(s: i64, e: i64) -> i64 {
 // One markup line (0-based li); writes its Goose line.
 fn markup_line(li: i64, last: bool, goose_out: u8[>..]&) {
     let ln = li + 1;
-    let le = line_end[li];
+    let base = line_start[li];
+    var line: u8[>..] = [];
+    line.append(text[base..line_end[li]]);
     gline.clear();
     gtext.clear();
-    var p = line_start[li];
-    while p < le {
-        let k = find(text[p..le], "{{");
-        if k < 0 { m_text(p, le, ln); break; }
-        m_text(p, p + k, ln);
-        let at = p + k;
-        if starts_with(text[at..le], "{{--") {
-            let e = find(text[at..le], "--}}");
-            if e < 0 { report(ln, "{{-- needs --}} on the same line"); break; }
-            p = at + e + 4;
+    var p = 0;
+    while p < line.len {
+        if tscan::is_raw(raw_st) {
+            let e = tscan::raw_end(line, p, raw_st);
+            mtext(line[p..e]);
+            p = e;
             continue;
         }
-        if starts_with(text[at..le], "{{{") {
-            let e = find(text[at..le], "}}}");
-            if e < 0 { report(ln, "{{{ needs }}} on the same line"); break; }
-            let a = trim_s(at + 3, at + e);
-            let b = trim_e(a, at + e);
-            if a == b { report(ln, "empty {{{ }}}"); } else { m_expr(a, b, ln, true); }
+        let at = tscan::next(line, p, raw_st, true);
+        m_text(base + p, base + at, ln);
+        p = at;
+        if at == line.len || tscan::is_raw(raw_st) { continue; }
+        if line[at] == '}' { report(ln, "'}' without '{'; for a literal brace write &#125;"); break; }
+        if line[at] == '@' {
+            let open = tscan::call_open(line, at);
+            var what: u8[>..] = [];
+            format(what, line[at..open], "()");
+            not_available(ln, what);
+            let close = tscan::paren_end(line, open);
+            if close < 0 { break; }
+            p = close + 1;
+            continue;
+        }
+        if starts_with(line[at..], "{{") { report(ln, tscan::old_syntax(line[at..])); break; }
+        if starts_with(line[at..], "{--") {
+            let e = find(line[at..], "--}");
+            if e < 0 { report(ln, "{-- needs --} on the same line"); break; }
             p = at + e + 3;
             continue;
         }
-        let e = find(text[at..le], "}}");
-        if e < 0 { report(ln, "{{ needs }} on the same line"); break; }
-        let a = trim_s(at + 2, at + e);
-        let b = trim_e(a, at + e);
-        p = at + e + 2;
+        let e = tscan::brace_end(line, at);
+        if e < 0 { report(ln, "{ needs } on the same line; for a literal brace write &#123;"); break; }
+        let a = trim_s(base + at + 1, base + e);
+        let b = trim_e(a, base + e);
+        p = e + 1;
         let inner = text[a..b];
         if starts_with(inner, "#if ") { m_if(trim_s(a + 4, b), b, ln, false); }
         else if starts_with(inner, "#else if ") { m_if(trim_s(a + 9, b), b, ln, true); }
         else if inner == "#else" { m_else(ln); }
         else if starts_with(inner, "#for ") { m_for(trim_s(a + 5, b), b, ln); }
         else if starts_with(inner, "#let ") { m_let(trim_s(a + 5, b), b, ln); }
-        else if inner == "/if" { m_close('i', ln); }
-        else if inner == "/for" { m_close('f', ln); }
-        else if starts_with(inner, "component ") || inner == "component" { not_available(ln, "{{component}}"); }
-        else if inner == "slot" { not_available(ln, "{{slot}}"); }
-        else if starts_with(inner, ">") { not_available(ln, "{{> f()}}"); }
-        else if starts_with(inner, "#") || starts_with(inner, "/") {
+        else if inner == "#raw" || inner == "#if" {
             var m: u8[>..] = [];
-            format(m, "unknown tag {{", inner, "}}");
+            format(m, "{", inner, " e} needs an expression");
             report(ln, m);
         }
-        else if a == b { report(ln, "empty {{ }}"); }
+        else if starts_with(inner, "#raw ") { m_expr(trim_s(a + 5, b), b, ln, true); }
+        else if inner == "/if" { m_close('i', ln); }
+        else if inner == "/for" { m_close('f', ln); }
+        else if starts_with(inner, "#") || starts_with(inner, "/") {
+            var m: u8[>..] = [];
+            format(m, "unknown tag {", inner, "}");
+            report(ln, m);
+        }
+        else if a == b { report(ln, "empty { }"); }
         else { m_expr(a, b, ln, false); }
     }
     if !last { mtext("\n"); }
@@ -2555,13 +2571,19 @@ fn compile_markup(first_line: i64, render_line: i64, goose_out: u8[>..]&) {
     w("\"\";");
     opens.clear();
     pend.clear();
+    raw_st = tscan::MARKUP;
     cat_open = false;
     let nl_count = line_start.len;
-    for li in first_line..nl_count { markup_line(li, li == nl_count - 1, goose_out); }
+    var raw_line = 0;             // the line where the open <script>/<style> began
+    for li in first_line..nl_count {
+        markup_line(li, li == nl_count - 1, goose_out);
+        if raw_st == tscan::MARKUP { raw_line = 0; } else if raw_line == 0 { raw_line = li + 1; }
+    }
+    if tscan::unclosed(raw_st).len > 0 { report(raw_line, tscan::unclosed(raw_st)); }
     cat_close();
     if opens.len > 0 {
         let o = opens[opens.len - 1];
-        report(o.line, if o.kind == 'i' { "{{#if}} is never closed with {{/if}}" } else { "{{#for}} is never closed with {{/for}}" });
+        report(o.line, if o.kind == 'i' { "{#if} is never closed with {/if}" } else { "{#for} is never closed with {/for}" });
     }
     ind = 1;
     nl();

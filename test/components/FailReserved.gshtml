@@ -3,4 +3,4 @@
 struct State { n: i64 }
 fn delete(s: State&) { s.n = 0; }
 </script>
-<button on:click="delete">{{ s.n }}</button>
+<button on:click="delete">{s.n}</button>

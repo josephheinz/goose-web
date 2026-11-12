@@ -67,8 +67,8 @@ fn test_empty(s: State&) {
     s.n = first_named(s, "none");
 }
 </script>
-<p>{{ s.n }} {{ s.flag }} {{ s.text }} {{ s.log }}</p>
-<p>{{{ s.text }}}{{ twice(s.n) }}{{{ s.n }}}</p>
-{{-- a comment --}}
-{{#for r in s.rows}}<i>{{ r.id }}:{{ r.name }}:{{ r.on }}:{{ r.at.x }},{{ r.at.y }} {{ norm(r.at) }}</i>{{/for}}
-<b>{{ if s.flag { "yes" } else { "no" } }} {{ str(s.n, "/", s.flag) }} {{ -s.n }} {{ !s.flag }}</b>
+<p>{s.n} {s.flag} {s.text} {s.log}</p>
+<p>{#raw s.text}{twice(s.n)}{#raw s.n}</p>
+{-- a comment --}
+{#for r in s.rows}<i>{r.id}:{r.name}:{r.on}:{r.at.x},{r.at.y} {norm(r.at)}</i>{/for}
+<b>{if s.flag { "yes" } else { "no" }} {str(s.n, "/", s.flag)} {-s.n} {!s.flag}</b>

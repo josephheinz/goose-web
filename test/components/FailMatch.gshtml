@@ -6,4 +6,4 @@ fn f(s: State&) {
     s.n = k;
 }
 </script>
-<p>{{ s.n }}</p>
+<p>{s.n}</p>

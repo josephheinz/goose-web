@@ -1,0 +1,12 @@
+<script goose>
+struct State { n: i64, t: u8[..40] }
+fn say(s: State&, x: const u8[:]) { s.t.clear(); s.t.append(x); }
+fn pick(s: State&, v: i64) { s.n = v; }
+fn test_basic(s: State&) { say(s, "a{b}"); pick(s, 3); }
+</script>
+<style>
+.x { color: red; } @media(min-width: 10px) { .x { color: blue; } }
+</style>
+<button on:click='say("{ @Foo(1) }")' on:click="pick(if s.n > 1 { 1 } else { 2 })">{s.t} $38.61 @user a@b.co ${s.n}</button>
+<p>{if s.n > 2 { "}" } else { "{" }} {#raw s.n} &#123;literal&#125;</p>
+<script>var o = {a: 1}; if (o) { console.log(`${o.a}`); }</script>

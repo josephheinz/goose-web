@@ -21,7 +21,7 @@ goose-architect agent.
 | `app/**/route.goose` | API endpoint: `fn GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS` |
 | `app/**/page.html` | Server-rendered page (template) |
 | `app/**/page.goose` | Optional: `Props`, `fn load`, helpers for the page beside it |
-| `app/**/layout.html` | Wraps every page at or below its folder; `{{slot}}` marks the page |
+| `app/**/layout.html` | Wraps every page at or below its folder; `@slot()` marks the page |
 | `app/**/middleware.goose` | `fn before` and/or `fn after` for the subtree |
 | `app/not-found.html` | The 404 page, inside the root layout |
 | `app/state.goose` | State owned by the main thread: `Msg`, `Reply`, `fn handle`, optional `fn init` |
@@ -50,18 +50,33 @@ Set `ctx.title` in `load`; layouts read it.
 
 | Syntax | Does |
 |---|---|
-| `{{ expr }}` | writes the value, HTML-escaped |
-| `{{{ expr }}}` | writes it raw |
-| `{{#if e}}` `{{#else if e}}` `{{#else}}` `{{/if}}` | conditions |
-| `{{#for x in e}}`, `{{#for x, i in e}}`, `{{/for}}` | loops |
-| `{{#let n = e}}` | a local |
-| `{{> f(a)}}` | calls `f(out, a)` |
-| `{{slot}}` | the page, in a layout |
-| `{{-- note --}}` | a comment |
+| `{expr}` | writes the value, HTML-escaped |
+| `{#raw expr}` | writes it raw |
+| `{#if e}` `{#else if e}` `{#else}` `{/if}` | conditions |
+| `{#for x in e}`, `{#for x, i in e}`, `{/for}` | loops |
+| `{#let n = e}` | a local |
+| `@f(a)`, `@ns::f(a)`, `@f()` | calls `f(out, a)` |
+| `@Name(expr)` | a component (a capitalized name with no `::`) |
+| `@slot()` | the page, in a layout |
+| `{-- note --}` | a comment |
 
 Expressions are Goose. In scope: `req`, `ctx`, `props` (when `load` exists)
 and everything `page.goose` imports. A tag stays on one line, and each HTML
 line compiles to one Goose line, so compiler errors point at the HTML line.
+
+**Literal braces and `@`.** Every `{` outside `<script>` and `<style>` opens a
+tag, and a `}` without a `{` is an error. Write a literal brace as `&#123;` or
+`&#125;`, and a literal `@` before `name(` as `&#64;`. Entities work in text and
+in attribute values (so `onclick="if (x) &#123; f() &#125;"` and
+`data-x='&#123;"a":1&#125;'`). `@` starts a call only when a path and `(` follow
+it at once: `@user`, `joe@example.com`, `@ (x)` and `$38.61` are plain text.
+Inside `<script>` and `<style>` elements nothing is a tag or a call: the text
+passes through unchanged up to `</script` or `</style`, so inline CSS, JS and
+JSON-LD need no escaping. `{x}` escapes for HTML, which is wrong inside a script,
+so a server value there is not interpolated; write the whole element from a
+function (`@shop::boot_json(props)`). The element's own opening tag is markup, so
+`<script src="{props.url}">` works. The old `{{ }}` syntax is an error that
+names its replacement.
 
 ## Commands
 
@@ -128,7 +143,7 @@ struct State { count: i64 }
 fn inc(s: State&) { s.count += 1; }
 fn test_basic(s: State&) { inc(s); inc(s); }
 </script>
-<button on:click="inc">Clicked {{ s.count }} times</button>
+<button on:click="inc">Clicked {s.count} times</button>
 ```
 
 - The script needs `struct State`. Types: `i64`, `bool`, `u8[..N]`, structs
@@ -138,15 +153,15 @@ fn test_basic(s: State&) { inc(s); inc(s); }
   `on:click="remove(t.id)"`; arguments are `i64`, `bool` or strings.
 - `bind:value="field"` and `bind:checked="field"` tie an input to a direct
   `State` field.
-- Templates work as in `page.html` (`{{ }}`, `{{{ }}}`, `{{#if}}`, `{{#for}}`,
-  `{{#let}}`), except `{{component}}`, `{{slot}}` and `{{> f()}}`.
+- Templates work as in `page.html` (`{ }`, `{#raw }`, `{#if}`, `{#for}`,
+  `{#let}`), except `@Name()`, `@slot()` and `@f()`.
 - The client subset (E3) leaves out `match`, `enum`, floats, `loop`, `guard`,
   `defer`, blocks, closures, slices, `as`, bitwise operators, char literals,
   generics, globals and imports. Callable: the block's functions, `min`, `max`,
   `abs`, `str`, `web::has`, `push`, `remove_at`, `clear`, `append`, and `.len`.
   gweb reports anything else at its line, as `components/Name.gshtml:LINE: error:`.
 
-**Embedding.** `{{component Name(expr)}}` in any page, layout or not-found
+**Embedding.** `@Name(expr)` in any page, layout or not-found
 template; `expr` is a `Name::State`, usually from `load`. Every template
 imports every component, so `page.goose` can write `import Name;` and use
 `Name::State` in its `Props`. The page gets the server render, the state as

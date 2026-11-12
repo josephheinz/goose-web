@@ -37,8 +37,8 @@ fn test_basic(s: State&) {
 <button>Add</button>
 </form>
 <ul>
-{{#for t in s.items}}
-<li class="{{#if t.done}}done{{/if}}"><input type="checkbox" {{#if t.done}}checked{{/if}} on:change="toggle(t.id)"> {{ t.title }} <button on:click="remove(t.id)">x</button></li>
-{{/for}}
+{#for t in s.items}
+<li class="{#if t.done}done{/if}"><input type="checkbox" {#if t.done}checked{/if} on:change="toggle(t.id)"> {t.title} <button on:click="remove(t.id)">x</button></li>
+{/for}
 </ul>
-<p>{{ left(s) }} of {{ s.items.len }} left</p>
+<p>{left(s)} of {s.items.len} left</p>

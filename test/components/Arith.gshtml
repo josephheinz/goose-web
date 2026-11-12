@@ -26,6 +26,6 @@ fn test_signs(s: State&) {
     s.r %= 4;
 }
 </script>
-<p>{{ s.log }}</p>
-<p>{{ s.q }} {{ s.r }}</p>
-<p>{{#for i in 9}}{{ (i - 4) / 3 }},{{ (i - 4) % 3 }},{{ (i - 4) % -3 }} {{/for}}</p>
+<p>{s.log}</p>
+<p>{s.q} {s.r}</p>
+<p>{#for i in 9}{(i - 4) / 3},{(i - 4) % 3},{(i - 4) % -3} {/for}</p>

@@ -206,6 +206,8 @@ fn handle(msg: const Msg&) -> Reply {
 
 ## 7. Templates
 
+> **Syntax changed (2026-11-12):** the tag spelling below is replaced by DESIGN-ADDENDUM-6-SYNTAX.md (`{expr}`, `{#raw expr}`, `@Name(expr)`, `@f(a)`, `@slot()`). The text stays as history.
+
 **Choice.**
 
 | Syntax | Compiles to |

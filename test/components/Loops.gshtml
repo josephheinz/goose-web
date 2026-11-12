@@ -25,6 +25,6 @@ fn test_bounds(s: State&) {
     s.n = j;
 }
 </script>
-<p>{{ s.n }} {{ s.count }} {{ s.calls }}</p>
-<ol>{{#for x, i in s.items}}<li value="{{ i }}">{{ x.v }}</li>{{/for}}</ol>
-{{#for i in 2..s.items.len}}[{{ i }}]{{/for}}
+<p>{s.n} {s.count} {s.calls}</p>
+<ol>{#for x, i in s.items}<li value="{i}">{x.v}</li>{/for}</ol>
+{#for i in 2..s.items.len}[{i}]{/for}

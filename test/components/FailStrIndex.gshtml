@@ -5,4 +5,4 @@ fn f(s: State&) {
     if s.t.len > 0 && s.t[0] == 65 { s.n = 1; }
 }
 </script>
-<p>{{ s.t }}</p>
+<p>{s.t}</p>

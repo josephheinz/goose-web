@@ -6,4 +6,4 @@ fn f(s: State&) {
     s.same = s.a == s.b;
 }
 </script>
-<p>{{ s.same }}</p>
+<p>{s.same}</p>

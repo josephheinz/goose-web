@@ -14,4 +14,4 @@ fn test_two(s: State&) {
 }
 </script>
 <button on:click="next">next</button>
-{{#if s.items.len > 0}}<p>item {{ s.items[s.n].v }}</p>{{/if}}
+{#if s.items.len > 0}<p>item {s.items[s.n].v}</p>{/if}

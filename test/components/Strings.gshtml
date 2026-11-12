@@ -27,7 +27,7 @@ fn test_args(s: State&) {
     s.a = "a\"b";
 }
 </script>
-<p title="{{ s.a }}">{{ s.a }} {{ s.n }} {{ s.m }} {{ s.ok }}</p>
-<pre>{{ s.b }}</pre>
+<p title="{s.a}">{s.a} {s.n} {s.m} {s.ok}</p>
+<pre>{s.b}</pre>
 <button on:click="say(s.a)">a</button><button on:click="say(s.b)">b</button><button on:click='say("lit <&> é")'>c</button>
-<input bind:value="a"> {{ s.b.len }}
+<input bind:value="a"> {s.b.len}

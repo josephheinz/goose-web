@@ -3,4 +3,4 @@
 struct State { n: i64 }
 fn same<T>(v: T) -> T { v }
 </script>
-<p>{{ s.n }}</p>
+<p>{s.n}</p>

@@ -3,4 +3,4 @@
 struct Pt { x: i64 }
 struct State { p: Pt }
 </script>
-<p>{{ s.p }}</p>
+<p>{s.p}</p>
