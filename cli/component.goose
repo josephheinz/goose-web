@@ -287,6 +287,7 @@ var stubs: Stub[>..<];
 var decs: Ty[>..<];            // the reply decoders of the JavaScript module (roots first, then the structs they reach)
 var dec_bits = 0;              // the scalar checks the decoders use: 1 int, 2 bool, 4 string, 8 object, 16 array
 var http_urls_buf: u8[>..];    // `METHOD\tLINE\turl\n` for each string-literal url, for gweb's route check
+var life_use = 0;              // 1: the module imports life from gwl.js
 var http_use = 0;              // 1: http::get is used, 2: http::post
 var await_ctx: u8[..96];       // the place an await may not stand in (markup, a computed), or empty
 var rw_noasync: u8[..96];      // the same for calls of async functions; empty where they are allowed
@@ -2367,8 +2368,12 @@ fn check_reactive() {
         rw_r = 0;
         rw_w = 0;
         rw_noasync.clear();
-        rw_noasync.append(if rblocks[i].kind == RB_WATCH { "@watch" } else if rblocks[i].kind == RB_MOUNT { "@mount" } else if rblocks[i].kind == RB_UNMOUNT { "@unmount" } else { "@every" });
+        // @mount and @every run through run() like a handler, so they may await; the others may not.
+        if rblocks[i].kind == RB_WATCH { rw_noasync.append("@watch"); }
+        else if rblocks[i].kind == RB_UNMOUNT { rw_noasync.append("@unmount"); }
+        rw_async = false;
         rw_block(rblocks[i].body);
+        rblocks[i].is_async = rw_async;
         rblocks[i].r = rw_r;
         rblocks[i].w = rw_w;
     }
@@ -3284,6 +3289,15 @@ fn emit_zero() {
 
 // Handlers and tests of the def table: `name` or `name: f`, and for a function that does not take the
 // change handle, the wrapper (s, c, ...a) => f(s, ...a) the runtime's call needs.
+// The def key of lifecycle block bi: gw_m0 (mount), gw_u0 (unmount), gw_e0 (every), numbered per kind.
+fn block_key(bi: i64) {
+    var n = 0;
+    for j in bi { if rblocks[j].kind == rblocks[bi].kind { n += 1; } }
+    let k = rblocks[bi].kind;
+    w(if k == RB_MOUNT { "gw_m" } else if k == RB_UNMOUNT { "gw_u" } else { "gw_e" });
+    format(js, n);
+}
+
 fn emit_table(which: i64) {
     wo(": {");
     var first = true;
@@ -3318,6 +3332,27 @@ fn emit_table(which: i64) {
             w(m_js);
             w(")");
         } else if f.js != f.name { wo(": "); js.append(f.js); }
+    }
+    if which == 0 && reactive {
+        // @mount, @unmount and @every bodies are handlers under reserved names.
+        for bi in rblocks.len {
+            let b = rblocks[bi];
+            if b.kind == RB_WATCH { continue; }
+            if !first { w(","); }
+            if !compact { w(" "); }
+            first = false;
+            block_key(bi);
+            wo(": ");
+            if b.is_async { w("async "); }
+            w("(");
+            w(s_js);
+            w(",");
+            if !compact { w(" "); }
+            w(c_js);
+            w(")");
+            wo(" => {");
+            emit_block(b.body);
+        }
     }
     if !compact && !first { w(" "); }
     w("}");
@@ -3772,6 +3807,7 @@ fn emit_reactive_call(watch: bool) {
     // x: the names each async handler writes, which a failure restores.
     var anyx = false;
     for f in fns { if f.handler && f.is_async && f.body >= 0 { anyx = true; } }
+    for b in rblocks { if b.kind != RB_WATCH && b.is_async { anyx = true; } }
     if anyx {
         wo(", ");
         w("x");
@@ -3786,8 +3822,46 @@ fn emit_reactive_call(watch: bool) {
             wo(": ");
             format(js, f.w);
         }
+        for bi in rblocks.len {
+            if rblocks[bi].kind == RB_WATCH || !rblocks[bi].is_async { continue; }
+            if !firstx { w(","); }
+            if !compact { w(" "); }
+            firstx = false;
+            block_key(bi);
+            wo(": ");
+            format(js, rblocks[bi].w);
+        }
         if !compact { w(" "); }
         w("}");
+    }
+    // l: the lifecycle entries: mount keys, unmount keys, [ms, key] intervals.
+    if rblocks.len > 0 {
+        var any = false;
+        for b in rblocks { if b.kind != RB_WATCH { any = true; } }
+        if any {
+            wo(", ");
+            w("l");
+            wo(": {");
+            var firstl = true;
+            for kind in 1..4 {
+                if kind == RB_EVERY { wo(" v: ["); } else if kind == RB_MOUNT { wo(" m: ["); } else { wo(" u: ["); }
+                var firstk = true;
+                for bi in rblocks.len {
+                    if rblocks[bi].kind != kind { continue; }
+                    if !firstk { w(","); }
+                    firstk = false;
+                    if kind == RB_EVERY { w("["); format(js, rblocks[bi].ms); w(","); }
+                    w("\"");
+                    block_key(bi);
+                    w("\"");
+                    if kind == RB_EVERY { w("]"); }
+                }
+                w("]");
+                if kind < 3 { w(","); }
+            }
+            if !compact { w(" "); }
+            w("}");
+        }
     }
     var pm = 0;
     for d in rdecls { if d.kind == R_PROP { pm = pm | d.mask; } }
@@ -3804,6 +3878,15 @@ fn emit_reactive_call(watch: bool) {
     emit_table(1);
     wo(" });");
     if !compact { w("\n"); }
+    // A component with any block starts eagerly (Addendum 12, 7.2).
+    if rblocks.len > 0 {
+        life_use = 1;
+        w(if compact { "$l" } else { "life" });
+        w("(");
+        js_str(isl);
+        w(");");
+        if !compact { w("\n"); }
+    }
 }
 
 // ---------------------------------------------------------------- markup
@@ -5118,6 +5201,9 @@ fn http_urls() -> u8[>..] {
 // 1 when the module uses http::get, 2 http::post (and so imports gwh.js).
 fn http_used() -> i64 { return http_use; }
 
+// 1 when the module calls life() (and so imports gwl.js).
+fn life_used() -> i64 { return life_use; }
+
 // For each test of test_names, in its order: 1 when it is called test(gw_p, gw_s), 0 when with no arguments.
 fn test_args() -> u8[>..] {
     var r: u8[>..] = [];
@@ -5188,6 +5274,7 @@ fn reset() {
     dec_bits = 0;
     http_urls_buf.clear();
     http_use = 0;
+    life_use = 0;
     await_ctx.clear();
     rw_noasync.clear();
     rw_async = false;
@@ -5301,6 +5388,7 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
             if (http_use & 2) != 0 { js_out.append("post as $p"); }
             js_out.append("}from\"./gwh.js\";");
         }
+        if life_use != 0 { js_out.append("import{life as $l}from\"./gwl.js\";"); }
     } else {
         js_out.append("// Generated by gweb from ");
         js_out.append(path);
@@ -5314,6 +5402,7 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
             if (http_use & 2) != 0 { js_out.append("post as gw_post"); }
             js_out.append(" } from \"./gwh.js\";\n");
         }
+        if life_use != 0 { js_out.append("import { life } from \"./gwl.js\";\n"); }
     }
     js_out.append(js);
     errs.append(errs_buf);

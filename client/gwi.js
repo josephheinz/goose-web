@@ -134,11 +134,11 @@ export const B = (a, v, f) => { let z = a; do z = z.nextSibling; while (z.data !
 
 // One dispatch: bind, handler, phase 1 (def.u, may throw), phase 2 (DOM writes), watches. A sync failure
 // restores the whole copy and leaves the DOM alone; an async one restores only the keys the handler
-// writes (def.x) and shows that rollback.
-export function run(root, def, name, args, e, bound) {
+// writes (def.x) and shows that rollback. m0 starts the dirty bits (gwl.js passes -1 for the first watch run).
+export function run(root, def, name, args, e, bound, m0) {
   const s = state(root), keep = structuredClone(s);
   const f = D.activeElement, k = root.contains(f) && f.dataset.bind;
-  let m = 0, force = 0, before, applied, dead;
+  let m = m0 | 0, force = 0, before, applied, dead;
   const c = { m: (b) => m |= b, f: () => flush(1), r: root, e: (n, a) => hooks.e?.(root, n, a) };
   // Rounds 1 to 8: a watch that marks bits makes another round.
   const flush = (x) => {

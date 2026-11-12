@@ -113,11 +113,23 @@ fi
 mkdir -p "$WORK/nohttp"
 cp -R "$WORK/ok/app" "$WORK/ok/components" "$WORK/nohttp/"
 rm "$WORK/nohttp/components/RFetch.gshtml"
+rm "$WORK/nohttp/components/RClockAsync.gshtml"
 if "$GWEB" -C "$WORK/nohttp" gen >/dev/null 2>&1; then
   if [ -e "$WORK/nohttp/.gooseweb/_gw/gwh.js" ]; then bad "gwh.js was written for a site without http"; else ok; fi
 else
   bad "gweb gen without RFetch"
 fi
+
+# gwl.js is written only for a site with lifecycle blocks or watches.
+mkdir -p "$WORK/nolife"
+cp -R "$WORK/nohttp/app" "$WORK/nohttp/components" "$WORK/nolife/"
+rm "$WORK/nolife/components/RClock.gshtml" "$WORK/nolife/components/RWatch.gshtml"
+if "$GWEB" -C "$WORK/nolife" gen >/dev/null 2>&1; then
+  if [ -e "$WORK/nolife/.gooseweb/_gw/gwl.js" ]; then bad "gwl.js was written for a site without lifecycle"; else ok; fi
+else
+  bad "gweb gen without RClock"
+fi
+if [ -e "$WORK/nohttp/.gooseweb/_gw/gwl.js" ]; then ok; else bad "gwl.js is not written for a site with lifecycle"; fi
 
 # 3. gweb test leaves .gooseweb/ alone.
 mkdir -p "$WORK/keep"

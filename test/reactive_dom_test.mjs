@@ -13,7 +13,7 @@ console.error = () => {};
 const dir = process.env.GW_DIR;
 const G = await import(pathToFileURL(dir + "/gwi.js").href);
 const { defs, state } = G;
-for (const n of ["RCounter", "RParts", "RComputed", "RWatch", "RStruct", "RFetch"]) await import(pathToFileURL(`${dir}/${n}.js`).href);
+for (const n of ["RCounter", "RParts", "RComputed", "RWatch", "RStruct", "RFetch", "RClock", "RClockAsync"]) await import(pathToFileURL(`${dir}/${n}.js`).href);
 
 let errors = [];
 window.addEventListener("gw:error", (ev) => errors.push(ev.detail));
@@ -287,6 +287,114 @@ test("RFetch: async propagates; a post without a decoder ignores the body", asyn
   eq(errors.length, 0, "no error");
   eq(root.querySelectorAll("li").length, 1, "list shown");
   synced(root, "RFetch", "both");
+});
+
+// ---- RClock and RClockAsync: lifecycle through gwl.js, with manual timers and swap() as the fragment write.
+const timers = new Map();
+let nextTimer = 1;
+globalThis.setInterval = (f) => (timers.set(nextTimer, f), nextTimer++);
+globalThis.clearInterval = (id) => timers.delete(id);
+const fireTimers = () => [...timers.values()].forEach((f) => f());
+const count = { m: 0, u: 0 };
+{
+  const h = defs.RClock.h, m = h.gw_m0, u = h.gw_u0;
+  h.gw_m0 = (...a) => (count.m++, m(...a));
+  h.gw_u0 = (...a) => (count.u++, u(...a));
+}
+// The server's root for a component with some state set, as a fragment string for swap().
+function rootHtml(name, over) {
+  const def = defs[name], s = { ...def.i({}), ...over };
+  return `<div data-component="${name}">${def.r(s)}</div><script type="application/json">${json(s)}</script>`;
+}
+function lifePage() {
+  document.body.innerHTML = "<div id=host></div>";
+  G.hooks.a();   // stops whatever an earlier test left
+  timers.clear();
+  count.m = count.u = 0;
+  errors = [];
+  return document.getElementById("host");
+}
+
+test("RClock: the watch runs once at start before any event; mount runs once; every ticks update the DOM", () => {
+  const host = lifePage();
+  G.swap(host, rootHtml("RClock", { ticks: 3 }));
+  const root = host.firstChild;
+  eq(state(root).parity, true, "the watch ran at start (ticks is 3)");
+  eq(state(root).started, true, "mount ran");
+  eq(count.m, 1, "mount once");
+  eq(root.querySelector("p").textContent, "3 true true", "shown before any event");
+  synced(root, "RClock", "start");
+  eq(timers.size, 1, "one interval");
+  fireTimers();
+  eq(root.querySelector("p").textContent, "4 true false", "a tick");
+  fireTimers();
+  fireTimers();
+  eq(root.querySelector("p").textContent, "6 true false", "three ticks");
+  synced(root, "RClock", "ticks");
+  click(btn(root, "+"));
+  eq(root.querySelector("p").textContent, "7 true true", "an event still works");
+  eq(count.m, 1, "mount still once");
+  eq(errors.length, 0, "no error");
+});
+
+test("RClock: a swap that removes the root stops the interval and runs unmount once; a new root starts", () => {
+  const host = lifePage();
+  G.swap(host, rootHtml("RClock", {}));
+  const root = host.firstChild;
+  eq(timers.size, 1, "interval running");
+  G.swap(host, "");
+  eq(host.firstChild, null, "root gone");
+  eq(count.u, 1, "unmount once");
+  eq(timers.size, 0, "interval stopped");
+  fireTimers();
+  G.swap(host, "<p>other</p>");
+  eq(count.u, 1, "still once");
+  eq(state(root).ticks, 0, "no tick after removal");
+  G.swap(host, rootHtml("RClock", { ticks: 10 }));
+  const again = host.querySelector("[data-component]");
+  eq(count.m, 2, "mount ran for the new root");
+  eq(timers.size, 1, "a new interval");
+  fireTimers();
+  eq(again.querySelector("p").textContent, "11 true true", "the new root ticks");
+  eq(state(root).ticks, 0, "the old one does not");
+  eq(errors.length, 0, "no error");
+});
+
+test("RClock: a root removed without a swap is stopped by its own timer", () => {
+  const host = lifePage();
+  G.swap(host, rootHtml("RClock", {}));
+  host.innerHTML = "";
+  eq(count.u, 0, "nothing noticed yet");
+  fireTimers();
+  eq(count.u, 1, "unmount ran from the tick");
+  eq(timers.size, 0, "interval cleared");
+  fireTimers();
+  eq(count.u, 1, "once");
+});
+
+test("RClockAsync: an async mount and an async every update state through a stubbed fetch", async () => {
+  calls = [];
+  const host = lifePage();
+  G.swap(host, rootHtml("RClockAsync", {}));
+  const root = host.firstChild;
+  eq(calls.length, 1, "mount fetched");
+  eq(root.querySelector("p").textContent, "0 true", "busy shows before the reply");
+  calls[0].answer(200, 5);
+  await tick();
+  eq(root.querySelector("p").textContent, "5 false", "mount result");
+  fireTimers();
+  eq(calls.length, 2, "tick fetched");
+  calls[1].answer(200, 9);
+  await tick();
+  eq(root.querySelector("p").textContent, "9 false", "tick result");
+  synced(root, "RClockAsync", "ticks");
+  fireTimers();
+  calls[2].answer(500, null);
+  await tick();
+  eq(state(root).n, 9, "a failed tick rolls back");
+  eq(errors.length, 1, "and reports");
+  G.swap(host, "");
+  eq(timers.size, 0, "stopped");
 });
 
 let pass = 0, fail = 0;

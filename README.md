@@ -399,6 +399,10 @@ what the handler wrote (an optimistic `push` disappears) and raises `gw:error`. 
 GET /api/x`); routes answer with `web::json(res, http::Status.Ok); Name::gw_json(res.body, items);` (name the value
 first; `gw_json` takes a struct or a `S[:]`). The module imports `/_gw/gwh.js`, which gweb serves when a component uses it.
 
+**Lifecycle (reactive components).** `@mount { }` runs once when the component starts in the browser, `@unmount { }` when its root
+leaves the document (no `await`), `@every(MS) { }` every MS ms (16 or more) while mounted; `@mount` and `@every` may `await`.
+A component with any of these or a `@watch` starts at once (`/_gw/gwl.js`, served when one uses it) and runs its watches once first.
+
 **Maintainers.** After editing `client/gwi.js`, run `client/build.sh` (esbuild
 0.28.2 through `npx`, or `ESBUILD=/path/to/esbuild`); it writes
 `client/gwi.min.js` with the source's FNV-1a hash in its banner.
