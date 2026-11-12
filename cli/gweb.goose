@@ -1858,7 +1858,8 @@ fn gen_hub_thread(m: u8[>..]&) {
     }
     if socket_close { m.append("            Close => { socket::close(ctx, id, topic); },\n"); }
     m.append("            Failed => { print(\"goose-web: the hub stopped\"); return; },\n            _ => {},\n        }\n    }\n}\n\n");
-    m.append("""thread_fn hub_supervisor(cfg: web::Config, owner_fd: i32) {
+    m.append("""
+thread_fn hub_supervisor(cfg: web::Config, owner_fd: i32) {
     var why: u8[>..] = [];
     while !thread_wait(thread_spawn_contained(hub_thread, cfg, owner_fd), why) {
         print("goose-web: the hub thread stopped: ", why, "; restarting it");
@@ -1936,7 +1937,8 @@ fn main() {
     } else {
         m.append("    if cfg.export_dir.len > 0 { exit(if run_export(cfg.export_dir, -1) { 0 } else { 1 }); }\n");
     }
-    m.append("""    let server = net::listen(cfg.port, cfg.host, 1024);
+    m.append("""
+    let server = net::listen(cfg.port, cfg.host, 1024);
     guard server.ok() else { print("goose-web: cannot listen on port ", cfg.port, ": ", net::last_error()); exit(1); }
 
 """);
@@ -2266,12 +2268,12 @@ fn check_hashed() {
     for s, i in statics {
         for o, k in statics {
             if k == i { continue; }
-            var other: const u8[:] = "";
-            if s.hashed == o.url { other = o.url; }
-            else if k > i && s.hashed == o.hashed { other = o.hashed; }
-            if other.len == 0 { continue; }
+            let hit_url = s.hashed == o.url;
+            let hit_hash = k > i && s.hashed == o.hashed;
+            if !hit_url && !hit_hash { continue; }
             var m: u8[>..] = [];
-            format(m, "this file's hashed URL ", s.hashed, " is taken by ", other);
+            format(m, "this file's hashed URL ", s.hashed, " is taken by ");
+            if hit_url { m.append(o.url); } else { m.append(o.hashed); }
             err(s.file, 0, m);
         }
         for d in dirs {
@@ -3077,10 +3079,11 @@ fn main() {
         exit(1);
     }
     if cmd == "export" {
-        var dir: const u8[:] = "out";
+        var dir: u8[>..] = [];
+        dir.append("out");
         var k = 0;
         while k < rest.len {
-            if rest[k] == "-o" && k + 1 < rest.len && rest[k + 1].len > 0 { dir = rest[k + 1]; k += 2; }
+            if rest[k] == "-o" && k + 1 < rest.len && rest[k + 1].len > 0 { dir.clear(); dir.append(rest[k + 1]); k += 2; }
             else if rest[k] == "--no-minify" { k += 1; }
             else { usage(); }
         }
