@@ -35,8 +35,8 @@ fn client_ip(req: const http::Request&, ctx: const Ctx&, out: u8[>..]&) {
     if ctx.auth.trust_proxy {
         let xff, has = http::header(req, "x-forwarded-for");
         if has {
-            var item: const u8[:] = "";
-            for part in split(xff, ',') { item = trim(part); }
+            let parts = split_on(xff, ',');
+            let item = trim(parts[parts.len - 1]);
             if item.len > 0 { out.append(item); return; }
         }
     }

@@ -3,6 +3,7 @@
 // Fixture files go in a temp folder that is passed by path; every case uses its own variable names because the
 // environment cannot be unset from Goose.
 import web from "..";
+import net from "../../goose-net";
 import std;
 import os;
 

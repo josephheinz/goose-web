@@ -53,7 +53,7 @@ fn main() {
 
     var res = http::new_response();
     web::rate_refuse(res, 1);
-    check(res.status == http::Status.Other { code: 429 }, "status 429");
+    check(http::code(res.status) == 429, "status 429");
     check_eq(res.headers, "Retry-After: 1\r\n", "1 ms rounds up to 1 second");
     check_eq(res.body, "too many requests; try again in 1 seconds\n", "body");
     var res2 = http::new_response();

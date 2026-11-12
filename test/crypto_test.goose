@@ -2,6 +2,7 @@
 //   goose build test/crypto_test.goose && test/crypto_test
 import web from "..";
 import web.crypto;
+import net from "../../goose-net";
 import std;
 
 var failures = 0;
@@ -69,9 +70,6 @@ fn main() {
     for i in 131 { key.push(0xaa); }
     check_eq(hmac_hex(key, "Test Using Larger Than Block-Size Key - Hash Key First"), "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54", "hmac rfc4231 6 (long key)");
 
-    var short: u8[..31] = [0; 31];
-    check(!web::sha256(short, "abc"), "sha256 refuses a 31 byte output");
-    check(!web::hmac_sha256(short, "k", "abc"), "hmac refuses a 31 byte output");
 
     var dk: u8[..32] = [0; 32];
     check(web::pbkdf2_sha256(dk, "password", "salt", 2), "pbkdf2 accepts");

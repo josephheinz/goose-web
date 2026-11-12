@@ -13,7 +13,7 @@ struct CorsOptions { origins: u8[..1024] = "", methods: u8[..128] = "GET, POST, 
 
 fn cors_origin_allowed(opts: const CorsOptions&, origin: const u8[:]) -> bool {
     if origin.len == 0 { return false; }
-    for item in split(opts.origins, ',') {
+    for item in split_on(opts.origins, ',') {
         if trim(item) == origin { return true; }
     }
     return false;

@@ -538,12 +538,23 @@ fn parse_env_line(line: const u8[:], name: u8[>..]&, value: u8[>..]&) -> i64 {
     return 1;
 }
 
+// std::split, which web::split (the path splitter) shadows in this namespace.
+fn split_on(s: const u8[:], sep: u8) -> const u8[:][>..] {
+    var out: const u8[:][>..] = [];
+    var start = 0;
+    for c, i in s {
+        if c == sep { out.push(s[start..i]); start = i + 1; }
+    }
+    out.push(s[start..]);
+    return out;
+}
+
 // Sets every pair in the file that is not already set, so the real environment and earlier files win.
 // A missing file is skipped. False, with err set to "path:N: error: ...", on a malformed line.
 fn load_env_file(path: const u8[:], err: u8[>..]&) -> bool {
     var text: u8[>..] = [];
     if !read_file(path, text) { return true; }
-    for line, i in split(text, '\n') {
+    for line, i in split_on(text, '\n') {
         var name: u8[>..] = [];
         var value: u8[>..] = [];
         let r = parse_env_line(line, name, value);
@@ -588,7 +599,7 @@ fn load_env_files(envname: const u8[:], err: u8[>..]&) -> bool {
 // Parses WEB_SECRET: 1 to 4 comma-separated keys of 32 to 64 bytes. False, with err set, otherwise; err never holds key bytes.
 fn parse_secret(text: const u8[:], keys: Keys&, err: u8[>..]&) -> bool {
     keys.n = 0;
-    for item, i in split(trim(text), ',') {
+    for item, i in split_on(trim(text), ',') {
         let k = trim(item);
         if i >= 4 { format(err, "WEB_SECRET: more than 4 keys"); keys.n = 0; return false; }
         if k.len == 0 { format(err, "WEB_SECRET: key ", i + 1, " is empty"); keys.n = 0; return false; }
@@ -636,24 +647,24 @@ fn csp_begin(ctx: Ctx&) -> bool { return make_nonce(ctx); }
 
 // Appends the default security headers, HSTS and CSP; false, with a bare 500, when they do not fit beside res.headers.
 fn apply_security(ctx: Ctx&, res: http::Response&, cfg: const Config&) -> bool {
-    var block: u8[>..] = [];
+    var hdrs: u8[>..] = [];
     if cfg.security_headers && ctx.default_headers {
-        block.append("X-Content-Type-Options: nosniff\r\n");
-        block.append("Referrer-Policy: strict-origin-when-cross-origin\r\n");
-        block.append("X-Frame-Options: SAMEORIGIN\r\n");
+        hdrs.append("X-Content-Type-Options: nosniff\r\n");
+        hdrs.append("Referrer-Policy: strict-origin-when-cross-origin\r\n");
+        hdrs.append("X-Frame-Options: SAMEORIGIN\r\n");
     }
-    if cfg.hsts > 0 { format(block, "Strict-Transport-Security: max-age=", cfg.hsts, "; includeSubDomains\r\n"); }
+    if cfg.hsts > 0 { format(hdrs, "Strict-Transport-Security: max-age=", cfg.hsts, "; includeSubDomains\r\n"); }
     if ctx.nonce.len > 0 && starts_with(res.content_type, "text/html") {
         // csp_begin with WEB_CSP off asks for enforcement.
-        block.append(if cfg.csp == 2 { "Content-Security-Policy-Report-Only: " } else { "Content-Security-Policy: " });
-        format(block, "script-src 'self' 'nonce-", ctx.nonce, "'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'\r\n");
+        hdrs.append(if cfg.csp == 2 { "Content-Security-Policy-Report-Only: " } else { "Content-Security-Policy: " });
+        format(hdrs, "script-src 'self' 'nonce-", ctx.nonce, "'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'\r\n");
     }
-    if block.len > res.headers.cap - res.headers.len {
+    if hdrs.len > res.headers.cap - res.headers.len {
         res.headers.clear();
         http::json_error(res, http::Status.InternalServerError, "response headers too large");
         return false;
     }
-    res.headers.append(block);
+    res.headers.append(hdrs);
     return true;
 }
 

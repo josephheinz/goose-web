@@ -83,7 +83,7 @@ fn session_cookie_name(req: const http::Request&) -> const u8[:] {
 fn session_cookie_opts(name: const u8[:], s: const Session&, max_s: i64, now: i64) -> CookieOptions {
     var left = s.iat + max_s - now;
     if left < 1 { left = 1; }
-    return CookieOptions { secure: starts_with(name, "__Host-"), max_age: if s.remember { left } else { -1 }, .. };
+    return CookieOptions { max_age: if s.remember { left } else { -1 }, secure: starts_with(name, "__Host-"), .. };
 }
 
 // Appends the cookie value: 1.sid.uid.ver.iat.exp.r.data.mac

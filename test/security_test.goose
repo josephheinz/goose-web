@@ -40,7 +40,8 @@ fn security_tests() {
     var off = web::default_config();
     off.security_headers = false;
     var res2 = html_res();
-    check(web::apply_security(web::new_ctx(0, -1), res2, off), "opt-out by config");
+    var octx = web::new_ctx(0, -1);
+    check(web::apply_security(octx, res2, off), "opt-out by config");
     check_eq(res2.headers, "", "no headers when security_headers is false");
 
     var ctx3 = web::new_ctx(0, -1);
@@ -52,7 +53,8 @@ fn security_tests() {
     var hs = web::default_config();
     hs.hsts = 31536000;
     var res4 = html_res();
-    check(web::apply_security(web::new_ctx(0, -1), res4, hs), "hsts applies");
+    var ctx4 = web::new_ctx(0, -1);
+    check(web::apply_security(ctx4, res4, hs), "hsts applies");
     var want4: u8[>..] = [];
     format(want4, DEFAULTS, "Strict-Transport-Security: max-age=31536000; includeSubDomains\r\n");
     check_eq(res4.headers, want4, "hsts line after the defaults");
@@ -60,7 +62,8 @@ fn security_tests() {
     var res5 = html_res();
     format(res5.headers, "X-Fill: ");
     while res5.headers.len < res5.headers.cap - 10 { res5.headers.push('a'); }
-    check(!web::apply_security(web::new_ctx(0, -1), res5, cfg), "overflow refused");
+    var ctx5 = web::new_ctx(0, -1);
+    check(!web::apply_security(ctx5, res5, cfg), "overflow refused");
     check(res5.headers.len == 0 && http::code(res5.status) == 500, "overflow becomes the 500");
     check(find(res5.body, "response headers too large") >= 0, "overflow body");
 }

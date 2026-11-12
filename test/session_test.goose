@@ -279,14 +279,14 @@ fn session_tests() {
     check_eq(r3.session.sid, ctx.session.sid, "refresh keeps sid");
     check_eq(r3.session.data, "hi", "refresh keeps data");
     var r4 = ctx_with(KEY1, "");
-    r4.auth.max = 50000;
+    r4.auth.max = 100000;
     check(load(r4, v, NOW + 43201, "", "gw_session"), "refresh under a short max");
-    check(r4.session.exp == NOW + 50000, "refresh capped at iat + max");
+    check(r4.session.exp == NOW + 100000, "refresh capped at iat + max");
     var r5 = ctx_with(KEY1, "");
-    r5.auth.max = 50000;
+    r5.auth.max = 100000;
     var rv5: u8[>..] = [];
     set_value(r4.set_cookies, "gw_session", rv5);
-    check(load(r5, rv5, NOW + 49999, "", "gw_session"), "capped cookie valid until the limit");
+    check(load(r5, rv5, NOW + 99999, "", "gw_session"), "capped cookie valid until the limit");
     check(r5.set_cookies.len == 0, "no refresh when exp is already iat + max");
     var r6 = ctx_with(KEY1, "");
     var fill: u8[>..] = [];
@@ -327,9 +327,10 @@ fn session_tests() {
     var req_sd_raw: u8[>..] = [];
     build(req_sd_raw, "GET", "/", "", "gw_session", v);
     let req_sd, p_sd = http::parse_request(req_sd_raw);
-    check(web::session_set_data_at(req_sd, sd, "new", NOW + 5), "set_data with a session");
+    var sd1 = ctx_with(KEY1, "");  // the failed call above cached Absent in sd
+    check(web::session_set_data_at(req_sd, sd1, "new", NOW + 5), "set_data with a session");
     var dv: u8[>..] = [];
-    set_value(sd.set_cookies, "gw_session", dv);
+    set_value(sd1.set_cookies, "gw_session", dv);
     var sd2 = ctx_with(KEY1, "");
     check(load(sd2, dv, NOW + 6, "", "gw_session"), "re-signed cookie loads");
     check_eq(sd2.session.data, "new", "data replaced");
@@ -349,11 +350,11 @@ fn guard_tests() {
     var ctx = ctx_with(KEY1, "");
     var res = http::new_response();
     var raw1: u8[>..] = [];
-    build(raw1, "GET", "/admin/posts?page=2&q=a b", "", "", "");
+    build(raw1, "GET", "/admin/posts?page=2&q=a%20b", "", "", "");
     let req1, p1 = http::parse_request(raw1);
     check(!web::require_login_at(req1, ctx, res, "/login", NOW), "guard refuses");
     check(ctx.outcome == web::Outcome.Redirect && ctx.redirect_status == 303, "303 redirect");
-    check_eq(ctx.location, "/login?next=%2Fadmin%2Fposts%3Fpage%3D2%26q%3Da%20b", "next with path and query");
+    check_eq(ctx.location, "/login?next=%2Fadmin%2Fposts%3Fpage%3D2%26q%3Da%2520b", "next with path and query");
     check(find(res.headers, "Cache-Control: no-store") >= 0, "guard sets no-store");
 
     var ctx2 = ctx_with(KEY1, "");
