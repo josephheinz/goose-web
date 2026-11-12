@@ -19,8 +19,9 @@ fn check_eq(got: const u8[:], want: const u8[:], what: const u8[:]) {
     if got != want { failures += 1; print("FAIL ", what, ": got '", got, "' want '", want, "'"); }
 }
 
-fn post(body: const u8[:]) -> http::Request {
-    var raw: u8[>..] = [];
+// The request holds slices into raw, so the caller owns the buffer.
+fn post(raw: u8[>..]&, body: const u8[:]) -> http::Request {
+    raw.clear();
     format(raw, "POST /f HTTP/1.1\r\nHost: a\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: ", body.len, "\r\n\r\n", body);
     let req, parsed = http::parse_request(raw);
     return req;
@@ -28,7 +29,8 @@ fn post(body: const u8[:]) -> http::Request {
 
 fn main() {
     // form_text
-    let r1 = post("name=Ann+Lee&city=%C3%A9t%C3%A9&blank=+%20&long=abcdefgh&pad=+x+");
+    var raw_r1: u8[>..] = [];
+    let r1 = post(raw_r1, "name=Ann+Lee&city=%C3%A9t%C3%A9&blank=+%20&long=abcdefgh&pad=+x+");
     var errs = web::no_errors();
     var name: u8[..10] = "";
     check(web::form_text(r1, "name", name, errs, true), "text present");
@@ -64,7 +66,8 @@ fn main() {
     check_eq(exact, "abcdefgh", "exactly capacity stored");
 
     // form_int
-    let r2 = post("a=+42+&b=4x&c=&d=-7&e=%2042");
+    var raw_r2: u8[>..] = [];
+    let r2 = post(raw_r2, "a=+42+&b=4x&c=&d=-7&e=%2042");
     var e2 = web::no_errors();
     var n: i64 = 0;
     check(web::form_int(r2, "a", n, e2, true) && n == 42, "int with spaces");
@@ -81,7 +84,8 @@ fn main() {
     check(web::form_int(r2, "e", n, e2, true) && n == 42, "encoded space trimmed");
 
     // form_bool
-    let r3 = post("on=on&off=off&zero=0&empty=&one=1&f=false&yes=yes");
+    var raw_r3: u8[>..] = [];
+    let r3 = post(raw_r3, "on=on&off=off&zero=0&empty=&one=1&f=false&yes=yes");
     var bo = true;
     check(web::form_bool(r3, "nope", bo) && !bo, "bool absent is false");
     check(web::form_bool(r3, "on", bo) && bo, "bool on");
@@ -181,7 +185,8 @@ fn main() {
     web::invalid(out, te, "other");
     check_eq(out, "", "invalid none");
 
-    let pr = post("name=%3Cb%3E+%26+%22x%22&empty=");
+    var raw_pr: u8[>..] = [];
+    let pr = post(raw_pr, "name=%3Cb%3E+%26+%22x%22&empty=");
     out.clear();
     web::field_value(out, pr, "name", "fallback");
     check_eq(out, "&lt;b&gt; &amp; &quot;x&quot;", "field_value posted, escaped");
