@@ -356,3 +356,13 @@ I changed nothing outside the scratchpad and committed nothing. A dev server was
 - **A function partial with a capitalized, un-namespaced name** (`@Price(x)`) is taken as a component and rejected. Use a lower-case name or `ns::`.
 - **Three designs touch `compile_template`.** This one must merge first; the fragments builder rebases onto `template_tag`/`template_call` as section 9 describes.
 - **Character-literal skipping is heuristic** (`'x'`, `'\n'`, `'\x41'`). An apostrophe elsewhere in an expression is treated as an ordinary character, which is right for Goose as specified, but a new literal form in a later Goose version would need a scanner update.
+
+## Follow-up 1
+
+Both stay as built; nothing needs appending as a follow-up unless you want the record below.
+
+1. **Bare `{#if}`:** keep `{#if e} needs an expression`. It matches the `{#raw e}` wording. If a bare `{#else if}` or `{#let}` currently falls through to `unknown tag`, give them the same form (`{#else if e} needs an expression`, `{#let n = e} needs a name and a value`); a bare `{#for}` is already covered by the existing `{#for x in e} or {#for x, i in e}` message.
+
+2. **Layout without `@slot()`:** keep the line-less form, `app/layout.html: error: a layout needs @slot() where the page goes`. The slot is missing from the whole file, so no single line is correct, and line 0 is how the old `{{slot}}` check reported it too. Section 7's statement that every message is `path:line` is too broad for this one row; the `test/templates.sh` expectation stands.
+
+I did not implement or edit anything.

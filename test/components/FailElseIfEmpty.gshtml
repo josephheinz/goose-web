@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailElseIfEmpty.gshtml:6: error: {#else if e} needs an expression
+struct State { n: i64 }
+fn f(s: State&) { s.n += 1; }
+</script>
+<p>{#if true}x{#else if }y{/if}</p>

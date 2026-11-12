@@ -528,6 +528,12 @@ fn template_tag(path: const u8[:], ln: i64, inner: const u8[:], line: const u8[:
         stack.push('f'); stack_lines.push(ln);
     } else if starts_with(inner, "#let ") {
         format(out, "let ", trim(inner[5..]), "; ");
+    } else if inner == "#else if" {
+        err(path, ln, "{#else if e} needs an expression");
+    } else if inner == "#for" {
+        err(path, ln, "{#for x in e} or {#for x, i in e}");
+    } else if inner == "#let" {
+        err(path, ln, "{#let n = e} needs a name and a value");
     } else if inner == "#raw" || inner == "#if" {
         var m: u8[>..] = [];
         format(m, "{", inner, " e} needs an expression");

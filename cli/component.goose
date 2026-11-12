@@ -2511,6 +2511,9 @@ fn markup_line(li: i64, last: bool, goose_out: u8[>..]&) {
         else if inner == "#else" { m_else(ln); }
         else if starts_with(inner, "#for ") { m_for(trim_s(a + 5, b), b, ln); }
         else if starts_with(inner, "#let ") { m_let(trim_s(a + 5, b), b, ln); }
+        else if inner == "#else if" { report(ln, "{#else if e} needs an expression"); }
+        else if inner == "#for" { report(ln, "{#for x in e} or {#for x, i in e}"); }
+        else if inner == "#let" { report(ln, "{#let n = e} needs a name and a value"); }
         else if inner == "#raw" || inner == "#if" {
             var m: u8[>..] = [];
             format(m, "{", inner, " e} needs an expression");
