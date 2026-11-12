@@ -1,8 +1,0 @@
-<script goose>
-// expect: islands/FailBlock.gshtml:5: error: 'block' is not available in client code (islands v1)
-struct State { n: i64 }
-fn f(s: State&) {
-    { s.n += 1; }
-}
-</script>
-<p>{{ s.n }}</p>

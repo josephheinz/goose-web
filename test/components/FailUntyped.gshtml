@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailUntyped.gshtml:6: error: cannot tell the type of this expression; add a type to the let
+struct Pt { x: i64 }
+struct State { p: Pt }
+</script>
+<p>{{ s.p }}</p>

@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailEnum.gshtml:3: error: 'enum' is not available in client code (components v1)
+enum Color { Red, Green }
+struct State { n: i64 }
+</script>
+<p>{{ s.n }}</p>

@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailGenerics.gshtml:4: error: 'generics' is not available in client code (components v1)
+struct State { n: i64 }
+fn same<T>(v: T) -> T { v }
+</script>
+<p>{{ s.n }}</p>

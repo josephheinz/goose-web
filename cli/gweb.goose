@@ -10,11 +10,11 @@
 // copies of the app files with a namespace on line 1, one Goose file per
 // template (one Goose line per HTML line), main.goose with the dispatcher,
 // and map.txt. Then it runs `goose build` and maps error paths back.
-// Islands (islands/Name.gshtml, DESIGN-ADDENDUM-3) go through island.goose.
+// Components (components/Name.gshtml, DESIGN-ADDENDUM-3) go through component.goose.
 
 import std;
 import os;
-import island;
+import component;
 
 // ---------------------------------------------------------------- C helpers (proc.c)
 
@@ -54,9 +54,9 @@ var has_state_init = false;
 var has_not_found = false;
 var uses_sqlite = false;
 var map_text: u8[>..];
-var island_names: u8[..64][>..<];   // islands/Name.gshtml, sorted
-var island_lines: i64[>..<];        // each island's source line count
-var island_errors = 0;              // translator errors of this gen; the build still runs goose
+var component_names: u8[..64][>..<];   // components/Name.gshtml, sorted
+var component_lines: i64[>..<];        // each component's source line count
+var component_errors = 0;              // translator errors of this gen; the build still runs goose
 var last_errors: u8[>..];      // what this build printed as errors, for the dev overlay (max 16 KB)
 
 fn note_errors(text: const u8[:]) {
@@ -296,12 +296,12 @@ fn scan_public() {
     }
 }
 
-// islands/*.gshtml: the names, checked (DESIGN-ADDENDUM-3, E1).
-fn scan_islands() {
-    island_names.clear();
-    if is_dir("public/_gw") { err("public/_gw", 0, "/_gw/ is goose-web's island folder; rename this folder"); }
+// components/*.gshtml: the names, checked (DESIGN-ADDENDUM-3, E1).
+fn scan_components() {
+    component_names.clear();
+    if is_dir("public/_gw") { err("public/_gw", 0, "/_gw/ is goose-web's component folder; rename this folder"); }
     var names: u8[>..] = [];
-    if !list_dir("islands", names) { return; }
+    if !list_dir("components", names) { return; }
     var found: u8[..64][>..<] = [];
     for f in split(names, '\n') {
         if f.len == 0 || f[0] == '.' || !ends_with(f, ".gshtml") { continue; }
@@ -309,18 +309,18 @@ fn scan_islands() {
         var ok = n.len > 0 && n.len <= 64 && n[0] >= 'A' && n[0] <= 'Z';
         for c in n { if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) { ok = false; } }
         var p: u8[>..] = [];
-        format(p, "islands/", f);
-        if !ok { err(p, 0, "an island's name is [A-Z][A-Za-z0-9]*, as in islands/TodoBox.gshtml"); continue; }
+        format(p, "components/", f);
+        if !ok { err(p, 0, "a component's name is [A-Z][A-Za-z0-9]*, as in components/TodoBox.gshtml"); continue; }
         var t: u8[..64] = "";
         t.append(n);
         found.push(t);
     }
     sort(found) { a, b => compare(a, b) < 0 };
-    for t in found { island_names.push(t); }
+    for t in found { component_names.push(t); }
 }
 
-fn has_island(name: const u8[:]) -> bool {
-    for n in island_names { if n == name { return true; } }
+fn has_component(name: const u8[:]) -> bool {
+    for n in component_names { if n == name { return true; } }
     return false;
 }
 
@@ -334,7 +334,7 @@ fn scan() {
     if !is_dir("app") { err("app", 0, "no app/ folder here; run gweb in a project, or gweb new <dir>"); return; }
     scan_app();
     scan_public();
-    scan_islands();
+    scan_components();
     // A public file may not shadow a route at the same literal URL.
     for d in dirs {
         if !d.route && !d.page_html { continue; }
@@ -406,7 +406,7 @@ fn add_default_imports(imports: u8[>..]&) {
     for imp in ["import std;", "import net.http;", "import web;", "import web.template;"] {
         if find(imports, imp) < 0 { imports.append(imp); imports.push(' '); }
     }
-    for n in island_names {
+    for n in component_names {
         var imp: u8[>..] = [];
         format(imp, "import ", n, ";");
         if find(imports, imp) < 0 { imports.append(imp); imports.push(' '); }
@@ -490,18 +490,18 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], la
             } else if inner == "slot" {
                 if !layout { err(path, ln, "{{slot}} is for layout.html only"); }
                 out.append("F(); ");
-            } else if starts_with(inner, "island ") {
-                // {{island Name(expr)}}: the island, rendered with state expr.
-                let call = trim(inner[7..]);
+            } else if starts_with(inner, "component ") {
+                // {{component Name(expr)}}: the component, rendered with state expr.
+                let call = trim(inner["component ".len..]);
                 let open = find(call, "(");
-                if open <= 0 || call[call.len - 1] != ')' { err(path, ln, "{{island Name(expr)}} takes an island name and its state"); }
+                if open <= 0 || call[call.len - 1] != ')' { err(path, ln, "{{component Name(expr)}} takes a component name and its state"); }
                 else {
                     let nm = trim(call[..open]);
-                    if !has_island(nm) {
+                    if !has_component(nm) {
                         var m: u8[>..] = [];
-                        format(m, "no island named ", nm, " (there is no islands/", nm, ".gshtml)");
+                        format(m, "no component named ", nm, " (there is no components/", nm, ".gshtml)");
                         err(path, ln, m);
-                    } else { format(out, nm, "::island(out, ", trim(call[open + 1..call.len - 1]), "); "); }
+                    } else { format(out, nm, "::component(out, ", trim(call[open + 1..call.len - 1]), "); "); }
                 }
             } else if starts_with(inner, "#") || starts_with(inner, "/") {
                 var m: u8[>..] = [];
@@ -818,7 +818,7 @@ fn goose_web_home() -> u8[>..] {
     return h;
 }
 
-// ---------------------------------------------------------------- islands
+// ---------------------------------------------------------------- components
 
 fn push_gw_static(url: const u8[:], file: const u8[:], data: const u8[:]) {
     var s = Static { url: "", file: "", ctype: "text/javascript; charset=utf-8", etag: "" };
@@ -828,14 +828,14 @@ fn push_gw_static(url: const u8[:], file: const u8[:], data: const u8[:]) {
     statics.push(s);
 }
 
-// Translates every island to .gooseweb/Name.goose and .gooseweb/_gw/Name.js,
+// Translates every component to .gooseweb/Name.goose and .gooseweb/_gw/Name.js,
 // copies the runtime to .gooseweb/_gw/gwi.js (client/gwi.js in dev,
 // client/gwi.min.js otherwise) and adds all of them to the static files.
-// Translator errors are printed and counted in island_errors; gen goes on,
+// Translator errors are printed and counted in component_errors; gen goes on,
 // so the Goose compiler reports its errors too.
-fn gen_islands(dev: bool) {
-    island_lines.clear();
-    if island_names.len == 0 { return; }
+fn gen_components(dev: bool) {
+    component_lines.clear();
+    if component_names.len == 0 { return; }
     make_dir(".gooseweb/_gw");
     var rt_path: u8[>..] = [];
     format(rt_path, goose_web_home(), if dev { "/client/gwi.js" } else { "/client/gwi.min.js" });
@@ -843,23 +843,23 @@ fn gen_islands(dev: bool) {
     if !read(rt_path, rt) { return; }
     write(".gooseweb/_gw/gwi.js", rt);
     push_gw_static("/_gw/gwi.js", ".gooseweb/_gw/gwi.js", rt);
-    for n in island_names {
+    for n in component_names {
         var path: u8[>..] = [];
-        format(path, "islands/", n, ".gshtml");
+        format(path, "components/", n, ".gshtml");
         var src: u8[>..] = [];
-        island_lines.push(0);
+        component_lines.push(0);
         if !read(path, src) { continue; }
         var lines = 1;
         for c in src { if c == '\n' { lines += 1; } }
-        island_lines[island_lines.len - 1] = lines;
+        component_lines[component_lines.len - 1] = lines;
         var g: u8[>..] = [];
         var j: u8[>..] = [];
         var e: u8[>..] = [];
-        if !island::compile(n, path, src, !dev, g, j, e) {
+        if !component::compile(n, path, src, !dev, g, j, e) {
             write_stderr(e);
             note_errors(e);
-            for c in e { if c == '\n' { island_errors += 1; } }
-            if e.len == 0 { island_errors += 1; }
+            for c in e { if c == '\n' { component_errors += 1; } }
+            if e.len == 0 { component_errors += 1; }
         }
         var dst: u8[>..] = [];
         format(dst, ".gooseweb/", n, ".goose");
@@ -874,7 +874,7 @@ fn gen_islands(dev: bool) {
     }
 }
 
-// Writes .gooseweb/. False when there were errors. dev picks readable island
+// Writes .gooseweb/. False when there were errors. dev picks readable component
 // JS and the unminified runtime (DESIGN-ADDENDUM-3, follow-up 1).
 fn gen(dev: bool) -> bool {
     scan();
@@ -883,8 +883,8 @@ fn gen(dev: bool) -> bool {
     make_dir(".gooseweb");
     map_text.clear();
     uses_sqlite = false;
-    island_errors = 0;
-    gen_islands(dev);
+    component_errors = 0;
+    gen_components(dev);
     if is_dir("lib") { scan_lib_for_sqlite(); }
     if is_dir("lib") { c_symlink("../lib", ".gooseweb/lib"); }
     for &d in dirs {
@@ -990,31 +990,31 @@ fn rewrite_errors(text: const u8[:], cwd: const u8[:]) -> u8[>..] {
     cur.append(next);
     next.clear();
     format_replaced(next, cur, abs, "");
-    return island_lines_back(next);
+    return component_lines_back(next);
 }
 
-// A compiler error at islands/Name.gshtml:K past the source's last line is
+// A compiler error at components/Name.gshtml:K past the source's last line is
 // in the generated tail: gw_check lines carry `// gw:line N` and point back
-// at the markup; any other is "generated code for islands/Name.gshtml".
-fn island_lines_back(text: const u8[:]) -> u8[>..] {
+// at the markup; any other is "generated code for components/Name.gshtml".
+fn component_lines_back(text: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];
     var p = 0;
     while p < text.len {
-        let k = find(text[p..], "islands/");
+        let k = find(text[p..], "components/");
         if k < 0 { out.append(text[p..]); break; }
         let at = p + k;
         out.append(text[p..at]);
         p = at;
         var done = false;
-        for n, i in island_names {
-            if done || i >= island_lines.len { continue; }
+        for n, i in component_names {
+            if done || i >= component_lines.len { continue; }
             var pre: u8[>..] = [];
-            format(pre, "islands/", n, ".gshtml:");
+            format(pre, "components/", n, ".gshtml:");
             if !starts_with(text[at..], pre) { continue; }
             var e = at + pre.len;
             while e < text.len && text[e] >= '0' && text[e] <= '9' { e += 1; }
             let num, ok = parse_int(text[at + pre.len..e]);
-            if !ok || num <= island_lines[i] { continue; }
+            if !ok || num <= component_lines[i] { continue; }
             done = true;
             var gen_path: u8[>..] = [];
             format(gen_path, ".gooseweb/", n, ".goose");
@@ -1031,10 +1031,10 @@ fn island_lines_back(text: const u8[:]) -> u8[>..] {
                 }
             }
             if src_line > 0 { format(out, pre, src_line); }
-            else { format(out, "generated code for islands/", n, ".gshtml"); }
+            else { format(out, "generated code for components/", n, ".gshtml"); }
             p = e;
         }
-        if !done { out.append("islands/"); p = at + 8; }
+        if !done { out.append("components/"); p = at + "components/".len; }
     }
     return out;
 }
@@ -1069,8 +1069,8 @@ fn build(debug: bool, dev: bool) -> bool {
         }
         return false;
     }
-    if island_errors > 0 {
-        write_stderr("gweb: the island errors above stop the build\n");
+    if component_errors > 0 {
+        write_stderr("gweb: the component errors above stop the build\n");
         return false;
     }
     var routes = 0;
@@ -1085,13 +1085,13 @@ fn build(debug: bool, dev: bool) -> bool {
 
 // ---------------------------------------------------------------- test
 
-// gweb test (DESIGN-ADDENDUM-3, E5): each island's test_* functions, and a
+// gweb test (DESIGN-ADDENDUM-3, E5): each component's test_* functions, and a
 // zero case, run as Goose and as JavaScript (pretty and compact); the state
 // and the render must match exactly.
 fn test_cmd() -> bool {
     if !gen(false) { return false; }
-    if island_errors > 0 { write_stderr("gweb test: fix the island errors above\n"); return false; }
-    if island_names.len == 0 { write_stdout("gweb test: no islands/*.gshtml here\n"); return true; }
+    if component_errors > 0 { write_stderr("gweb test: fix the component errors above\n"); return false; }
+    if component_names.len == 0 { write_stdout("gweb test: no components/*.gshtml here\n"); return true; }
     var probe: u8[>..] = [];
     if c_run("command -v node", probe) != 0 { write_stderr("gweb test needs node\n"); return false; }
     let home = goose_web_home();
@@ -1102,9 +1102,9 @@ fn test_cmd() -> bool {
     main.append("import web from \""); lit(main, home); main.append("\";\n");
     main.append("import net from \""); lit(main, home); main.append("/../goose-net\";\n");
     main.append("import net.http;\nimport web.template;\n");
-    for n in island_names { format(main, "import ", n, ";\n"); }
+    for n in component_names { format(main, "import ", n, ";\n"); }
     main.append("fn main() {\n    var out: u8[>..] = [];\n");
-    var mjs_islands: u8[>..] = [];
+    var mjs_components: u8[>..] = [];
     var cases = 0;
     for mode in 2 {
         let compact = mode == 1;
@@ -1121,22 +1121,22 @@ fn test_cmd() -> bool {
         p.clear();
         format(p, dir, "/gwi.js");
         write(p, GWI_SHIM);
-        for n in island_names {
+        for n in component_names {
             var path: u8[>..] = [];
-            format(path, "islands/", n, ".gshtml");
+            format(path, "components/", n, ".gshtml");
             var src: u8[>..] = [];
             if !read(path, src) { return false; }
             var g: u8[>..] = [];
             var j: u8[>..] = [];
             var e: u8[>..] = [];
-            island::compile(n, path, src, compact, g, j, e);
+            component::compile(n, path, src, compact, g, j, e);
             p.clear();
             format(p, dir, "/", n, ".js");
             write(p, j);
             if mode == 1 { continue; }
-            if mjs_islands.len > 0 { mjs_islands.push(','); }
-            format(mjs_islands, "\"", n, "\"");
-            let tests = island::test_names();
+            if mjs_components.len > 0 { mjs_components.push(','); }
+            format(mjs_components, "\"", n, "\"");
+            let tests = component::test_names();
             for t in concat(split("zero\n", '\n')[..1], split(tests, '\n')) {
                 if t.len == 0 { continue; }
                 cases += 1;
@@ -1160,7 +1160,7 @@ fn test_cmd() -> bool {
     goose_cmd(cmd);
     cmd.append(" build --color never -o ");
     var bin: u8[>..] = [];
-    format(bin, cwd, "/.gooseweb/test/islands_test");
+    format(bin, cwd, "/.gooseweb/test/components_test");
     shq(cmd, bin);
     cmd.push(' ');
     var mp: u8[>..] = [];
@@ -1184,7 +1184,7 @@ fn test_cmd() -> bool {
     }
     write(".gooseweb/test/goose.out", out);
     var mjs: u8[>..] = [];
-    format(mjs, "const ISLANDS = [", mjs_islands, "];\n");
+    format(mjs, "const COMPONENTS = [", mjs_components, "];\n");
     mjs.append(RUN_MJS);
     write(".gooseweb/test/run.mjs", mjs);
     out.clear();
@@ -1193,16 +1193,16 @@ fn test_cmd() -> bool {
     return status == 0;
 }
 
-// Island modules under test import this as ./gwi.js: the runtime, plus a
-// record of each island(...) call for run.mjs.
+// Component modules under test import this as ./gwi.js: the runtime, plus a
+// record of each component(...) call for run.mjs.
 let GWI_SHIM = """
 export * from "./gwi.real.js";
-import { island as register } from "./gwi.real.js";
-export function island(name, def) { globalThis.__gw[name] = def; register(name, def); }
+import { component as register } from "./gwi.real.js";
+export function component(name, def) { globalThis.__gw[name] = def; register(name, def); }
 
 """;
 
-// The comparison half of gweb test; .gooseweb/test/run.mjs is ISLANDS and this.
+// The comparison half of gweb test; .gooseweb/test/run.mjs is COMPONENTS and this.
 let RUN_MJS = """
 // Generated by gweb test: runs each case in JavaScript and compares it with goose.out.
 import fs from "node:fs";
@@ -1211,7 +1211,7 @@ const text = fs.readFileSync(new URL("./goose.out", import.meta.url), "utf8");
 const cases = [];
 for (const part of text.split("\n== end\n")) {
   const m = /^== (\S+) (\S+)\n([^\n]*)\n/.exec(part);
-  if (m) cases.push({ island: m[1], test: m[2], json: m[3], render: part.slice(m[0].length) });
+  if (m) cases.push({ component: m[1], test: m[2], json: m[3], render: part.slice(m[0].length) });
 }
 function same(a, b) {
   if (Array.isArray(a) || Array.isArray(b)) {
@@ -1233,11 +1233,11 @@ function firstDiff(a, b) {
 let failed = 0, run = 0;
 for (const mode of ["pretty", "compact"]) {
   globalThis.__gw = {};
-  for (const name of ISLANDS) await import(`./js-${mode}/${name}.js`);
+  for (const name of COMPONENTS) await import(`./js-${mode}/${name}.js`);
   for (const c of cases) {
     run++;
-    const def = globalThis.__gw[c.island];
-    const label = `${c.island} ${c.test} (${mode})`;
+    const def = globalThis.__gw[c.component];
+    const label = `${c.component} ${c.test} (${mode})`;
     let s, html;
     try {
       s = def.zero();
@@ -1331,7 +1331,7 @@ fn server_cmd(extra: u8[:][:], dev: bool) -> u8[>..] {
 fn stamp() -> i64 {
     var count = 0;
     var newest = 0;
-    for dir in ["app", "lib", "public", "islands"] { newest = max(newest, c_tree_stamp(dir, count)); }
+    for dir in ["app", "lib", "public", "components"] { newest = max(newest, c_tree_stamp(dir, count)); }
     return newest * 31 + count;
 }
 
@@ -1350,7 +1350,7 @@ fn dev(extra: u8[:][:]) {
         pid = c_spawn(server_cmd(extra, true));
     } else {
         write_dev_errors(last_errors);
-        write_stderr("gweb dev: fix the errors above; watching app/, lib/, public/ and islands/\n");
+        write_stderr("gweb dev: fix the errors above; watching app/, lib/, public/ and components/\n");
     }
     loop {
         sleep_ms(250);
@@ -1483,7 +1483,7 @@ usage: gweb [-C dir] <command>
   start [flags]     build, then run the server (flags go to it: --port N --workers N --log ...)
   dev [flags]       build, run, and rebuild on every change under app/, lib/, public/
   routes            print the route table
-  test              run each island's test_* functions as Goose and as JavaScript; they must match
+  test              run each component's test_* functions as Goose and as JavaScript; they must match
 
 """);
     exit(2);
@@ -1500,7 +1500,7 @@ fn main() {
     let cmd = a[i];
     let rest = a[i + 1..];
     if cmd == "new" { if rest.len != 1 { usage(); } scaffold(rest[0]); return; }
-    if cmd == "gen" { if !gen(false) || island_errors > 0 { exit(1); } write_stdout("gweb: wrote .gooseweb/\n"); return; }
+    if cmd == "gen" { if !gen(false) || component_errors > 0 { exit(1); } write_stdout("gweb: wrote .gooseweb/\n"); return; }
     if cmd == "test" { if !test_cmd() { exit(1); } return; }
     if cmd == "build" { if !build(rest.len > 0 && rest[0] == "--debug", false) { exit(1); } return; }
     if cmd == "routes" { print_routes(); return; }

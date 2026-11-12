@@ -1,5 +1,0 @@
-<script goose>
-// expect: islands/FailBindChecked.gshtml:5: error: bind:checked needs a State field of type bool
-struct State { n: i64 }
-</script>
-<input type="checkbox" bind:checked="n">

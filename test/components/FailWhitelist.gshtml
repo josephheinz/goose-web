@@ -1,0 +1,8 @@
+<script goose>
+// expect: components/FailWhitelist.gshtml:5: error: 'print' is not on the client whitelist (min, max, abs, str, web::has, push, remove_at, clear, append, len)
+struct State { n: i64 }
+fn f(s: State&) {
+    print(s.n);
+}
+</script>
+<p>{{ s.n }}</p>

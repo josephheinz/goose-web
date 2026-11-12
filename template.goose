@@ -43,7 +43,7 @@ fn put<T>(out: u8[>..]&, v: const T&) {
 fn raw<T>(out: u8[>..]&, v: const T&) { format(out, v); }
 
 
-// ---------------------------------------------------------------- islands (DESIGN-ADDENDUM-3, E2)
+// ---------------------------------------------------------------- components (DESIGN-ADDENDUM-3, E2)
 
 // Appends s as a JSON string, written as JavaScript's JSON.stringify writes
 // it: " and \ escaped, \b \f \n \r \t, other control bytes as \u00XX, every

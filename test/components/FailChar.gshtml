@@ -1,0 +1,8 @@
+<script goose>
+// expect: components/FailChar.gshtml:5: error: 'char literal' is not available in client code (components v1)
+struct State { n: i64 }
+fn f(s: State&) {
+    s.n = 'a';
+}
+</script>
+<p>{{ s.n }}</p>

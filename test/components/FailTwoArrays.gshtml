@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailTwoArrays.gshtml:4: error: State may hold one array, as its last field
+struct Item { v: i64 }
+struct State { a: Item[>..<], b: Item[>..<] }
+</script>
+<p>x</p>

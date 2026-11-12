@@ -293,7 +293,7 @@ fn dev_status(res: http::Response&, dev_id: i64) {
 // In gweb dev, appends a script to HTML replies that polls /__gweb/id: it
 // reloads the page when the id changes and shows errors in an overlay
 // (DESIGN-ADDENDUM-3, follow-up 3). Two slots: sys (build failed, or the
-// server stopped answering), which the poll sets and clears, and isl (island
+// server stopped answering), which the poll sets and clears, and isl (component
 // errors), which stays until a click on the overlay or a reload. sys shows
 // first. Nothing happens when dev_id is 0.
 fn dev_inject(res: http::Response&, dev_id: i64) {
@@ -305,7 +305,7 @@ fn dev_inject(res: http::Response&, dev_id: i64) {
     res.body.push('\n');
     res.body.append("""if(box.textContent!==t)box.textContent=t}""");
     res.body.push('\n');
-    res.body.append("""addEventListener("gw:error",function(e){isl+=(isl?"\n":"island error (click to dismiss)\n\n")+e.detail;draw()});""");
+    res.body.append("""addEventListener("gw:error",function(e){isl+=(isl?"\n":"component error (click to dismiss)\n\n")+e.detail;draw()});""");
     res.body.push('\n');
     res.body.append("""setInterval(function(){fetch("/__gweb/id",{cache:"no-store"}).then(function(r){return r.text()}).then(function(t){fails=0;var n=t.indexOf("\n"),cur=n<0?t:t.slice(0,n),errs=n<0?"":t.slice(n+1);if(cur!==id){location.reload();return}sys=errs.trim()?"build failed\n\n"+errs:"";draw()}).catch(function(){if(++fails>=4){sys="gweb dev: the server is not responding";draw()}})},500)})();</script>""");
 }

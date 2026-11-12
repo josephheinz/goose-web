@@ -1,8 +1,0 @@
-<script goose>
-// expect: islands/FailChar.gshtml:5: error: 'char literal' is not available in client code (islands v1)
-struct State { n: i64 }
-fn f(s: State&) {
-    s.n = 'a';
-}
-</script>
-<p>{{ s.n }}</p>

@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailHandler.gshtml:6: error: on:click handler 'count' is not a function taking s: State&
+struct State { n: i64 }
+fn count(s: const State&) -> i64 { s.n }
+</script>
+<button on:click="count">{{ count(s) }}</button>

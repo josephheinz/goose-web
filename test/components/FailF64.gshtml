@@ -1,0 +1,5 @@
+<script goose>
+// expect: components/FailF64.gshtml:3: error: 'f64' is not available in client code (components v1)
+struct State { price: f64 }
+</script>
+<p>x</p>

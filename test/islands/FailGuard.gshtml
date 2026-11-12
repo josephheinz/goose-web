@@ -1,9 +1,0 @@
-<script goose>
-// expect: islands/FailGuard.gshtml:5: error: 'guard' is not available in client code (islands v1)
-struct State { n: i64 }
-fn f(s: State&) {
-    guard s.n > 0 else { return; }
-    s.n -= 1;
-}
-</script>
-<p>{{ s.n }}</p>

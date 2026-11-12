@@ -1,0 +1,8 @@
+<script goose>
+// expect: components/FailLoop.gshtml:5: error: 'loop' is not available in client code (components v1)
+struct State { n: i64 }
+fn f(s: State&) {
+    loop { s.n += 1; if s.n > 3 { break; } }
+}
+</script>
+<p>{{ s.n }}</p>

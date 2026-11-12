@@ -1,0 +1,8 @@
+<script goose>
+// expect: components/FailHandlerType.gshtml:5: error:
+struct State { n: i64 }
+fn f(s: State&) {
+    s.n = true;
+}
+</script>
+<p>{{ s.n }}</p>

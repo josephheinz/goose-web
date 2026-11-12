@@ -1,6 +1,0 @@
-<script goose>
-// expect: islands/FailArgType.gshtml:6: error:
-struct State { n: i64, t: u8[..9] }
-fn set_n(s: State&, v: i64) { s.n = v; }
-</script>
-<button on:click="set_n(s.t)">{{ s.n }}</button>

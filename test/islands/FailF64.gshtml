@@ -1,5 +1,0 @@
-<script goose>
-// expect: islands/FailF64.gshtml:3: error: 'f64' is not available in client code (islands v1)
-struct State { price: f64 }
-</script>
-<p>x</p>

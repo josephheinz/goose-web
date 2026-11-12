@@ -1,0 +1,8 @@
+<script goose>
+// expect: components/FailBigInt.gshtml:5: error: integer literal is too large for client code (limit 2^53)
+struct State { n: i64 }
+fn f(s: State&) {
+    s.n = 9007199254740993;
+}
+</script>
+<p>{{ s.n }}</p>

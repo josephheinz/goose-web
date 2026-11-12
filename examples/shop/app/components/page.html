@@ -1,0 +1,8 @@
+<h1>Components</h1>
+<p>These parts of the page run in the browser. They are written in Goose, in <code>components/*.gshtml</code>.</p>
+<h2>Counter</h2>
+{{component Counter(props.counter)}}
+<h2>Todo list</h2>
+<p>This list lives in the page only: it is not saved, and a reload empties it.</p>
+{{component TodoBox(props.todos)}}
+<p><a href="/components/products/42">A product with a quantity component</a></p>

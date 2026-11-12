@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailReserved.gshtml:4: error: 'delete' is a reserved word in JavaScript; rename it
+struct State { n: i64 }
+fn delete(s: State&) { s.n = 0; }
+</script>
+<button on:click="delete">{{ s.n }}</button>

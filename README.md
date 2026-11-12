@@ -72,7 +72,7 @@ gweb build [--debug]         gen, then goose build to .gooseweb/server
 gweb start [flags]           build and run (--port N --workers N --log --idle-ms N --max-body N)
 gweb dev [flags]             build, run with --log on 2 workers, rebuild on change
 gweb routes                  the route table
-gweb test                    island parity: test_* functions as Goose and as JavaScript
+gweb test                    component parity: test_* functions as Goose and as JavaScript
 ```
 
 `gweb` finds the compiler in `$GOOSE`, else `goose` on `PATH`, and finds this
@@ -112,12 +112,12 @@ connection with `sqlite::local(path)`. See `examples/shop/lib/shopdb.goose`.
 owner state, static files, and SQLite twins of the product routes under `/db`. Its Next.js twin is in
 `../goose-bench/next-shop`.
 
-## IMPLEMENTATION-NOTES: islands
+## IMPLEMENTATION-NOTES: components
 
-Islands are parts of a page that run in the browser, written in a subset of
+Components are parts of a page that run in the browser, written in a subset of
 Goose (DESIGN-ADDENDUM-3, E1-E8 and follow-up 1).
 
-**File shape.** `islands/Name.gshtml` at the project root (flat; `Name` is
+**File shape.** `components/Name.gshtml` at the project root (flat; `Name` is
 `[A-Z][A-Za-z0-9]*`). Line 1 is exactly `<script goose>`; a line that is
 exactly `</script>` ends the script; the markup follows and refers to the
 state as `s`.
@@ -139,31 +139,31 @@ fn test_basic(s: State&) { inc(s); inc(s); }
 - `bind:value="field"` and `bind:checked="field"` tie an input to a direct
   `State` field.
 - Templates work as in `page.html` (`{{ }}`, `{{{ }}}`, `{{#if}}`, `{{#for}}`,
-  `{{#let}}`), except `{{island}}`, `{{slot}}` and `{{> f()}}`.
+  `{{#let}}`), except `{{component}}`, `{{slot}}` and `{{> f()}}`.
 - The client subset (E3) leaves out `match`, `enum`, floats, `loop`, `guard`,
   `defer`, blocks, closures, slices, `as`, bitwise operators, char literals,
   generics, globals and imports. Callable: the block's functions, `min`, `max`,
   `abs`, `str`, `web::has`, `push`, `remove_at`, `clear`, `append`, and `.len`.
-  gweb reports anything else at its line, as `islands/Name.gshtml:LINE: error:`.
+  gweb reports anything else at its line, as `components/Name.gshtml:LINE: error:`.
 
-**Embedding.** `{{island Name(expr)}}` in any page, layout or not-found
+**Embedding.** `{{component Name(expr)}}` in any page, layout or not-found
 template; `expr` is a `Name::State`, usually from `load`. Every template
-imports every island, so `page.goose` can write `import Name;` and use
+imports every component, so `page.goose` can write `import Name;` and use
 `Name::State` in its `Props`. The page gets the server render, the state as
 JSON and `<script type="module" src="/_gw/Name.js">`.
 
 **Output.** `.gooseweb/Name.goose` keeps the source's lines (compiler errors
-point at the `.gshtml`), then `gw_check`, `gw_json` and `island`.
+point at the `.gshtml`), then `gw_check`, `gw_json` and `component`.
 `.gooseweb/_gw/Name.js` is the browser module: pretty under `gweb dev` (real
-names, a `// islands/Name.gshtml:LINE` comment above each function), compact
+names, a `// components/Name.gshtml:LINE` comment above each function), compact
 under `gweb build` and `gweb start`. The runtime is `client/gwi.js` in dev and
 `client/gwi.min.js` otherwise; both are served at `/_gw/` with ETags.
 
-**`gweb test`.** Runs each island's `test_*` functions (each takes only
+**`gweb test`.** Runs each component's `test_*` functions (each takes only
 `s: State&`), plus a `zero` case, as Goose and as JavaScript, pretty and
 compact, and compares the state and the render byte for byte. Needs `node`.
-goose-web's own suite is `test/islands.sh` (parity islands in
-`test/islands/*.gshtml`, one `Fail*.gshtml` per error message, and a check that
+goose-web's own suite is `test/components.sh` (parity components in
+`test/components/*.gshtml`, one `Fail*.gshtml` per error message, and a check that
 `client/gwi.min.js` is current).
 
 **Maintainers.** After editing `client/gwi.js`, run `client/build.sh` (esbuild
@@ -171,6 +171,6 @@ goose-web's own suite is `test/islands.sh` (parity islands in
 `client/gwi.min.js` with the source's FNV-1a hash in its banner.
 
 **Limits (v1).** No keys in the DOM morph, so removing a list item reuses the
-nodes after it. Integers above 2^53 lose precision in the browser. Island
+nodes after it. Integers above 2^53 lose precision in the browser. Component
 state lives in the page only. Handlers get no event data.
 

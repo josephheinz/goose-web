@@ -1,10 +1,10 @@
-// goose-web island runtime (DESIGN-ADDENDUM-3, E4). Served as /_gw/gwi.js;
+// goose-web component runtime (DESIGN-ADDENDUM-3, E4). Served as /_gw/gwi.js;
 // every /_gw/Name.js imports it. client/gwi.min.js is this file minified by
 // client/build.sh, which gweb build and gweb start ship instead.
 //
-// An island is <div data-island="Name">, its render, then a
+// A component is <div data-component="Name">, its render, then a
 // <script type="application/json"> with its state. Four capture listeners on
-// document find the island of an event, run the bind or handler on its state,
+// document find the component of an event, run the bind or handler on its state,
 // render again and morph the DOM to the new HTML.
 
 const D = document;
@@ -17,7 +17,7 @@ function fail(msg) { throw new RangeError(msg); }
 function ix(a, i) { if (!(i >= 0 && i < a.length)) fail("bad index " + i); }
 const nz = (b) => b || fail("division by zero");
 
-// The helpers generated island code calls (E3's JS rules).
+// The helpers generated component code calls (E3's JS rules).
 export const esc = (v) => typeof v == "string" ? v.replace(/[&<>"']/g, (c) => E[c]) : "" + v;
 export const at = (a, i) => (ix(a, i), a[i]);
 export const set = (a, i, v) => { ix(a, i); a[i] = v; };
@@ -30,7 +30,7 @@ export const imod = (a, b) => {
   return r < 0 ? r + Math.abs(b) : r;
 };
 
-export function island(name, def) { defs[name] = def; }
+export function component(name, def) { defs[name] = def; }
 
 // Makes from's children match to's: walks both lists in parallel, replaces a
 // node of another type or tag, updates text, syncs attributes, recurses, then
@@ -61,15 +61,15 @@ function morph(from, to, force) {
   while (a) { b = a.nextSibling; a.remove(); a = b; }
 }
 
-// One capture listener: the nearest island, the nearest element with a
+// One capture listener: the nearest component, the nearest element with a
 // handler for this event and (for input and change) the nearest bound one,
-// both only when inside the island. Bind, handler and render run in one try:
+// both only when inside the component. Bind, handler and render run in one try:
 // on a throw the state goes back to its copy and the DOM is left as it is.
 function on(type, binds) {
   const attr = "data-on-" + type, sel = "[" + attr + "]";
   D.addEventListener(type, (e) => {
-    const t = e.target, root = t.closest?.("[data-island]");
-    const def = root && defs[root.dataset.island];
+    const t = e.target, root = t.closest?.("[data-component]");
+    const def = root && defs[root.dataset.component];
     if (!def) return;
     const inside = (n) => n && root.contains(n) ? n : null;
     const el = inside(t.closest(sel)), bound = binds && inside(t.closest("[data-bind]"));

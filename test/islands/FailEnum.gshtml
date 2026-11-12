@@ -1,6 +1,0 @@
-<script goose>
-// expect: islands/FailEnum.gshtml:3: error: 'enum' is not available in client code (islands v1)
-enum Color { Red, Green }
-struct State { n: i64 }
-</script>
-<p>{{ s.n }}</p>

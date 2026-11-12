@@ -1,8 +1,0 @@
-<script goose>
-// expect: islands/FailDefer.gshtml:5: error: 'defer' is not available in client code (islands v1)
-struct State { n: i64 }
-fn f(s: State&) {
-    defer s.n += 1;
-}
-</script>
-<p>{{ s.n }}</p>
