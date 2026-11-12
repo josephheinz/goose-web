@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## v0.2.1
 
 - Fix: `gweb test` no longer deletes `.gooseweb/`; it generates into `.gooseweb.test/`. Add `.gooseweb.test/` to `.gitignore`.
+
+Pins goose-net v0.2.1 and goose-sqlite v0.2.1.
 
 ## v0.2.0
 
