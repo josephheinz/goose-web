@@ -75,6 +75,7 @@ var component_errors = 0;              // translator errors of this gen; the bui
 var uses_fragments = false;
 var uses_mods = false;                // a component imports gwm.js (on: modifiers)
 var uses_life = false;                // a component calls life() (imports gwl.js)
+var uses_children = false;            // a component calls a child component (imports gwc.js)
 var uses_http = false;                 // a component imports gwh.js (http::get or http::post)
 var http_calls: Target[>..<];          // each string-literal url of an http call (post: POST, name: get or post)
 var targets: Target[>..<];
@@ -1705,13 +1706,15 @@ let RT_LIFE_PRETTY = embed_file("../client/gwl.js");
 let RT_LIFE_MIN = embed_file("../client/gwl.min.js");
 let RT_MODS_PRETTY = embed_file("../client/gwm.js");
 let RT_MODS_MIN = embed_file("../client/gwm.min.js");
+let RT_CHILD_PRETTY = embed_file("../client/gwc.js");
+let RT_CHILD_MIN = embed_file("../client/gwc.min.js");
 
-// which: 0 is gwi.js (the core), 1 is gwf.js (fragments), 2 is gwh.js (typed fetch), 3 is gwl.js (lifecycle), 4 is gwm.js (modifiers).
+// which: 0 is gwi.js (the core), 1 is gwf.js (fragments), 2 is gwh.js (typed fetch), 3 is gwl.js (lifecycle), 4 is gwm.js (modifiers), 5 is gwc.js (child components).
 fn runtime_js(which: i64, min: bool, out: u8[>..]&) {
     let home = goose_web_home();
     if home.len > 0 {
         var p: u8[>..] = [];
-        let base = if which == 1 { "/client/gwf" } else if which == 2 { "/client/gwh" } else if which == 3 { "/client/gwl" } else if which == 4 { "/client/gwm" } else { "/client/gwi" };
+        let base = if which == 1 { "/client/gwf" } else if which == 2 { "/client/gwh" } else if which == 3 { "/client/gwl" } else if which == 4 { "/client/gwm" } else if which == 5 { "/client/gwc" } else { "/client/gwi" };
         format(p, home, base, if min { ".min.js" } else { ".js" });
         if read(p, out) { return; }
     }
@@ -1720,6 +1723,7 @@ fn runtime_js(which: i64, min: bool, out: u8[>..]&) {
     else if which == 2 { out.append(if min { RT_HTTP_MIN } else { RT_HTTP_PRETTY }); }
     else if which == 3 { out.append(if min { RT_LIFE_MIN } else { RT_LIFE_PRETTY }); }
     else if which == 4 { out.append(if min { RT_MODS_MIN } else { RT_MODS_PRETTY }); }
+    else if which == 5 { out.append(if min { RT_CHILD_MIN } else { RT_CHILD_PRETTY }); }
     else { out.append(if min { RT_MIN } else { RT_PRETTY }); }
 }
 
@@ -1780,6 +1784,50 @@ fn gen_runtime(dev: bool) {
     if uses_http { gen_runtime_file(2, "gwh.js", dev, gw_dir); }
     if uses_life { gen_runtime_file(3, "gwl.js", dev, gw_dir); }
     if uses_mods { gen_runtime_file(4, "gwm.js", dev, gw_dir); }
+    if uses_children { gen_runtime_file(5, "gwc.js", dev, gw_dir); }
+}
+
+// The indices of component_names, each component after the components its markup calls with @Name( (a cycle is cut at
+// the first component of it; that one reports `components cannot contain themselves`).
+fn component_order() -> i64[>..] {
+    let n = component_names.len;
+    var dep: i64[>..] = [];                // dep[a * n + b] is 1 when a calls b
+    for k in n * n { dep.push(0); }
+    for a in n {
+        var path: u8[>..] = [];
+        format(path, "components/", component_names[a], ".gshtml");
+        var src: u8[>..] = [];
+        if !read(path, src) { continue; }
+        for i in src.len {
+            if src[i] != '@' { continue; }
+            let o = tscan::call_open(src, i);
+            if o < 0 { continue; }
+            let b = component_index(src[i + 1..o]);
+            if b >= 0 && b != a { dep[a * n + b] = 1; }
+        }
+    }
+    var done: i64[>..] = [];
+    for k in n { done.push(0); }
+    var order: i64[>..] = [];
+    while order.len < n {
+        var pick = -1;
+        for a in n {
+            if done[a] == 1 || pick >= 0 { continue; }
+            var ready = true;
+            for b in n { if dep[a * n + b] == 1 && done[b] == 0 { ready = false; } }
+            if ready { pick = a; }
+        }
+        if pick < 0 { for a in n { if done[a] == 0 && pick < 0 { pick = a; } } }
+        done[pick] = 1;
+        order.push(pick);
+    }
+    return order;
+}
+
+// Tells component.goose which components exist; it records each one's props as it compiles it.
+fn registry_begin() {
+    component::registry_clear();
+    for n in component_names { component::registry_add(n); }
 }
 
 // gen goes on after translator errors, so the Goose compiler reports its errors too.
@@ -1791,16 +1839,17 @@ fn gen_components(dev: bool) {
     var gw_dir: u8[>..] = [];
     format(gw_dir, gen_root, "/_gw");
     make_dir(gw_dir);
-    for n in component_names {
+    registry_begin();
+    for k in component_names.len { component_lines.push(0); component_reactive.push(0); }
+    for oi in component_order() {
+        let n = component_names[oi];
         var path: u8[>..] = [];
         format(path, "components/", n, ".gshtml");
         var src: u8[>..] = [];
-        component_lines.push(0);
-        component_reactive.push(0);
         if !read(path, src) { continue; }
         var lines = 1;
         for c in src { if c == '\n' { lines += 1; } }
-        component_lines[component_lines.len - 1] = lines;
+        component_lines[oi] = lines;
         scan_targets(path, src, -1);
         var g: u8[>..] = [];
         var j: u8[>..] = [];
@@ -1808,7 +1857,7 @@ fn gen_components(dev: bool) {
         var w: u8[>..] = [];
         let compiled = component::compile(n, path, src, !dev, g, j, e, w);
         if component::is_reactive() {
-            component_reactive[component_reactive.len - 1] = 1;
+            component_reactive[oi] = 1;
             let props = component::props_of();
             for l in split(props, '\n') {
                 if l.len > 0 { format(component_props, n, "\t", l, "\n"); }
@@ -1818,6 +1867,7 @@ fn gen_components(dev: bool) {
         if component::http_used() != 0 { uses_http = true; }
         if component::life_used() != 0 { uses_life = true; }
         if component::mods_used() != 0 { uses_mods = true; }
+        if component::children_used() != 0 { uses_children = true; }
         for l in split(component::http_urls(), '\n') {
             let f = split(l, '\t');
             if f.len != 3 || f[2].len >= 512 { continue; }
@@ -1860,6 +1910,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     uses_http = false;
     uses_mods = false;
     uses_life = false;
+    uses_children = false;
     targets.clear();
     http_calls.clear();
     gen_components(dev);
@@ -2134,7 +2185,14 @@ fn test_cmd() -> bool {
         p.clear();
         format(p, dir, "/gwm.js");
         write(p, "\n");
-        for n in component_names {
+        var cp: u8[>..] = [];
+        runtime_js(5, compact, cp);
+        p.clear();
+        format(p, dir, "/gwc.js");
+        write(p, cp);
+        registry_begin();
+        for oi in component_order() {
+            let n = component_names[oi];
             var path: u8[>..] = [];
             format(path, "components/", n, ".gshtml");
             var src: u8[>..] = [];

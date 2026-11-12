@@ -1,0 +1,10 @@
+<script goose>
+// warn: components/WarnRChildKey.gshtml:10: warning: a component in {#for} needs key:
+// code: child-key
+// with: RNestChild
+struct X { v: i64 }
+@state var xs: X[>..<] = [];
+fn add() { xs.push(X { v: 1 }); }
+</script>
+<button on:click="add">add</button>
+{#for x in xs}@RNestChild(label: "k", n: x.v){/for}

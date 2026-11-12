@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRChildType.gshtml:6: error: @RNestChild prop n is a whole number, not text
+// with: RNestChild
+@state var s: u8[..8] = "a";
+</script>
+@RNestChild(label: "x", n: s)

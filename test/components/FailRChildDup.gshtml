@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRChildDup.gshtml:6: error: @RNestChild passes prop n twice
+// with: RNestChild
+@state var n: i64 = 0;
+</script>
+@RNestChild(label: "x", n: 1, n: 2)

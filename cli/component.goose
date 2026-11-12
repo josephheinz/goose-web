@@ -86,7 +86,8 @@ struct RMk { kind: i64, line: i64, r: i64, w: i64 }
 let PK_TEXT = 0;
 let PK_ATTR = 1;
 let PK_BLOCK = 2;
-struct RPart { kind: i64, r: i64, s: i64, e: i64, simple: bool }
+let PK_CHILD = 3;     // @Child(...): the marker is before the child's root; the value is its props object
+struct RPart { kind: i64, r: i64, s: i64, e: i64, simple: bool, kids: bool }   // kids: a block that holds child calls
 
 // What the scanner of scan_parts found: a dynamic open tag (s: its `<`, ne: after its name, e: its `>`),
 // an HTML comment, or the content of a <textarea> (s, e; ne is s).
@@ -294,6 +295,14 @@ var await_ctx: u8[..96];       // the place an await may not stand in (markup, a
 var rw_noasync: u8[..96];      // the same for calls of async functions; empty where they are allowed
 var rw_async = false;          // the walker met an await or a call of an async function
 var rw_awaited = -1;           // the call node of the await being walked
+
+// The components of this gweb run (child calls, Addendum 12 section 7.5), kept across compile() calls: gweb
+// compiles a component after the components it calls. done: 0 not compiled yet, 1 legacy, 2 reactive.
+struct RegC { name: u8[..64], done: i64 }
+var reg: RegC[>..<];
+var reg_props: u8[>..];        // `Name\tprop\tt\tcap\tdefault in Goose\tdefault in JavaScript\n`, each @prop of each reactive component
+var kids: u8[..64][>..<];      // the components this module calls (its imports)
+var child_use = 0;             // gwc.js helpers the module imports: 1 H (render), 2 Q (top-level part), 4 M (block)
 
 // ---------------------------------------------------------------- errors
 
@@ -3661,7 +3670,24 @@ fn emit_reactive_update() {
             wo(" & ");
             format(js, pt.r);
             wo(" && ");
-            helper(if pt.kind == PK_TEXT { H_T } else if pt.kind == PK_ATTR { H_A } else { H_B });
+            if pt.kind == PK_CHILD {
+                child_use = child_use | 2;
+                w(gwc_name(2));
+            } else {
+                // A block that holds child calls reads its children's state before the morph moves their scripts.
+                if pt.kind == PK_BLOCK && pt.kids {
+                    child_use = child_use | 4;
+                    w("(");
+                    w(gwc_name(4));
+                    w("(");
+                    w(p_js);
+                    w("[");
+                    format(js, i);
+                    w("]");
+                    wo("), ");
+                }
+                helper(if pt.kind == PK_TEXT { H_T } else if pt.kind == PK_ATTR { H_A } else { H_B });
+            }
             w("(");
             w(p_js);
             w("[");
@@ -3669,7 +3695,8 @@ fn emit_reactive_update() {
             w("]");
             wo(", ");
             w(part_name(i));
-            if pt.kind != PK_TEXT { wo(", "); w(f_js); }
+            if pt.kind == PK_ATTR || pt.kind == PK_BLOCK { wo(", "); w(f_js); }
+            if pt.kind == PK_BLOCK && pt.kids { w(")"); }
             w(");");
         }
         ind -= 1;
@@ -3729,12 +3756,18 @@ fn emit_reactive_init() {
     w(s_js);
     wo(" = {");
     if !compact { w(" "); }
-    for d in rdecls {
-        w(d.name);
-        wo(": ");
-        emit_zero_val(d.ty);
-        w(",");
-        if !compact { w(" "); }
+    // The keys come in the order of the Goose gw_json (props, state, computeds, the array), so JSON.stringify of
+    // the state is what the server writes (gwc.js's H).
+    for pass in 4 {
+        for d in rdecls {
+            if pass == 0 { if d.kind != R_PROP { continue; } }
+            else if !in_state(d, pass - 1) { continue; }
+            w(d.name);
+            wo(": ");
+            emit_zero_val(d.ty);
+            w(",");
+            if !compact { w(" "); }
+        }
     }
     w("...");
     w(p_js);
@@ -4123,7 +4156,7 @@ fn next_ev() -> i64 {
 }
 
 fn part_begin(kind: i64) -> i64 {
-    parts.push(RPart { kind: kind, r: 0, s: 0, e: 0, simple: true });
+    parts.push(RPart { kind: kind, r: 0, s: 0, e: 0, simple: true, kids: false });
     return parts.len - 1;
 }
 
@@ -4828,6 +4861,271 @@ fn trim_e(s: i64, e: i64) -> i64 {
     return b;
 }
 
+// ---------------------------------------------------------------- child components (Addendum 12 section 7.5)
+
+fn reg_find(name: const u8[:]) -> i64 {
+    for i in reg.len { if reg[i].name == name { return i; } }
+    return -1;
+}
+
+// Field k of a tab-separated line.
+fn fld(l: const u8[:], k: i64) -> const u8[:] {
+    var s = 0;
+    var n = 0;
+    for i in l.len + 1 {
+        if i == l.len || l[i] == '\t' {
+            if n == k { return l[s..i]; }
+            n += 1;
+            s = i + 1;
+        }
+    }
+    return l[l.len..];
+}
+
+// The length of a leading `name:` (one colon, not ::) in arg, or 0.
+fn named_len(arg: const u8[:]) -> i64 {
+    var i = 0;
+    if arg.len == 0 || !tscan::ident_start(arg[0]) { return 0; }
+    while i < arg.len && tscan::ident_char(arg[i]) { i += 1; }
+    let n = i;
+    while i < arg.len && (arg[i] == ' ' || arg[i] == '\t') { i += 1; }
+    if i < arg.len && arg[i] == ':' && !(i + 1 < arg.len && arg[i + 1] == ':') { return n; }
+    return 0;
+}
+
+// The offsets (in text) of each argument of a call: the pieces between its top-level commas.
+fn split_args(s: i64, e: i64, starts: i64[>..]&, ends: i64[>..]&) {
+    var line: u8[>..] = [];
+    line.append(text[s..e]);
+    var depth = 0;
+    var from = 0;
+    var i = 0;
+    while i < line.len {
+        let c = line[i];
+        if c == '"' || c == '\'' {
+            let j = tscan::skip_literal(line, i);
+            if j > i { i = j; continue; }
+        }
+        if c == '(' || c == '[' || c == '{' { depth += 1; }
+        else if c == ')' || c == ']' || c == '}' { depth -= 1; }
+        else if c == ',' && depth == 0 {
+            starts.push(s + from);
+            ends.push(s + i);
+            from = i + 1;
+        }
+        i += 1;
+    }
+    starts.push(s + from);
+    ends.push(e);
+}
+
+// The name of a gwc.js helper in the module: bit 1 H, 2 Q, 4 M.
+fn gwc_name(bit: i64) -> u8[..16] {
+    var n: u8[..16] = "";
+    if compact { n.append(if bit == 1 { "$h" } else if bit == 2 { "$q" } else { "$m" }); }
+    else { n.append(if bit == 1 { "gw_child" } else if bit == 2 { "gw_props" } else { "gw_mat" }); }
+    return n;
+}
+
+// js[keep..] taken back out of the module.
+fn grab(keep: i64) -> u8[>..] {
+    var r: u8[>..] = [];
+    r.append(js[keep..js.len]);
+    js.resize(keep);
+    return r;
+}
+
+// The props object of a child call: the given props (nodes[k] >= 0), and with all also the defaults.
+fn child_obj(props: const u8[:][:], np: i64, pn: const i64[:], all: bool) -> u8[>..] {
+    let keep = js.len;
+    w("{");
+    var first = true;
+    for k in np {
+        let l = props[k];
+        if pn[k] < 0 && !all { continue; }
+        if !first { w(","); if !compact { w(" "); } }
+        first = false;
+        js.append(fld(l, 0));
+        wo(": ");
+        if pn[k] >= 0 {
+            var pt = ty(0);
+            let tv, ok = parse_int(fld(l, 1));
+            pt.t = tv;
+            let cv, ok2 = parse_int(fld(l, 2));
+            pt.cap = cv;
+            emit_val(pn[k], pt);
+        } else { js.append(fld(l, 4)); }
+    }
+    w("}");
+    return grab(keep);
+}
+
+// @Name(a: e, b: e, key: e) in a reactive component's markup. False when Name is not a reactive component of this
+// build (the caller says it is not available); true when handled, errors included. The Goose is
+// `{ let gw_c = Name::Props { ... }; Name::nest(out, gw_c, KEY); }`; the JavaScript renders the child's server form
+// with gwc.js's H, and a call outside every block is a part that writes the props into the live child.
+fn child_call(ln: i64, s: i64, e: i64, name: const u8[:]) -> bool {
+    let ci = reg_find(name);
+    if !reactive || ci < 0 { return false; }
+    if name == isl || reg[ci].done == 0 {
+        report(ln, "components cannot contain themselves");
+        return true;
+    }
+    if reg[ci].done != 2 { return false; }
+    var mine: u8[>..] = [];                 // `prop\tt\tcap\tgoose default\tjs default\n` of the child, in declaration order
+    for l in split(reg_props, '\n') {
+        if l.len <= name.len + 1 || !starts_with(l, name) || l[name.len] != '\t' { continue; }
+        mine.append(l[name.len + 1..]);
+        mine.push('\n');
+    }
+    let props = split(mine, '\n');
+    var np = 0;
+    for l in props { if l.len > 0 { np += 1; } }
+    var pn: i64[>..] = [];                  // the node of each prop's value, or -1
+    var vs: i64[>..] = [];                  // its source span
+    var ve: i64[>..] = [];
+    for k in np { pn.push(-1); vs.push(0); ve.push(0); }
+    var starts: i64[>..] = [];
+    var ends: i64[>..] = [];
+    split_args(s, e, starts, ends);
+    let before = nerr;
+    var rbits = 0;
+    var kx = -1;                            // the node of key: e
+    var kx_s = 0;
+    var kx_e = 0;
+    for k in np {
+        let t = fld(props[k], 1);
+        if t != "1" && t != "2" && t != "3" {
+            var m: u8[>..] = [];
+            format(m, "@", name, " has the prop ", fld(props[k], 0), " of a struct or array type; a call from markup passes whole numbers, bool and text only");
+            report(ln, m);
+            return true;
+        }
+    }
+    for pi in starts.len {
+        let a0 = trim_s(starts[pi], ends[pi]);
+        let a1 = trim_e(a0, ends[pi]);
+        if a1 <= a0 {
+            if starts.len > 1 && pi + 1 < starts.len { report(ln, "an empty argument; write @Name(a: 1, b: 2)"); }
+            continue;
+        }
+        let nlen = named_len(text[a0..a1]);
+        if nlen == 0 {
+            var m: u8[>..] = [];
+            var first: u8[>..] = [];
+            if np > 0 { first.append(fld(props[0], 0)); } else { first.append("x"); }
+            format(m, "@", name, " takes named props: @", name, "(", first, ": 3)");
+            report(ln, m);
+            return true;
+        }
+        let pname = text[a0..a0 + nlen];
+        var found = -1;
+        for k in np { if fld(props[k], 0) == pname { found = k; } }
+        var m: u8[>..] = [];
+        if found < 0 && pname != "key" {
+            format(m, name, " has no prop ", pname);
+            report(ln, m);
+            continue;
+        }
+        if (pname == "key" && kx >= 0) || (found >= 0 && pn[found] >= 0) {
+            if pname == "key" { format(m, "@", name, " passes key twice"); }
+            else { format(m, "@", name, " passes prop ", pname, " twice"); }
+            report(ln, m);
+            continue;
+        }
+        var colon = a0 + nlen;
+        while text[colon] != ':' { colon += 1; }
+        let v0 = trim_s(colon + 1, a1);
+        if v0 >= a1 {
+            if pname == "key" { format(m, "@", name, " key needs a value"); }
+            else { format(m, "@", name, " prop ", pname, " needs a value"); }
+            report(ln, m);
+            continue;
+        }
+        let n = parse_tag_expr(v0, a1, ln);
+        if n < 0 { continue; }
+        check_expr(n);
+        rw_mark(n, ln, RM_TEXT);
+        if found >= 0 { rbits = rbits | rw_r; }
+        rec_expr(n);
+        let nt = nodes[n].ty.t;
+        if nt == T_ERR { continue; }
+        if found >= 0 {
+            let want = fld(props[found], 1);
+            let wt = if want == "1" { T_INT } else if want == "2" { T_BOOL } else { T_STR };
+            if nt != wt {
+                format(m, "@", name, " prop ", pname, " is ", if wt == T_INT { "a whole number" } else if wt == T_BOOL { "bool" } else { "text" },
+                       ", not ", if nt == T_INT { "a whole number" } else if nt == T_BOOL { "bool" } else if nt == T_STR { "text" } else { "this" });
+                report(ln, m);
+                continue;
+            }
+            pn[found] = n;
+            vs[found] = v0;
+            ve[found] = a1;
+        } else {
+            if nt != T_INT && nt != T_STR { report(ln, "key: takes a whole number or text"); continue; }
+            kx = n;
+            kx_s = v0;
+            kx_e = a1;
+        }
+    }
+    for k in np {
+        if pn[k] < 0 && fld(props[k], 3).len == 0 && nerr == before {
+            var m: u8[>..] = [];
+            format(m, "@", name, " needs prop ", fld(props[k], 0));
+            report(ln, m);
+        }
+    }
+    if kx < 0 {
+        var in_for = false;
+        for o in opens { if o.kind == 'f' { in_for = true; } }
+        if in_for && nerr == before { warn_buf("child-key", ln, "a component in {#for} needs key:"); }
+    }
+    if nerr != before { return true; }
+    // The Goose.
+    var call: u8[>..] = [];
+    let int_key = kx >= 0 && nodes[kx].ty.t == T_INT;
+    if int_key { format(call, "{ var gw_k: u8[>..] = []; format(gw_k, ", rewrite(kx_s, kx_e), "); "); } else { call.append("{ "); }
+    format(call, "let gw_c = ", name, "::Props { ");
+    for k in np {
+        let l = props[k];
+        if k > 0 { call.append(", "); }
+        if pn[k] >= 0 { format(call, fld(l, 0), ": ", rewrite(vs[k], ve[k])); }
+        else { format(call, fld(l, 0), ": ", fld(l, 3)); }
+    }
+    if np == 0 { call.append(".. "); }
+    format(call, "}; ", name, "::nest(out, gw_c, ");
+    if int_key { call.append("gw_k"); } else if kx >= 0 { call.append(rewrite(kx_s, kx_e)); } else { call.append("\"\""); }
+    call.append("); } ");
+    var part = -1;
+    if opens.len == 0 && span_kind_at(s) < 0 {
+        part = part_begin(PK_CHILD);
+        mtext("<!--g-->");
+    } else if opens.len > 0 && opens[0].part >= 0 { parts[opens[0].part].kids = true; }
+    g_flush();
+    g_code(call);
+    // The JavaScript.
+    let full = child_obj(props, np, pn, true);
+    cat_expr(true);
+    child_use = child_use | 1;
+    w(gwc_name(1));
+    w("(");
+    js_str(name);
+    wo(", ");
+    js.append(full);
+    if kx >= 0 {
+        wo(", ");
+        if nodes[kx].ty.t == T_INT { w("\"\""); wo(" + "); }
+        emit_expr(kx, true);
+    }
+    w(")");
+    var have = false;
+    for k in kids { if k == name { have = true; } }
+    if !have { var kn: u8[..64] = ""; kn.append(name); kids.push(kn); }
+    if part >= 0 { part_end(part, rbits, child_obj(props, np, pn, false), true); }
+    return true;
+}
+
 fn markup_line(li: i64, last: bool, goose_out: u8[>..]&) {
     let ln = li + 1;
     let base = line_start[li];
@@ -4851,10 +5149,14 @@ fn markup_line(li: i64, last: bool, goose_out: u8[>..]&) {
         if line[at] == '}' { report(ln, "'}' without '{'; for a literal brace write &#125;"); break; }
         if line[at] == '@' {
             let open = tscan::call_open(line, at);
+            let close = tscan::paren_end(line, open);
+            if reactive && close >= 0 && find(line[at + 1..open], ":") < 0 && child_call(ln, base + open + 1, base + close, line[at + 1..open]) {
+                p = close + 1;
+                continue;
+            }
             var what: u8[>..] = [];
             format(what, line[at..open], "()");
             not_available(ln, what);
-            let close = tscan::paren_end(line, open);
             if close < 0 { break; }
             p = close + 1;
             continue;
@@ -5120,9 +5422,12 @@ fn emit_reactive_tail(name: const u8[:], out: u8[>..]&) {
         }
     }
     out.append(if first { "out.append(\"{}\"); }\n" } else { "out.push('}'); }\n" });
-    format(out, "fn component(out: u8[>..]&, gw_p: const Props&) { let gw_s = gw_init(gw_p); out.append(\"<div data-component=\\\"", name,
-           "\\\">\"); render(out, gw_p, gw_s); out.append(\"</div><script type=\\\"application/json\\\">\"); gw_json(out, gw_p, gw_s); ",
-           "out.append(\"</script><script type=\\\"module\\\" src=\\\"/_gw/", name, ".js\\\"></script>\"); }\n");
+    // nest is the child form (a parent's markup calls it with the child's key); component adds the module script.
+    format(out, "fn nest(out: u8[>..]&, gw_p: const Props&, gw_k: const u8[:]) { let gw_s = gw_init(gw_p); out.append(\"<div data-component=\\\"", name,
+           "\\\"\"); if gw_k.len > 0 { out.append(\" gw-key=\\\"\"); web::put(out, gw_k); out.append(\"\\\"\"); } out.append(\">\"); ",
+           "render(out, gw_p, gw_s); out.append(\"</div><script type=\\\"application/json\\\">\"); gw_json(out, gw_p, gw_s); out.append(\"</script>\"); }\n");
+    format(out, "fn component(out: u8[>..]&, gw_p: const Props&) { nest(out, gw_p, \"\"); ",
+           "out.append(\"<script type=\\\"module\\\" src=\\\"/_gw/", name, ".js\\\"></script>\"); }\n");
 }
 
 fn check_structs() {
@@ -5250,6 +5555,22 @@ fn props_of() -> u8[>..] {
 
 fn is_reactive() -> bool { return reactive; }
 
+// gweb tells compile() which components exist (registry_add, in any order) and compiles a component after the
+// components it calls; compile() records each one's props here, which a caller's arguments are checked against.
+fn registry_clear() {
+    reg.clear();
+    reg_props.clear();
+}
+
+fn registry_add(name: const u8[:]) {
+    var c = RegC { name: "", done: 0 };
+    c.name.append(name);
+    reg.push(c);
+}
+
+// 1 when the module calls a child component (and so imports gwc.js).
+fn children_used() -> i64 { return if kids.len > 0 { 1 } else { 0 }; }
+
 // The string-literal urls of the http calls compile() last read: `METHOD\tLINE\turl\n` each.
 fn http_urls() -> u8[>..] {
     var r: u8[>..] = [];
@@ -5340,6 +5661,8 @@ fn reset() {
     rw_noasync.clear();
     rw_async = false;
     rw_awaited = -1;
+    kids.clear();
+    child_use = 0;
 }
 
 // Errors go to errs as `path:LINE: error: MSG` lines; false when there were any.
@@ -5377,8 +5700,28 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
         errs.append(errs_buf);
         return false;
     }
-    format(goose_out, "namespace ", name, "; import std; import json; import web; import web.template;\n");
+    let ri = reg_find(name);
+    if ri >= 0 { reg[ri].done = 1; }
     parse_script(1, close);
+    // The header: a reactive component imports the components its markup calls (they were compiled before it).
+    format(goose_out, "namespace ", name, "; import std; import json; import web; import web.template;");
+    if reactive {
+        for li in close + 1..nlines {
+            let l = text[line_start[li]..line_end[li]];
+            for i in l.len {
+                if l[i] != '@' { continue; }
+                let o = tscan::call_open(l, i);
+                if o < 0 { continue; }
+                let cn = l[i + 1..o];
+                let rj = reg_find(cn);
+                if rj < 0 || reg[rj].done != 2 || cn == name { continue; }
+                var imp: u8[>..] = [];
+                format(imp, " import ", cn, ";");
+                if find(goose_out, imp) < 0 { goose_out.append(imp); }
+            }
+        }
+    }
+    goose_out.push('\n');
     if reactive { check_rmodel(); } else { check_structs(); }
     for &f in fns {
         if !reactive && f.n > 0 && params[f.first].mref && params[f.first].ty.name == "State" {
@@ -5389,6 +5732,7 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
     assign_module_names();
     for i in fns.len { check_fn(i); }
     if reactive { check_reactive(); rec_script(); }
+    if reactive && ri >= 0 { reg[ri].done = 2; }
     // The script lines, line for line; a reactive component's are rewritten (section 3.1).
     for li in 1..close {
         if reactive { goose_out.append(rewrite(line_start[li], line_end[li])); }
@@ -5403,6 +5747,17 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
             format(props_buf, d.name, "\t");
             if d.init >= 0 { props_buf.append(text[span_s(d.init)..span_e(d.init)]); }
             props_buf.push('\n');
+            // The registry line for the components that call this one: its type and its default, in Goose and JavaScript.
+            format(reg_props, name, "\t", d.name, "\t", d.ty.t, "\t", d.ty.cap, "\t");
+            if d.init >= 0 { reg_props.append(text[span_s(d.init)..span_e(d.init)]); }
+            reg_props.push('\t');
+            if d.init >= 0 && nerr == 0 {
+                let keep = js.len;
+                emit_expr(d.init, true);
+                reg_props.append(js[keep..js.len]);
+                js.resize(keep);
+            }
+            reg_props.push('\n');
         }
     }
     if !reactive || nerr == 0 { for i in fns.len { if fns[i].body >= 0 { emit_js_fn(i); } } }
@@ -5451,6 +5806,18 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
         }
         if life_use != 0 { js_out.append("import{life as $l}from\"./gwl.js\";"); }
         if mods_use != 0 { js_out.append("import\"./gwm.js\";"); }
+        for k in kids { format(js_out, "import\"./", k, ".js\";"); }
+        if child_use != 0 {
+            js_out.append("import{");
+            var firstc = true;
+            for bit in [1, 2, 4] {
+                if (child_use & bit) == 0 { continue; }
+                if !firstc { js_out.push(','); }
+                firstc = false;
+                format(js_out, if bit == 1 { "H" } else if bit == 2 { "Q" } else { "M" }, " as ", gwc_name(bit));
+            }
+            js_out.append("}from\"./gwc.js\";");
+        }
     } else {
         js_out.append("// Generated by gweb from ");
         js_out.append(path);
@@ -5466,6 +5833,18 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
         }
         if life_use != 0 { js_out.append("import { life } from \"./gwl.js\";\n"); }
         if mods_use != 0 { js_out.append("import \"./gwm.js\";\n"); }
+        for k in kids { format(js_out, "import \"./", k, ".js\";\n"); }
+        if child_use != 0 {
+            js_out.append("import { ");
+            var firstc = true;
+            for bit in [1, 2, 4] {
+                if (child_use & bit) == 0 { continue; }
+                if !firstc { js_out.append(", "); }
+                firstc = false;
+                format(js_out, if bit == 1 { "H" } else if bit == 2 { "Q" } else { "M" }, " as ", gwc_name(bit));
+            }
+            js_out.append(" } from \"./gwc.js\";\n");
+        }
     }
     js_out.append(js);
     errs.append(errs_buf);

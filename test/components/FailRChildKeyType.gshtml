@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRChildKeyType.gshtml:6: error: key: takes a whole number or text
+// with: RNestChild
+@state var b: bool = true;
+</script>
+@RNestChild(label: "x", key: b)

@@ -15,12 +15,13 @@ fail=0
 ok() { pass=$((pass + 1)); }
 bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 
-# name ceiling; later steps add gwc 768, gwn 1536, gwt 768, gwe 768.
+# name ceiling; later steps add gwn 1536, gwt 768, gwe 768.
 CEILINGS="gwi 4096
 gwh 512
 gwf 1536
 gwl 768
-gwm 512"
+gwm 512
+gwc 768"
 
 for src in "$ROOT"/client/gw*.js; do
   case "$src" in *.min.js) continue ;; esac

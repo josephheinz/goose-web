@@ -1,0 +1,5 @@
+<script goose>
+// expect: components/FailRChildSelf.gshtml:5: error: components cannot contain themselves
+@state var n: i64 = 0;
+</script>
+@FailRChildSelf()

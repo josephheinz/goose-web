@@ -407,6 +407,7 @@ Done: the core has `listen` and a `hooks.m` call; key filters, prevent, stop and
 
 **Step 9. Item 5: nested components (7.5).**
 Files: `client/gwc.js`, `client/gwi.js` (hook call in `morph`), `cli/component.goose` (child calls), `cli/gweb.goose` (component order: children compile first), fixtures, jsdom cases (prop update keeps child state; a new child in a keyed list renders from props; reorder keeps state).
+Done: `client/gwc.js` (765 bytes minified, ceiling 768) with `H` (a child's server form for block HTML), `Q` (top-level part) and `M` (a block reads its children's state before the morph); the core's hook call is `cn(o) && hooks.c?.(o, b)`, so gwc.js also replaces a different component at the same place (gwi.min.js is 4,068 bytes). The Goose side has `nest(out, props, key)` (the child form) beside `component(out, props)` (nest plus the module script). gweb compiles components in call order and `component.goose` keeps a registry of props across `compile()` calls.
 
 **Step 10. Item 6: child events (7.6).**
 Files: `client/gwc.js`, `cli/component.goose`, fixtures, jsdom cases.

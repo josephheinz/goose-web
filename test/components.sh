@@ -28,6 +28,13 @@ fail=0
 ok() { pass=$((pass + 1)); }
 bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 
+# A fixture's `// with: A B` line names components it needs beside it (test/components/A.gshtml or components/with/A.gshtml).
+with_files() {
+  for w in $(sed -n 's|^// with: ||p' "$1"); do
+    if [ -f "$HERE/components/$w.gshtml" ]; then cp "$HERE/components/$w.gshtml" "$2/components/"; else cp "$HERE/components/with/$w.gshtml" "$2/components/"; fi
+  done
+}
+
 # 1. Parity.
 mkdir -p "$WORK/ok/app" "$WORK/ok/components"
 echo '<p>components suite</p>' > "$WORK/ok/app/page.html"
@@ -44,6 +51,7 @@ for f in "$HERE"/components/Fail*.gshtml; do
   mkdir -p "$dir/app" "$dir/components"
   echo '<p>x</p>' > "$dir/app/page.html"
   cp "$f" "$dir/components/"
+  with_files "$f" "$dir"
   if out=$("$GWEB" -C "$dir" build 2>&1); then
     bad "$name: gweb build succeeded"
   else
@@ -65,6 +73,7 @@ for f in "$HERE"/components/Warn*.gshtml; do
   mkdir -p "$dir/app" "$dir/components"
   echo '<p>x</p>' > "$dir/app/page.html"
   cp "$f" "$dir/components/"
+  with_files "$f" "$dir"
   if out=$("$GWEB" -C "$dir" build 2>&1 >/dev/null); then
     case "$out" in *"$want"*) ok ;; *) bad "$name: wanted '$want', got:"; echo "$out" | sed 's/^/    /' ;; esac
   else
@@ -130,6 +139,17 @@ else
   bad "gweb gen without RClock"
 fi
 if [ -e "$WORK/nohttp/.gooseweb/_gw/gwl.js" ]; then ok; else bad "gwl.js is not written for a site with lifecycle"; fi
+
+# gwc.js is written only for a site where a component calls a child.
+mkdir -p "$WORK/nokids"
+cp -R "$WORK/nolife/app" "$WORK/nolife/components" "$WORK/nokids/"
+rm "$WORK/nokids/components/RNest.gshtml"
+if "$GWEB" -C "$WORK/nokids" gen >/dev/null 2>&1; then
+  if [ -e "$WORK/nokids/.gooseweb/_gw/gwc.js" ]; then bad "gwc.js was written for a site without child components"; else ok; fi
+else
+  bad "gweb gen without RNest"
+fi
+if [ -e "$WORK/nolife/.gooseweb/_gw/gwc.js" ]; then ok; else bad "gwc.js is not written for a site with child components"; fi
 
 # 3. gweb test leaves .gooseweb/ alone.
 mkdir -p "$WORK/keep"

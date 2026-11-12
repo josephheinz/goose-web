@@ -12,8 +12,8 @@ Object.assign(globalThis, { document, CustomEvent: window.CustomEvent, dispatchE
 console.error = () => {};
 const dir = process.env.GW_DIR;
 const G = await import(pathToFileURL(dir + "/gwi.js").href);
-const { defs, state } = G;
-for (const n of ["RCounter", "RParts", "RComputed", "RWatch", "RStruct", "RFetch", "RClock", "RClockAsync", "REvents"]) await import(pathToFileURL(`${dir}/${n}.js`).href);
+const { defs, state, hooks } = G;
+for (const n of ["RCounter", "RParts", "RComputed", "RWatch", "RStruct", "RFetch", "RClock", "RClockAsync", "REvents", "RNestChild", "RNest"]) await import(pathToFileURL(`${dir}/${n}.js`).href);
 
 let errors = [];
 window.addEventListener("gw:error", (ev) => errors.push(ev.detail));
@@ -471,6 +471,145 @@ test("REvents: focus, blur, dblclick and change handlers run", () => {
   eq(state(root).last, "change", "change");
   at(root, "[data-on-dblclick]").dispatchEvent(new window.MouseEvent("dblclick", { bubbles: true }));
   eq(state(root).last, "dbl", "dblclick");
+});
+
+// Nested components (step 9). The parent's innerHTML holds each child's live DOM, so the parent is compared with
+// its children emptied, and every child root on its own.
+const kidless = (html) => {
+  const t = document.createElement("div");
+  t.innerHTML = html;
+  for (const k of t.querySelectorAll("[data-component]")) { k.innerHTML = ""; k.nextElementSibling?.remove(); }
+  return norm(t.innerHTML);
+};
+const tree = (root, name, step) => {
+  eq(kidless(root.innerHTML), kidless(defs[name].r(state(root))), `${name}: parent vs r(state) after ${step}`);
+  for (const k of root.querySelectorAll("[data-component]")) synced(k, k.dataset.component, `${step} (${k.dataset.component})`);
+};
+const kids = (root) => [...root.querySelectorAll("[data-component=RNestChild]")];
+const keyed = (root, k) => kids(root).find((c) => c.getAttribute("gw-key") == k);
+const kidBtn = (k) => k.querySelector("button");
+
+test("RNest: a parent click changes a child's prop; the child keeps its own state", () => {
+  const root = mount("RNest", { title: "T<&>" });
+  const [top] = kids(root), b = kidBtn(top);
+  eq(top.getAttribute("gw-key"), null, "no key on an unkeyed child");
+  eq(b.textContent, "1/0/10", "first render from props");
+  click(b);
+  click(b);
+  eq(b.textContent, "1/2/12", "the child's own state");
+  click(btn(root, "bump 1"));
+  eq(kids(root)[0], top, "child identity");
+  eq(kidBtn(top), b, "child button identity");
+  eq(b.textContent, "2/2/22", "n from the parent, taps kept, computed follows");
+  eq(state(top).taps, 2, "state kept");
+  eq(top.querySelector(".kid").textContent, "T<&>", "label prop");
+  tree(root, "RNest", "bump");
+  click(btn(root, "flip"));
+  eq(top.querySelector("em")?.textContent, "on", "bool prop shows the child's block");
+  eq(state(top).taps, 2, "state kept again");
+  tree(root, "RNest", "flip");
+  click(btn(root, "flip"));
+  eq(top.querySelector("em"), null, "and hides it");
+  tree(root, "RNest", "flip back");
+  eq(errors.length, 0, "no error");
+});
+
+test("RNest: a keyed list renders new children from props, and a prop change reaches them all", () => {
+  const root = mount("RNest", { title: "t" });
+  click(btn(root, "add"));
+  click(btn(root, "add"));
+  const [a, b] = [keyed(root, "10"), keyed(root, "11")];
+  eq(kids(root).length, 3, "top child and two listed");
+  eq(a.querySelector(".kid").textContent, "<kid&", "label from the item");
+  eq(kidBtn(a).textContent, "11/0/110", "n = id + count, rendered from props");
+  eq(kidBtn(b).textContent, "12/0/120", "second");
+  tree(root, "RNest", "adds");
+  click(kidBtn(a));
+  click(kidBtn(a));
+  click(kidBtn(b));
+  click(btn(root, "bump 1"));
+  eq(keyed(root, "10"), a, "keyed identity");
+  eq(kidBtn(a).textContent, "12/2/122", "a: prop and own state");
+  eq(kidBtn(b).textContent, "13/1/131", "b: prop and own state");
+  tree(root, "RNest", "bump");
+  click(btn(root, "add"));
+  eq(kidBtn(keyed(root, "12")).textContent, "14/0/140", "a third child is new");
+  eq(kidBtn(a).textContent, "12/2/122", "the old ones are untouched");
+  tree(root, "RNest", "add after bump");
+  click(btn(root, "x10"));
+  eq(kids(root).length, 3, "one removed");
+  eq(keyed(root, "11"), b, "b survives");
+  tree(root, "RNest", "drop");
+  eq(errors.length, 0, "no error");
+});
+
+test("RNest: reordering keeps each child's state, also for children never touched", () => {
+  const root = mount("RNest", { title: "t" });
+  for (let i = 0; i < 3; i++) click(btn(root, "add"));
+  const [a, b, c] = ["10", "11", "12"].map((k) => keyed(root, k));
+  click(kidBtn(a));
+  click(kidBtn(a));
+  click(btn(root, "rotate"));
+  const order = kids(root).slice(1).map((k) => k.getAttribute("gw-key"));
+  eq(order.join(), "11,12,10", "rotated");
+  eq([keyed(root, "10"), keyed(root, "11"), keyed(root, "12")].join(), [a, b, c].join(), "same nodes");
+  eq(keyed(root, "10"), a, "a is the same node");
+  eq(state(a).taps, 2, "a kept its state");
+  tree(root, "RNest", "rotate");
+  click(btn(root, "bump 1"));
+  // b and c were never clicked and moved; their state is still the server's, read next to their own script.
+  click(kidBtn(c));
+  eq(kidBtn(c).textContent, "14/1/141", "c: new prop, one tap");
+  eq(kidBtn(b).textContent, "13/0/130", "b: new prop");
+  eq(kidBtn(a).textContent, "12/2/122", "a");
+  tree(root, "RNest", "bump after rotate");
+  click(btn(root, "rotate"));
+  eq(state(c).taps, 1, "c after a second rotate");
+  eq(state(a).taps, 2, "a after a second rotate");
+  tree(root, "RNest", "second rotate");
+  eq(errors.length, 0, "no error");
+});
+
+test("RNest: a child that was never touched and moves first still reads its own state", () => {
+  const root = mount("RNest", { title: "t" });
+  for (let i = 0; i < 3; i++) click(btn(root, "add"));
+  const [a, b, c] = ["10", "11", "12"].map((k) => keyed(root, k));
+  click(btn(root, "back"));
+  eq(kids(root).slice(1).map((k) => k.getAttribute("gw-key")).join(), "12,10,11", "last to front");
+  eq(keyed(root, "12"), c, "c is the same node");
+  eq(errors.length, 0, "no error");
+  click(kidBtn(c));
+  eq(kidBtn(c).textContent, "13/1/131", "c: its own props from the server, one tap");
+  click(btn(root, "bump 1"));
+  eq(kidBtn(c).textContent, "14/1/141", "c after a parent change");
+  eq(kidBtn(a).textContent, "12/0/120", "a");
+  eq(kidBtn(b).textContent, "13/0/130", "b");
+  tree(root, "RNest", "back");
+  eq(errors.length, 0, "no error");
+});
+
+test("RNest: a child inside an {#if} is created and removed with the block", () => {
+  const root = mount("RNest", { title: "t" });
+  click(btn(root, "flip"));
+  const lit = root.querySelector("section [data-component]");
+  eq(kidBtn(lit).textContent, "7/0/70", "rendered from the literal props");
+  click(kidBtn(lit));
+  tree(root, "RNest", "lit tap");
+  click(btn(root, "flip"));
+  eq(root.querySelector("section"), null, "gone");
+  click(btn(root, "flip"));
+  eq(kidBtn(root.querySelector("section [data-component]")).textContent, "7/0/70", "a fresh child after the block comes back");
+  tree(root, "RNest", "back");
+  eq(errors.length, 0, "no error");
+});
+
+test("gwc.js: a different component at the same place is replaced, not patched", () => {
+  const root = mount("RNest", { title: "t" });
+  const o = kids(root)[0], b = document.createElement("div");
+  b.dataset.component = "RCounter";
+  eq(hooks.c(o, b), true, "handled");
+  eq(o.isConnected, false, "old root gone");
+  eq(b.isConnected, true, "new root in place");
 });
 
 let pass = 0, fail = 0;

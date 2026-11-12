@@ -79,7 +79,7 @@ function morph(from, to, force, s, z = null) {
       if (o == a) a = a.nextSibling;
       if (o.nodeName != b.nodeName) o.replaceWith(b);
       else if (o.nodeType != 1) { if (o.data != b.data) o.data = b.data; }
-      else if (!(cn(o) && cn(o) == cn(b) && hooks.c?.(o, b))) patch(o, b, force);
+      else if (!(cn(o) && hooks.c?.(o, b))) patch(o, b, force);
     }
     b = nb;
   }

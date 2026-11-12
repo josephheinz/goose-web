@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRChildCycle.gshtml:6: error: components cannot contain themselves
+// with: FailRChildCycle2
+@state var n: i64 = 0;
+</script>
+@FailRChildCycle2()

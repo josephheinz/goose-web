@@ -410,6 +410,14 @@ first; `gw_json` takes a struct or a `S[:]`). The module imports `/_gw/gwh.js`, 
 leaves the document (no `await`), `@every(MS) { }` every MS ms (16 or more) while mounted; `@mount` and `@every` may `await`.
 A component with any of these or a `@watch` starts at once (`/_gw/gwl.js`, served when one uses it) and runs its watches once first.
 
+**Child components (reactive components).** A reactive component's markup can call another reactive one with named
+props: `@Card(title: it.name, n: count + 1, key: it.id)`. A prop you leave out takes its default, or is an error
+(`@Card needs prop title`); props are `i64`, `bool` or text. `key:` (`i64` or text) sets `gw-key` on the child's
+root, and a call in a `{#for}` without it warns `child-key`. A parent re-render hands changed props to the live
+child (`/_gw/gwc.js`, served when a component calls one) and the child keeps its own state. The child's root is a
+`<div>`, so a call cannot sit inside `<p>`. A component cannot call itself, directly or through others
+(`components cannot contain themselves`); legacy `struct State` components cannot be called or call.
+
 **Maintainers.** After editing `client/gwi.js`, run `client/build.sh` (esbuild
 0.28.2 through `npx`, or `ESBUILD=/path/to/esbuild`); it writes
 `client/gwi.min.js` with the source's FNV-1a hash in its banner.

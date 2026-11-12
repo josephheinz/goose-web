@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRChildMissing.gshtml:6: error: @RNestChild needs prop label
+// with: RNestChild
+@state var n: i64 = 0;
+</script>
+@RNestChild(n: 2)
