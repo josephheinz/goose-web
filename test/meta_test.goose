@@ -23,7 +23,7 @@ fn check_eq(got: const u8[:], want: const u8[:], what: const u8[:]) {
 fn main() {
     let raw = "GET / HTTP/1.1\r\nHost: ex.test\r\nX-Forwarded-Proto: https\r\n\r\n";
     let req, parsed = http::parse_request(raw);
-    check(parsed, "request parses");
+    check(parsed == http::Read.Ready, "request parses");
 
     var ctx = web::new_ctx(0, -1);
     var out: u8[>..] = [];
