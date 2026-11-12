@@ -1187,6 +1187,9 @@ fn goose_web_home() -> u8[>..] {
     h.clear();
     resource_dir(h);
     while h.len > 1 && h[h.len - 1] == '/' { h.pop(); }
+    var probe: u8[>..] = [];
+    format(probe, h, "/web.goose");
+    if !file_exists(probe) { h.clear(); }
     return h;
 }
 
