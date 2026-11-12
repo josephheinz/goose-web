@@ -10,5 +10,5 @@ fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
     web::write(s, "one\n");
     web::write(s, "two\n");
     web::write(s, "three\n");
-    web::end(s);
+    web::end(ctx, s);
 }

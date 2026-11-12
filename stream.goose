@@ -32,10 +32,10 @@ fn write(s: Stream&, data: const u8[:]) -> bool {
     return false;
 }
 
-// Ends the body. Call it once; the connection is closed by run_worker when the request was HTTP/1.0 or not keep-alive.
-fn end(s: Stream&) -> bool {
+// Ends the body. Call it once; without it run_worker closes the connection, since the body was never terminated.
+fn end(ctx: Ctx&, s: Stream&) -> bool {
     if !s.ok { return false; }
     s.ok = false;
-    if s.head_only { return true; }
-    return http::end_chunked(s.conn, s.chunked);
+    ctx.stream_ended = s.head_only || http::end_chunked(s.conn, s.chunked);
+    return ctx.stream_ended;
 }

@@ -38,6 +38,7 @@ struct Ctx {
     set_cookies: u8[..2048],  // pending Set-Cookie lines; run_worker moves them to res
     conn_fd: i32 = -1,        // the request's socket, for web::stream_begin
     streamed: bool = false,   // the handler sent its own reply through a Stream
+    stream_ended: bool = false,
     hub: u64 = 0,             // 0 = no hub in this build
     detach: Detach = Detach.None,
     topic: u8[..64] = "",
@@ -387,6 +388,7 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                 var static_index = -1;
                 var dev_request = false;
                 var streamed = false;
+                var stream_ended = false;
                 var detach = Detach.None;
                 var topic: u8[..64] = "";
                 var heartbeat: u8[..64] = "";
@@ -410,6 +412,7 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                             static_index = D(req, ctx, res);
                             if !apply_cookies(ctx, res) { static_index = -1; ctx.detach = Detach.None; }
                             streamed = ctx.streamed;
+                            stream_ended = ctx.stream_ended;
                             detach = ctx.detach;
                             topic.append(ctx.topic);
                             heartbeat.append(ctx.heartbeat);
@@ -420,9 +423,9 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                     Closed => {},
                 }
                 let head_only = req.method == http::Method.Head;
-                // A stream wrote its own reply; the connection survives only if its body was framed (chunked) and keep-alive was asked for.
+                // A stream wrote its own reply; the connection survives only if its body was framed (chunked), ended, and keep-alive was asked for.
                 if streamed {
-                    if !(keep && http::supports_chunked(req)) { lp.close_connection(conn); }
+                    if !(keep && stream_ended && http::supports_chunked(req)) { lp.close_connection(conn); }
                     continue;
                 }
                 // The hub owns the socket after the head is out; a failed head or a full hub closes it.
