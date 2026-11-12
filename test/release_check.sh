@@ -71,8 +71,18 @@ csrf_test() {
   "$WORK/csrf/csrf_test"
 }
 
+catchall_test() {
+  mkdir "$WORK/catchall"
+  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+      -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
+      "$HERE/catchall_test.goose" > "$WORK/catchall/catchall_test.goose"
+  "$GOOSE" build -o "$WORK/catchall/catchall_test" "$WORK/catchall/catchall_test.goose"
+  "$WORK/catchall/catchall_test"
+}
+
 step cookie_test cookie_test
 step csrf_test csrf_test
+step catchall_test catchall_test
 step components sh "$HERE/components.sh"
 step templates sh "$HERE/templates.sh"
 step fragments env PORT="${PORT:-3991}" sh "$HERE/fragments.sh"

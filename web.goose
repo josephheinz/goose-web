@@ -11,7 +11,8 @@ import json;
 
 // ---------------------------------------------------------------- types
 
-struct Params { n: i64, names: u8[..32][8], values: u8[..256][8] }
+struct Params { n: i64, names: u8[..32][8], values: u8[..256][8],
+                rest_name: u8[..32] = "", rest: u8[..1024] = "" }   // the catch-all tail has its own, larger field
 
 enum Outcome { Continue, NotFound, Redirect }
 
@@ -58,6 +59,7 @@ fn param(ctx: const Ctx&, name: const u8[:]) -> const u8[:] {
     for i in ctx.params.n {
         if ctx.params.names[i] == name { return ctx.params.values[i]; }
     }
+    if ctx.params.rest_name == name { return ctx.params.rest; }
     return "";
 }
 
@@ -65,6 +67,69 @@ fn param_int(ctx: const Ctx&, name: const u8[:]) -> i64, bool {
     let v = param(ctx, name);
     if v.len == 0 { return 0, false; }
     return parse_int(v);
+}
+
+// The decoded byte at i and the bytes it spans; -1 for a % without two hex digits.
+fn path_byte(s: const u8[:], i: i64) -> i64, i64 {
+    if s[i] != '%' { return s[i], 1; }
+    if i + 2 < s.len && ascii::hex_value(s[i + 1]) >= 0 && ascii::hex_value(s[i + 2]) >= 0 {
+        return (ascii::hex_value(s[i + 1]) * 16 + ascii::hex_value(s[i + 2])), 3;
+    }
+    return -1, 0;
+}
+
+// True when every decoded byte is allowed: not / or \ or a control byte, and no segment decodes to . or ..
+// Raw slashes separate segments.
+fn path_valid(s: const u8[:]) -> bool {
+    var i = 0;
+    var seg_len = 0;
+    var dots = 0;
+    while i <= s.len {
+        if i == s.len || s[i] == '/' {
+            if seg_len > 0 && seg_len == dots && dots <= 2 { return false; }
+            seg_len = 0;
+            dots = 0;
+            i += 1;
+        } else {
+            let b, width = path_byte(s, i);
+            if b < 32 || b == 127 || b == '/' || b == '\\' { return false; }
+            seg_len += 1;
+            if b == '.' { dots += 1; }
+            i += width;
+        }
+    }
+    return true;
+}
+
+// Appends s with %XX decoded; + stays +. False, with nothing appended, on a malformed %, a decoded / or \
+// or control byte, or a segment that decodes to . or ..
+fn path_decode(out: u8[>..]&, s: const u8[:]) -> bool {
+    if !path_valid(s) { return false; }
+    var i = 0;
+    while i < s.len {
+        let b, width = path_byte(s, i);
+        out.push(b as u8);
+        i += width;
+    }
+    return true;
+}
+
+// Called by the generated dispatcher. False, and the dispatcher answers 404, when the name or tail is over its
+// limit, a segment is empty, or path_decode would refuse the tail; "" is a valid tail.
+fn set_rest(ctx: Ctx&, name: const u8[:], rest: const u8[:]) -> bool {
+    if name.len > 32 || rest.len > 1024 { return false; }
+    if rest.len > 0 {
+        if rest[0] == '/' || rest[rest.len - 1] == '/' { return false; }
+        for i in 1..rest.len {
+            if rest[i] == '/' && rest[i - 1] == '/' { return false; }
+        }
+    }
+    if !path_valid(rest) { return false; }
+    ctx.params.rest_name.clear();
+    ctx.params.rest_name.append(name);
+    ctx.params.rest.clear();
+    ctx.params.rest.append(rest);
+    return true;
 }
 
 // Appends the URL-decoded value to out; false when absent.
