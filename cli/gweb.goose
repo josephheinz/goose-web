@@ -73,6 +73,7 @@ var component_reactive: i64[>..<];     // 1 for a component with @ declarations 
 var component_props: u8[>..];          // `Name\tprop\tdefault source\n` for each @prop of each reactive component
 var component_errors = 0;              // translator errors of this gen; the build still runs goose
 var uses_fragments = false;
+var uses_boost = false;               // a layout or page has <body gw-boost> (serves gwn.js)
 var uses_mods = false;                // a component imports gwm.js (on: modifiers)
 var uses_life = false;                // a component calls life() (imports gwl.js)
 var uses_children = false;            // a component calls a child component (imports gwc.js)
@@ -80,6 +81,7 @@ var uses_http = false;                 // a component imports gwh.js (http::get 
 var http_calls: Target[>..<];          // each string-literal url of an http call (post: POST, name: get or post)
 var targets: Target[>..<];
 var tpl_script = false;
+var tpl_boost = false;
 var last_errors: u8[>..];
 var warnings = 0;
 var last_warnings: u8[>..];
@@ -790,10 +792,36 @@ fn template_tag(path: const u8[:], ln: i64, inner: const u8[:], line: const u8[:
     }
 }
 
-let GW_SCRIPT = "<link rel=\"modulepreload\" href=\"/_gw/gwi.js\"><script type=\"module\" src=\"/_gw/gwf.js\"></script>";
+let GW_PRELOAD = "<link rel=\"modulepreload\" href=\"/_gw/gwi.js\">";
+let GW_FRAG = "<script type=\"module\" src=\"/_gw/gwf.js\"></script>";
+let GW_NAV = "<script type=\"module\" src=\"/_gw/gwn.js\"></script>";
 
+// The module tags of the template being compiled: gwf.js for gw-target, gwn.js for <body gw-boost>.
 fn script_tag(out: u8[>..]&) {
-    out.append("out.append(\""); lit(out, GW_SCRIPT); out.append("\"); ");
+    var t: u8[>..] = [];
+    t.append(GW_PRELOAD);
+    if tpl_script { t.append(GW_FRAG); }
+    if tpl_boost { t.append(GW_NAV); }
+    out.append("out.append(\""); lit(out, t); out.append("\"); ");
+}
+
+// Whether a <body ...> tag of src carries gw-boost.
+fn has_boost(src: const u8[:]) -> bool {
+    var from = 0;
+    while from < src.len {
+        let k = find(src[from..], "<body");
+        if k < 0 { return false; }
+        let rest = src[from + k + 5..];
+        if rest.len == 0 { return false; }
+        let c = rest[0];
+        if c == ' ' || c == '\n' || c == '\t' || c == '>' || c == '\r' {
+            let e = find(rest, ">");
+            let tag = if e < 0 { rest } else { rest[..e] };
+            if find(tag, "gw-boost") >= 0 { return true; }
+        }
+        from = from + k + 5;
+    }
+    return false;
 }
 
 // The start and end of each argument of a call: the pieces between its top-level commas.
@@ -921,7 +949,7 @@ fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:
     if name == "slot" {
         if kind != K_LAYOUT { err(path, ln, "@slot() is for layout.html only"); }
         if args.len > 0 { err(path, ln, "@slot() takes no arguments"); }
-        if kind == K_LAYOUT && tpl_script { script_tag(out); }
+        if kind == K_LAYOUT && (tpl_script || tpl_boost) { script_tag(out); }
         out.append("F(); ");
     } else if name[0] >= 'A' && name[0] <= 'Z' && find(name, "::") < 0 {
         if in_frag {
@@ -945,9 +973,11 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
                     frags: u8[>..]&, out: u8[>..]&) -> bool {
     let before = errors;
     tpl_script = find(src, "gw-target=\"") >= 0;
+    tpl_boost = has_boost(src);
+    if tpl_boost { uses_boost = true; }
     out.append(header);
     if wrap { out.append("if gw_part == 0 { "); }
-    if tpl_script && kind != K_LAYOUT { script_tag(out); }
+    if (tpl_script || tpl_boost) && kind != K_LAYOUT { script_tag(out); }
     var stack: u8[>..] = [];      // 'i' for if, 'f' for for, 'g' for fragment
     var stack_lines: i64[>..] = [];
     var raw = tscan::MARKUP;
@@ -1708,13 +1738,15 @@ let RT_MODS_PRETTY = embed_file("../client/gwm.js");
 let RT_MODS_MIN = embed_file("../client/gwm.min.js");
 let RT_CHILD_PRETTY = embed_file("../client/gwc.js");
 let RT_CHILD_MIN = embed_file("../client/gwc.min.js");
+let RT_NAV_PRETTY = embed_file("../client/gwn.js");
+let RT_NAV_MIN = embed_file("../client/gwn.min.js");
 
-// which: 0 is gwi.js (the core), 1 is gwf.js (fragments), 2 is gwh.js (typed fetch), 3 is gwl.js (lifecycle), 4 is gwm.js (modifiers), 5 is gwc.js (child components).
+// which: 0 is gwi.js (the core), 1 is gwf.js (fragments), 2 is gwh.js (typed fetch), 3 is gwl.js (lifecycle), 4 is gwm.js (modifiers), 5 is gwc.js (child components), 6 is gwn.js (client navigation).
 fn runtime_js(which: i64, min: bool, out: u8[>..]&) {
     let home = goose_web_home();
     if home.len > 0 {
         var p: u8[>..] = [];
-        let base = if which == 1 { "/client/gwf" } else if which == 2 { "/client/gwh" } else if which == 3 { "/client/gwl" } else if which == 4 { "/client/gwm" } else if which == 5 { "/client/gwc" } else { "/client/gwi" };
+        let base = if which == 1 { "/client/gwf" } else if which == 2 { "/client/gwh" } else if which == 3 { "/client/gwl" } else if which == 4 { "/client/gwm" } else if which == 5 { "/client/gwc" } else if which == 6 { "/client/gwn" } else { "/client/gwi" };
         format(p, home, base, if min { ".min.js" } else { ".js" });
         if read(p, out) { return; }
     }
@@ -1724,6 +1756,7 @@ fn runtime_js(which: i64, min: bool, out: u8[>..]&) {
     else if which == 3 { out.append(if min { RT_LIFE_MIN } else { RT_LIFE_PRETTY }); }
     else if which == 4 { out.append(if min { RT_MODS_MIN } else { RT_MODS_PRETTY }); }
     else if which == 5 { out.append(if min { RT_CHILD_MIN } else { RT_CHILD_PRETTY }); }
+    else if which == 6 { out.append(if min { RT_NAV_MIN } else { RT_NAV_PRETTY }); }
     else { out.append(if min { RT_MIN } else { RT_PRETTY }); }
 }
 
@@ -1785,6 +1818,7 @@ fn gen_runtime(dev: bool) {
     if uses_life { gen_runtime_file(3, "gwl.js", dev, gw_dir); }
     if uses_mods { gen_runtime_file(4, "gwm.js", dev, gw_dir); }
     if uses_children { gen_runtime_file(5, "gwc.js", dev, gw_dir); }
+    if uses_boost { gen_runtime_file(6, "gwn.js", dev, gw_dir); }
 }
 
 // The indices of component_names, each component after the components its markup calls with @Name( (a cycle is cut at
@@ -1907,6 +1941,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     uses_sqlite = false;
     component_errors = 0;
     uses_fragments = false;
+    uses_boost = false;
     uses_http = false;
     uses_mods = false;
     uses_life = false;
@@ -2002,7 +2037,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     check_targets();
     check_http();
     if errors > 0 { return false; }
-    if component_names.len > 0 || uses_fragments { gen_runtime(dev); }
+    if component_names.len > 0 || uses_fragments || uses_boost { gen_runtime(dev); }
     var main_file: u8[>..] = [];
     format(main_file, root, "/main.goose");
     write(main_file, gen_main());

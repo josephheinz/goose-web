@@ -116,6 +116,9 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     req rf GET /_gw/gwf.js
     check "$([ "$(status rf)" = 200 ] && has_header rf 'content-type: text/javascript' && echo ok)" "a project with fragments serves /_gw/gwf.js"
     check "$([ ! -d "$WORK/ok/components" ] && echo ok)" "the site has no components folder"
+    check "$(! body_has whole 'gwn.js' && ! body_has plain 'gwn.js' && echo ok)" "a site without gw-boost: no gwn.js tag"
+    req nonav GET /_gw/gwn.js
+    check "$([ "$(status nonav)" = 404 ] && echo ok)" "a site without gw-boost does not serve /_gw/gwn.js"
 
     req tk0 GET /
     check "$([ "$(grep -c '^set-cookie: gw_csrf=[0-9a-f]\{32\}; path=/; httponly; samesite=lax$' "$WORK/tk0.h")" = 1 ] && [ "$(grep -c '^set-cookie:' "$WORK/tk0.h")" = 1 ] && has_header tk0 'cache-control: no-store' && body_has tk0 'name="_csrf" value="' && echo ok)" "GET / without a cookie: one gw_csrf cookie, no-store, a _csrf field"
@@ -147,6 +150,40 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
   else bad "p5_plain_html.goose differs from the stored copy:"; diff "$HERE/fragments/expect_p5_plain_html.goose" "$WORK/ok/.gooseweb/p5_plain_html.goose" | sed 's/^/    /'; fi
 else
   bad "gweb build of the site"; echo "$out"
+fi
+
+# 1b. A site whose layout has <body gw-boost> (DESIGN-ADDENDUM-12, item 8).
+cp -R "$HERE/fragments/boost" "$WORK/boost"
+if out=$("$GWEB" -C "$WORK/boost" build 2>&1); then
+  BPORT=$((PORT + 1))
+  "$WORK/boost/.gooseweb/server" --port "$BPORT" >/dev/null 2>&1 &
+  PID=$!
+  URL="http://127.0.0.1:$BPORT"
+  up=""
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.5
+    if curl -s -o /dev/null "$URL/"; then up=yes; break; fi
+  done
+  if [ -z "$up" ]; then
+    bad "the gw-boost server did not answer on port $BPORT"
+  else
+    req bhome GET /
+    check "$([ "$(status bhome)" = 200 ] && [ "$(body_count bhome 'src="/_gw/gwn.js"')" = 1 ] && body_has bhome '<link rel="modulepreload" href="/_gw/gwi.js"><script type="module" src="/_gw/gwn.js"></script><h1>Boosted home</h1>' && ! body_has bhome 'gwf.js' && echo ok)" "gw-boost: / has the gwn.js tag (once, with the gwi.js preload, no gwf.js)"
+    req babout GET /about
+    check "$(body_has babout 'src="/_gw/gwn.js"' && echo ok)" "gw-boost: /about has the gwn.js tag"
+    req bnav GET /about -H 'GW-Nav: 1'
+    check "$([ "$(status bnav)" = 200 ] && body_has bnav '<h1>Boosted about</h1>' && body_has bnav '<body gw-boost>' && echo ok)" "gw-boost: a GW-Nav request gets the whole page"
+    req bjs GET /_gw/gwn.js
+    check "$([ "$(status bjs)" = 200 ] && has_header bjs 'content-type: text/javascript' && body_has bjs 'GW-Nav' && echo ok)" "gw-boost: /_gw/gwn.js is served as javascript"
+    req bjsi GET /_gw/gwi.js
+    check "$([ "$(status bjsi)" = 200 ] && echo ok)" "gw-boost: /_gw/gwi.js is served"
+  fi
+  kill "$PID" 2>/dev/null
+  wait "$PID" 2>/dev/null
+  PID=""
+  URL="http://127.0.0.1:$PORT"
+else
+  bad "gweb build of the gw-boost site"; echo "$out"
 fi
 
 # 2. Expected failures. The page is <p>x</p>, the case on line 2, <p>y</p>.

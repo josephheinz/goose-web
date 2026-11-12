@@ -327,6 +327,10 @@ page.
 
 The demo is `../examples/shop/app/fragments` (`/fragments`, `/fragments/products`).
 
+## Client navigation
+
+Put `gw-boost` on the `<body>` tag of `app/layout.html` and same-origin links (no `gw-target`, `download`, `target` or modifier key) load without a full page reload: `/_gw/gwn.js` fetches the page with a `GW-Nav: 1` header, morphs `<body>`, sets the title, imports module scripts not loaded yet, and updates the history; back and forward work the same way. A component root with the same `gw-key` and `data-component` on both pages keeps its DOM and state. Other replies (errors, non-HTML) become a normal navigation. Limits: `<head>` is not merged except the title, and inline non-module scripts in the new body do not run. Sites without `gw-boost` get no `gwn.js`.
+
 ## Example
 
 `../examples/shop` is the benchmark site: pages, a JSON API, a todo list in
