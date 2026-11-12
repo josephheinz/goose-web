@@ -16,6 +16,8 @@ process.stdin.on('data', createReader((m) => {
   if (m.method === 'initialize') {
     if (mode === 'exit') process.exit(3);
     if (mode === 'hang') return;
+    // The real server analyses files alone (every import fails) without the entry file.
+    if (!m.params?.initializationOptions?.entryFiles?.[0]?.endsWith('/.gooseweb.lsp/main.goose')) return send({ id: m.id, error: { code: -32602, message: 'entryFiles missing' } });
     send({ id: m.id, result: { capabilities: { positionEncoding: process.env.FAKE_GOOSE_ENC ?? 'utf-16' } } });
   } else if (m.method === 'textDocument/didOpen' || m.method === 'textDocument/didChange') {
     const uri = m.params.textDocument.uri;

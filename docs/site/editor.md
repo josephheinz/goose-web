@@ -3,7 +3,7 @@
 `gweb lsp` is a language server for gweb projects. It reports diagnostics
 only: no hover, completion or go to definition.
 
-It needs `node` on `PATH`, and `goose` (or `$GOOSE`).
+It needs `node` on `PATH`, and `goose` v2026.4 or later (or `$GOOSE`).
 
 ## What it reports
 
@@ -20,8 +20,10 @@ writes `.gooseweb.lsp/` there. Keep it out of git.
 
 ## How it works
 
-It generates the project into `.gooseweb.lsp/`, sends the generated files to
-`goose lsp`, and maps the diagnostics back. It reruns 250 ms after you stop
+It generates the project into `.gooseweb.lsp/`, starts `goose lsp` with
+`.gooseweb.lsp/main.goose` as its entry file, sends it the generated files
+(unsaved text included), and maps the diagnostics back. Only diagnostics for
+your files are shown. It reruns 250 ms after you stop
 typing.
 
 If `goose lsp` is missing, exits, or does not answer within 10 s, the server

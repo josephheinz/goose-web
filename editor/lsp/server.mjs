@@ -2,7 +2,7 @@
 // gweb language server (DESIGN-ADDENDUM-18, D2/D3): diagnostics for .gshtml, page.html and
 // page.goose, by proxying `goose lsp` over the generated files and mapping positions back.
 import { spawn } from 'node:child_process';
-import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, readdirSync, realpathSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -135,7 +135,7 @@ function runServer() {
   const initMs = Number(process.env.GWEB_LSP_INIT_TIMEOUT_MS ?? 10000);
   const tmpDir = mkdtempSync(join(tmpdir(), 'gweb-lsp-'));
 
-  let root = process.cwd(), editorEnc = 'utf-16', childEnc = 'utf-16';
+  let root = process.cwd(), rawRoot = root, editorEnc = 'utf-16', childEnc = 'utf-16';
   let stopping = false, fallback = false;
   const docs = new Map();            // uri -> { uri, rel, text }
   const gwebDiags = new Map();       // rel -> [{ line, severity, message }]
@@ -182,7 +182,13 @@ function runServer() {
     const rootUri = pathToFileURL(root).href;
     requestChild('initialize', {
       processId: process.pid, rootUri, workspaceFolders: [{ uri: rootUri, name: 'root' }],
-      capabilities: { general: { positionEncodings: ['utf-8', 'utf-16'] }, textDocument: { publishDiagnostics: {} } },
+      capabilities: {
+        general: { positionEncodings: ['utf-8', 'utf-16'] },
+        textDocument: { publishDiagnostics: {} },
+        workspace: { didChangeWatchedFiles: { dynamicRegistration: false } },
+      },
+      // Without the entry file each generated file is analysed alone and every import fails.
+      initializationOptions: { entryFiles: [join(root, LSP_DIR, 'main.goose')] },
     }).then((res) => {
       clearTimeout(timer);
       if (fallback) return;
@@ -246,6 +252,7 @@ function runServer() {
     gwebDiags.clear();
     for (const d of diags) gwebDiags.set(d.path, [...(gwebDiags.get(d.path) ?? []), d]);
     loadMaps();
+    if (!child && !fallback) startChild(); // entryFiles must exist, so only after the first generation
     if (!fallback && (await ready)) syncChild();
     for (const d of docs.values()) publish(d);
   }
@@ -262,7 +269,27 @@ function runServer() {
     }
   }
 
+  // Generated files that are not open in the child changed on disk: tell it to reread them.
+  const seen = new Map();            // abs path -> text last seen on disk
+  function watchChanges() {
+    const dir = join(root, LSP_DIR), changes = [];
+    let names = [];
+    try { names = readdirSync(dir).filter((n) => n.endsWith('.goose')); } catch { return; }
+    for (const n of names) {
+      const path = join(dir, n);
+      let text;
+      try { text = readFileSync(path, 'utf8'); } catch { continue; }
+      const prev = seen.get(path);
+      seen.set(path, text);
+      // Files first seen are read from disk when goose lsp needs them; only later edits need telling.
+      if (childDocs.has(path) || prev === undefined || prev === text) continue;
+      changes.push({ uri: pathToFileURL(path).href, type: 2 });
+    }
+    if (changes.length) notifyChild('workspace/didChangeWatchedFiles', { changes });
+  }
+
   function syncChild() {
+    watchChanges();
     for (const doc of docs.values()) {
       for (const gen of srcGens.get(doc.rel) ?? []) {
         const path = join(root, LSP_DIR, gen);
@@ -323,8 +350,11 @@ function runServer() {
   function relOf(uri) {
     let path;
     try { path = fileURLToPath(uri); } catch { return null; }
-    const rel = relative(root, path).split(sep).join('/');
-    return rel.startsWith('..') || !taken(rel) ? null : rel;
+    for (const base of [root, rawRoot]) {
+      const rel = relative(base, path).split(sep).join('/');
+      if (!rel.startsWith('..') && taken(rel)) return rel;
+    }
+    return null;
   }
 
   function open(uri, text) {
@@ -355,8 +385,10 @@ function runServer() {
         const dir = params.rootUri ?? params.workspaceFolders?.[0]?.uri;
         root = dir ? fileURLToPath(dir) : params.rootPath ?? process.cwd();
         root = root.replace(/(.)\/+$/, '$1');
+        rawRoot = root;
+        // goose lsp resolves symlinks (/tmp, /var on macOS): use the real path for everything it sees.
+        try { root = realpathSync(root); } catch { /* keep as given */ }
         if (params.capabilities?.general?.positionEncodings?.includes('utf-8')) editorEnc = 'utf-8';
-        startChild();
         return reply({
           capabilities: { positionEncoding: editorEnc, textDocumentSync: { openClose: true, change: 1, save: { includeText: false } } },
           serverInfo: { name: 'gweb-lsp' },
