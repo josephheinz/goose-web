@@ -352,6 +352,37 @@ fn config_from_args() -> Config {
     return cfg;
 }
 
+// ---------------------------------------------------------------- secrets and env (DESIGN-ADDENDUM-13)
+
+// Fills buf from the OS; 1 on success, 0 when refused (more than 256 bytes).
+extern fn c_entropy(buf: u8[:]) -> i32 = "gweb_entropy";
+
+let B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+// base64url without padding, appended to out.
+fn b64url(out: u8[>..]&, data: const u8[:]) {
+    var i = 0;
+    while i + 2 < data.len {
+        let n = ((data[i] as i64) << 16) | ((data[i + 1] as i64) << 8) | (data[i + 2] as i64);
+        out.push(B64URL[(n >> 18) & 63]);
+        out.push(B64URL[(n >> 12) & 63]);
+        out.push(B64URL[(n >> 6) & 63]);
+        out.push(B64URL[n & 63]);
+        i += 3;
+    }
+    let rest = data.len - i;
+    if rest == 1 {
+        let n = (data[i] as i64) << 16;
+        out.push(B64URL[(n >> 18) & 63]);
+        out.push(B64URL[(n >> 12) & 63]);
+    } else if rest == 2 {
+        let n = ((data[i] as i64) << 16) | ((data[i + 1] as i64) << 8);
+        out.push(B64URL[(n >> 18) & 63]);
+        out.push(B64URL[(n >> 12) & 63]);
+        out.push(B64URL[(n >> 6) & 63]);
+    }
+}
+
 // ---------------------------------------------------------------- the worker loop
 
 // D, the generated dispatcher, returns the index of a static file to send, or -1; S gives its bytes, sent without a copy. Never returns.
