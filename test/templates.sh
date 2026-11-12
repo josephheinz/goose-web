@@ -36,12 +36,34 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     sleep 0.5
     if curl -s -o "$WORK/got.html" "http://127.0.0.1:$PORT/"; then got=yes; break; fi
   done
+  # A component's hash depends on bytes only a build knows, so the page is compared with it replaced by HASH.
+  sed -E 's|(/_gw/Brace)\.[0-9a-f]{8}\.js|\1.HASH.js|' "$WORK/got.html" > "$WORK/got.norm.html"
+  if [ -z "$got" ]; then bad "the server did not answer on port $PORT"
+  elif cmp -s "$WORK/got.norm.html" "$HERE/templates/expect.html"; then ok
+  else bad "GET / differs from expect.html:"; diff "$HERE/templates/expect.html" "$WORK/got.norm.html" | sed 's/^/    /'; fi
+  if [ -n "$got" ]; then
+    # @asset wrote /site.<hash>.css; the hash is the first 8 digits of the file's FNV-1a 64.
+    h=$(node "$ROOT/client/fnv.mjs" "$HERE/templates/site/public/site.css" | cut -c1-8)
+    curl -s -D "$WORK/hashed.h" -o "$WORK/hashed.b" "http://127.0.0.1:$PORT/site.$h.css"
+    curl -s -D "$WORK/plain.h" -o "$WORK/plain.b" "http://127.0.0.1:$PORT/site.css"
+    if grep -qi '^cache-control: public, max-age=31536000, immutable' "$WORK/hashed.h"; then ok; else bad "the hashed URL lacks the immutable Cache-Control"; fi
+    if grep -qi '^cache-control: public, max-age=0, must-revalidate' "$WORK/plain.h"; then ok; else bad "the plain URL lost must-revalidate"; fi
+    if cmp -s "$WORK/hashed.b" "$WORK/plain.b" && cmp -s "$WORK/hashed.b" "$HERE/templates/site/public/site.css"; then ok; else bad "the hashed and plain URLs serve different bytes"; fi
+    if [ "$(grep -ci '^etag:' "$WORK/hashed.h")" = 1 ] && [ "$(grep -i '^etag:' "$WORK/hashed.h")" = "$(grep -i '^etag:' "$WORK/plain.h")" ]; then ok; else bad "the hashed and plain URLs have different ETags"; fi
+    # The component's own URL: its hash is that of the JS it serves.
+    cu=$(grep -o '/_gw/Brace\.[0-9a-f]\{8\}\.js' "$WORK/got.html" | head -1)
+    curl -s -D "$WORK/cjs.h" -o "$WORK/cjs.b" "http://127.0.0.1:$PORT$cu"
+    curl -s -o "$WORK/cjs0.b" "http://127.0.0.1:$PORT/_gw/Brace.js"
+    ch=$(node "$ROOT/client/fnv.mjs" "$WORK/cjs.b" | cut -c1-8)
+    if [ "$cu" = "/_gw/Brace.$ch.js" ] && grep -qi '^cache-control: .*immutable' "$WORK/cjs.h" && cmp -s "$WORK/cjs.b" "$WORK/cjs0.b"; then ok; else bad "component URL $cu: wrong hash, no immutable, or differs from /_gw/Brace.js"; fi
+    # It imports the runtime by its hashed name, and that name exists.
+    rt=$(grep -o 'gwi\.[0-9a-f]\{8\}\.js' "$WORK/cjs.b" | head -1)
+    curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/_gw/$rt" > "$WORK/rt.status"
+    if [ -n "$rt" ] && [ "$(cat "$WORK/rt.status")" = 200 ]; then ok; else bad "Brace.js imports '$rt', which is not served"; fi
+  fi
   kill "$PID" 2>/dev/null
   wait "$PID" 2>/dev/null
   PID=""
-  if [ -z "$got" ]; then bad "the server did not answer on port $PORT"
-  elif cmp -s "$WORK/got.html" "$HERE/templates/expect.html"; then ok
-  else bad "GET / differs from expect.html:"; diff "$HERE/templates/expect.html" "$WORK/got.html" | sed 's/^/    /'; fi
 else
   bad "gweb build of the site"; echo "$out"
 fi
@@ -116,6 +138,22 @@ expect_fail components/C.gshtml '@C(s)' 5 "'@C()' is not available in client cod
 expect_fail $P '{#raw }' 2 "{#raw e} needs an expression"
 expect_fail $P '<script>var a = 1;' 2 "<script> is never closed with </script>"
 expect_fail $P '<style>p { color: red; }' 2 "<style> is never closed with </style>"
+# @asset.
+expect_fail $P '@asset()' 2 '@asset() takes one string literal, as in @asset("/css/site.css")'
+expect_fail $P '@asset(x)' 2 '@asset() takes one string literal, as in @asset("/css/site.css")'
+expect_fail $P '@asset("/nope.css")' 2 "no public file at /nope.css (looked for public/nope.css)"
+expect_fail app/layout.html '@asset("/css/none.css")' 2 "no public file at /css/none.css (looked for public/css/none.css)"
+# A hashed URL may not be another file's URL.
+cp "$HERE/templates/site/app/page.html" "$WORK/f/app/page.html"
+cp "$HERE/templates/site/app/layout.html" "$WORK/f/app/layout.html"
+rm -f "$WORK/f/components/C.gshtml"
+h=$(node "$ROOT/client/fnv.mjs" "$HERE/templates/site/public/site.css" | cut -c1-8)
+printf 'x\n' > "$WORK/f/public/site.$h.css"
+want="public/site.css: error: this file's hashed URL /site.$h.css is taken by /site.$h.css"
+if out=$("$GWEB" -C "$WORK/f" build 2>&1); then bad "a file at the hashed URL: gweb build succeeded"
+else case "$out" in *"$want"*) ok ;; *) bad "wanted '$want', got:"; echo "$out" | sed 's/^/    /' ;; esac; fi
+rm -f "$WORK/f/public/site.$h.css"
+
 # A Goose error inside a tag reports the template's own line.
 expect_fail $P '{ctx.nope}' 2 "struct Ctx has no field nope"
 

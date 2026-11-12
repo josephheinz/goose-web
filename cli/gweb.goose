@@ -39,7 +39,8 @@ struct Dir {
     page_csrf: bool = false, layout_csrf: bool = false, csrf_const: bool = false   // csrf_const: route.goose declares const CSRF
 }
 
-struct Static { url: u8[..512], file: u8[..512], ctype: u8[..64], etag: u8[..24] }
+// hashed is url with the first 8 hex digits of etag before the last extension; both URLs serve the same bytes.
+struct Static { url: u8[..512], file: u8[..512], ctype: u8[..64], etag: u8[..24], hashed: u8[..520] }
 
 // own is the page's dir index, or -1 in a layout, not-found.html or a component.
 struct Target { path: u8[..512], line: i64, url: u8[..512], name: u8[..64], post: bool, own: i64 }
@@ -61,6 +62,8 @@ var not_found_csrf = false;
 var uses_sqlite = false;
 var map_text: u8[>..];
 var gen_root: u8[>..];
+var rt_js: u8[>..];                    // the client runtime, hashed before any page or component names it
+var rt_file: u8[>..];                  // its file name, gwi.<hash>.js
 // gweb test must never touch BUILD_DIR: a built server or a running gweb dev depends on it.
 let TEST_DIR = ".gooseweb.test";
 let BUILD_DIR = ".gooseweb";
@@ -291,6 +294,20 @@ fn etag_of(data: const u8[:]) -> u8[..24] {
     return t;
 }
 
+// The hash goes before the last extension of the last path segment; a dot that starts the segment is not an extension.
+fn hashed_url(url: const u8[:], etag: const u8[:]) -> u8[..520] {
+    var seg = 0;
+    for c, i in url { if c == '/' { seg = i + 1; } }
+    var dot = -1;
+    for i in seg..url.len { if url[i] == '.' && i > seg { dot = i; } }
+    var h: u8[..520] = "";
+    if dot < 0 { h.append(url); } else { h.append(url[..dot]); }
+    h.push('.');
+    h.append(etag[1..9]);
+    if dot >= 0 { h.append(url[dot..]); }
+    return h;
+}
+
 fn scan_public_dir(rel: const u8[:], todo: u8[..512][>..]&) {
     var path: u8[>..] = [];
     path.append("public");
@@ -308,11 +325,12 @@ fn scan_public_dir(rel: const u8[:], todo: u8[..512][>..]&) {
         if r.len >= 500 { err(full, 0, "path too long"); continue; }
         var data: u8[>..] = [];
         if !read(full, data) { continue; }
-        var s = Static { url: "/", file: "", ctype: "", etag: "" };
+        var s = Static { url: "/", file: "", ctype: "", etag: "", hashed: "" };
         s.url.append(r);
         s.file.append(full);
         s.ctype.append(content_type(name));
         s.etag = etag_of(data);
+        s.hashed = hashed_url(s.url, s.etag);
         statics.push(s);
     }
 }
@@ -603,10 +621,30 @@ fn template_tag(path: const u8[:], ln: i64, inner: const u8[:], line: const u8[:
     }
 }
 
-let GW_SCRIPT = "<script type=\"module\" src=\"/_gw/gwi.js\"></script>";
-
 fn script_tag(out: u8[>..]&) {
-    out.append("out.append(\""); lit(out, GW_SCRIPT); out.append("\"); ");
+    out.append("out.append(\"");
+    lit(out, "<script type=\"module\" src=\"/_gw/");
+    lit(out, rt_file);
+    lit(out, "\"></script>");
+    out.append("\"); ");
+}
+
+// The hashed URL is written at build time, so a missing file fails the build instead of 404ing.
+fn asset_call(path: const u8[:], ln: i64, args: const u8[:], out: u8[>..]&) {
+    if args.len < 2 || args[0] != '"' || args[args.len - 1] != '"' || find(args[1..args.len - 1], "\"") >= 0 || find(args, "\\") >= 0 {
+        err(path, ln, "@asset() takes one string literal, as in @asset(\"/css/site.css\")");
+        return;
+    }
+    let want = args[1..args.len - 1];
+    for s in statics {
+        if s.url == want {
+            out.append("out.append(\""); lit(out, s.hashed); out.append("\"); ");
+            return;
+        }
+    }
+    var m: u8[>..] = [];
+    format(m, "no public file at ", want, " (looked for public/", if want.len > 0 && want[0] == '/' { want[1..] } else { want }, ")");
+    err(path, ln, m);
 }
 
 fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:], kind: i64, in_frag: bool, out: u8[>..]&) {
@@ -615,6 +653,8 @@ fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:
         if args.len > 0 { err(path, ln, "@slot() takes no arguments"); }
         if kind == K_LAYOUT && tpl_script { script_tag(out); }
         out.append("F(); ");
+    } else if name == "asset" {
+        asset_call(path, ln, args, out);
     } else if name[0] >= 'A' && name[0] <= 'Z' && find(name, "::") < 0 {
         if in_frag {
             var m: u8[>..] = [];
@@ -1229,21 +1269,50 @@ fn gen_static(m: u8[>..]&) {
     if statics.len > 0 {
         m.append("    let p = req.path;\n    match p.len {\n");
         var lens: i64[>..] = [];
-        for s in statics { if !contains(lens, s.url.len) { lens.push(s.url.len); } }
+        for s in statics {
+            if !contains(lens, s.url.len) { lens.push(s.url.len); }
+            if !contains(lens, s.hashed.len) { lens.push(s.hashed.len); }
+        }
         sort(lens);
         for l in lens {
             format(m, "        ", l, " => {\n");
             for s, i in statics {
-                if s.url.len != l { continue; }
-                m.append("            if p == \""); lit(m, s.url);
-                format(m, "\" { return web::send_static(req, res, ", i, ", \"", s.ctype, "\", \""); lit(m, s.etag);
-                m.append("\"), true; }\n");
+                for hashed in [false, true] {
+                    var u: const u8[:] = s.url;
+                    if hashed { u = s.hashed; }
+                    if u.len != l { continue; }
+                    m.append("            if p == \""); lit(m, u);
+                    format(m, "\" { return web::send_static(req, res, ", i, ", -1, \"", s.ctype, "\", \""); lit(m, s.etag);
+                    format(m, "\", ", if hashed { "true" } else { "false" }, "), true; }\n");
+                }
             }
             m.append("        },\n");
         }
         m.append("        _ => {},\n    }\n");
     }
     m.append("    return -1, false;\n}\n");
+}
+
+// For URLs known only at run time; an unknown path comes back unchanged.
+fn gen_asset_url(m: u8[>..]&) {
+    m.append("fn web::asset_url(path: const u8[:]) -> const u8[:] {\n");
+    if statics.len > 0 {
+        m.append("    match path.len {\n");
+        var lens: i64[>..] = [];
+        for s in statics { if !contains(lens, s.url.len) { lens.push(s.url.len); } }
+        sort(lens);
+        for l in lens {
+            format(m, "        ", l, " => {\n");
+            for s in statics {
+                if s.url.len != l { continue; }
+                m.append("            if path == \""); lit(m, s.url);
+                m.append("\" { return \""); lit(m, s.hashed); m.append("\"; }\n");
+            }
+            m.append("        },\n");
+        }
+        m.append("        _ => {},\n    }\n");
+    }
+    m.append("    return path;\n}\n");
 }
 
 fn gen_finish(m: u8[>..]&) {
@@ -1288,6 +1357,7 @@ fn gen_main() -> u8[>..] {
     }
     m.append("\n");
     gen_static(m);
+    gen_asset_url(m);
     m.append("\n");
     for d, i in dirs {
         if d.route { gen_route_fn(m, d, i); }
@@ -1408,23 +1478,57 @@ fn check_version() {
 // ---------------------------------------------------------------- components
 
 fn push_gw_static(url: const u8[:], file: const u8[:], data: const u8[:]) {
-    var s = Static { url: "", file: "", ctype: "text/javascript; charset=utf-8", etag: "" };
+    var s = Static { url: "", file: "", ctype: "text/javascript; charset=utf-8", etag: "", hashed: "" };
     s.url.append(url);
     s.file.append(file);
     s.etag = etag_of(data);
+    s.hashed = hashed_url(s.url, s.etag);
     statics.push(s);
 }
 
-fn gen_runtime(dev: bool) {
+// Hashed before components and templates, which name the file; written only when something uses it.
+fn prepare_runtime(dev: bool) {
+    rt_js.clear();
+    runtime_js(!dev, rt_js);
+    rt_file.clear();
+    let e = etag_of(rt_js);
+    format(rt_file, "gwi.", e[1..9], ".js");
+}
+
+fn gen_runtime() {
     var gw_dir: u8[>..] = [];
     format(gw_dir, gen_root, "/_gw");
     make_dir(gw_dir);
-    var rt: u8[>..] = [];
-    runtime_js(!dev, rt);
     var js_path: u8[>..] = [];
     format(js_path, gw_dir, "/gwi.js");
-    write(js_path, rt);
-    push_gw_static("/_gw/gwi.js", js_path, rt);
+    write(js_path, rt_js);
+    push_gw_static("/_gw/gwi.js", js_path, rt_js);
+}
+
+// A hashed URL may not collide with another file's URLs or a literal route.
+fn check_hashed() {
+    for s, i in statics {
+        for o, k in statics {
+            if k == i { continue; }
+            var other: const u8[:] = "";
+            if s.hashed == o.url { other = o.url; }
+            else if k > i && s.hashed == o.hashed { other = o.hashed; }
+            if other.len == 0 { continue; }
+            var m: u8[>..] = [];
+            format(m, "this file's hashed URL ", s.hashed, " is taken by ", other);
+            err(s.file, 0, m);
+        }
+        for d in dirs {
+            if !d.route && !d.page_html { continue; }
+            var u: u8[>..] = [];
+            url_of(u, d.rel);
+            if s.hashed == u {
+                var m: u8[>..] = [];
+                format(m, "this file's hashed URL ", s.hashed, " is taken by ", u);
+                err(s.file, 0, m);
+            }
+        }
+    }
 }
 
 // gen goes on after translator errors, so the Goose compiler reports its errors too.
@@ -1447,7 +1551,7 @@ fn gen_components(dev: bool) {
         var g: u8[>..] = [];
         var j: u8[>..] = [];
         var e: u8[>..] = [];
-        if !component::compile(n, path, src, !dev, g, j, e) {
+        if !component::compile(n, path, src, !dev, rt_file, g, j, e) {
             write_stderr(e);
             note_errors(e);
             for c in e { if c == '\n' { component_errors += 1; } }
@@ -1478,6 +1582,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     component_errors = 0;
     uses_fragments = false;
     targets.clear();
+    prepare_runtime(dev);
     gen_components(dev);
     if is_dir("lib") { scan_lib_for_sqlite(); }
     if is_dir("lib") {
@@ -1566,7 +1671,8 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     }
     check_targets();
     if errors > 0 { return false; }
-    if component_names.len > 0 || uses_fragments { gen_runtime(dev); }
+    if component_names.len > 0 || uses_fragments { gen_runtime(); }
+    check_hashed();
     var main_file: u8[>..] = [];
     format(main_file, root, "/main.goose");
     write(main_file, gen_main());
@@ -1741,7 +1847,7 @@ fn test_cmd() -> bool {
             var g: u8[>..] = [];
             var j: u8[>..] = [];
             var e: u8[>..] = [];
-            component::compile(n, path, src, compact, g, j, e);
+            component::compile(n, path, src, compact, "gwi.js", g, j, e);
             p.clear();
             format(p, dir, "/", n, ".js");
             write(p, j);
@@ -1953,13 +2059,15 @@ fn print_routes() {
         write_stdout(line);
     }
     for s in statics {
-        var line: u8[>..] = [];
-        format(line, "  static GET");
-        while line.len < 30 { line.push(' '); }
-        format(line, s.url);
-        while line.len < 62 { line.push(' '); }
-        format(line, s.file, "\n");
-        write_stdout(line);
+        for hashed in [false, true] {
+            var line: u8[>..] = [];
+            format(line, "  static GET");
+            while line.len < 30 { line.push(' '); }
+            if hashed { format(line, s.hashed); } else { format(line, s.url); }
+            while line.len < 62 { line.push(' '); }
+            format(line, s.file, "\n");
+            write_stdout(line);
+        }
     }
 }
 

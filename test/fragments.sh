@@ -67,7 +67,7 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     req list GET / -H 'GW-Fragment: list' -H "Cookie: gw_csrf=$TK"
     check "$([ "$(status list)" = 200 ] && has_header list 'gw-fragment: list' && echo ok)" "fragment list: 200 and the GW-Fragment echo"
     check "$(has_header list 'cache-control: no-store' && echo ok)" "fragment list: Cache-Control: no-store"
-    check "$(! body_has list '__gweb/id' && ! body_has list '<html' && ! body_has list 'gwi.js' && echo ok)" "fragment list: no dev script, no layout, no runtime tag"
+    check "$(! body_has list '__gweb/id' && ! body_has list '<html' && ! body_has list '/_gw/gwi.' && echo ok)" "fragment list: no dev script, no layout, no runtime tag"
     check "$(substring list whole && echo ok)" "fragment list: its bytes are a substring of the whole page"
     check "$(body_has whole '__gweb/id' && echo ok)" "the whole page has the dev script"
     check "$(body_has list '<form method="post" action="/" gw-target="list">' && ! body_has list 'whole page only' && echo ok)" "fragment list: the region and nothing else"
@@ -106,13 +106,18 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     req miss GET /nowhere -H 'GW-Fragment: list'
     check "$([ "$(status miss)" = 404 ] && ! has_header miss 'gw-fragment' && echo ok)" "a missing page with the header: 404, no echo"
 
+    # The runtime's hash depends on the bytes of client/gwi.min.js, so the tests read the name from the page.
+    GWI=$(grep -o '/_gw/gwi\.[0-9a-f]\{8\}\.js' "$WORK/whole.b" | head -1)
+    check "$([ -n "$GWI" ] && echo ok)" "GET /: the runtime tag names /_gw/gwi.<8 hex>.js"
     # The script tag: once for each template that has a gw-target.
-    check "$([ "$(body_count whole 'src="/_gw/gwi.js"')" = 2 ] && echo ok)" "GET /: the runtime tag twice (layout and page)"
+    check "$([ "$(body_count whole "src=\"$GWI\"")" = 2 ] && echo ok)" "GET /: the runtime tag twice (layout and page)"
     req plain GET /plain
-    check "$([ "$(body_count plain 'src="/_gw/gwi.js"')" = 1 ] && echo ok)" "GET /plain: the runtime tag once (layout only)"
-    check "$(body_has whole '<script type="module" src="/_gw/gwi.js"></script><h1>Fragments</h1>' && echo ok)" "the page's tag comes first in the page"
+    check "$([ "$(body_count plain "src=\"$GWI\"")" = 1 ] && echo ok)" "GET /plain: the runtime tag once (layout only)"
+    check "$(body_has whole "<script type=\"module\" src=\"$GWI\"></script><h1>Fragments</h1>" && echo ok)" "the page's tag comes first in the page"
     req rt GET /_gw/gwi.js
-    check "$([ "$(status rt)" = 200 ] && has_header rt 'content-type: text/javascript' && echo ok)" "a project with no component serves /_gw/gwi.js"
+    check "$([ "$(status rt)" = 200 ] && has_header rt 'content-type: text/javascript' && has_header rt 'cache-control: public, max-age=0, must-revalidate' && echo ok)" "a project with no component serves /_gw/gwi.js, revalidating"
+    req rth GET "$GWI"
+    check "$([ "$(status rth)" = 200 ] && has_header rth 'cache-control: public, max-age=31536000, immutable' && cmp -s "$WORK/rt.b" "$WORK/rth.b" && echo ok)" "the hashed runtime URL serves the same bytes, immutable"
     check "$([ ! -d "$WORK/ok/components" ] && echo ok)" "the site has no components folder"
 
     req tk0 GET /
