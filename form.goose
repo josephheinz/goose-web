@@ -47,9 +47,3 @@ fn fragment_reply(req: const http::Request&, ctx: Ctx&, res: http::Response&) {
     http::set_header(res, "GW-Fragment", fragment(req));
     no_store(res);
 }
-
-// True for Sec-Fetch-Site: cross-site; generated page code refuses such a POST.
-fn cross_site(req: const http::Request&) -> bool {
-    let v, has = http::header(req, "sec-fetch-site");
-    return has && trim(v) == "cross-site";
-}

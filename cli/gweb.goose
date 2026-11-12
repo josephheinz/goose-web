@@ -35,7 +35,8 @@ struct Dir {
     has_load: bool, has_before: bool, has_after: bool,
     has_post: bool,
     frags: u8[..600],      // the page's fragment names, space-separated
-    route_ns: u8[..200], page_ns: u8[..200], layout_ns: u8[..32], mw_ns: u8[..32]
+    route_ns: u8[..200], page_ns: u8[..200], layout_ns: u8[..32], mw_ns: u8[..32],
+    page_csrf: bool = false, layout_csrf: bool = false, csrf_const: bool = false   // csrf_const: route.goose declares const CSRF
 }
 
 struct Static { url: u8[..512], file: u8[..512], ctype: u8[..64], etag: u8[..24] }
@@ -56,6 +57,7 @@ var errors = 0;
 var has_state = false;
 var has_state_init = false;
 var has_not_found = false;
+var not_found_csrf = false;
 var uses_sqlite = false;
 var map_text: u8[>..];
 var component_names: u8[..64][>..<];
@@ -122,6 +124,22 @@ fn defines(src: const u8[:], name: const u8[:]) -> bool {
     format(pat, "fn ", name, "(");
     for line in split(src, '\n') { if starts_with(trim_start(line), pat) { return true; } }
     return false;
+}
+
+fn mentions_csrf(src: const u8[:]) -> bool { find(src, "web::csrf_") >= 0 }
+
+// True when code declares const CSRF in route.goose; reports a malformed declaration, or any in a page.goose.
+fn csrf_const(path: const u8[:], code: const u8[:], route: bool) -> bool {
+    var found = false;
+    for line, i in split(code, '\n') {
+        let t = trim_start(line);
+        if !starts_with(t, "const CSRF") { continue; }
+        if t.len > 10 && (is_ident(t[10..11]) || (t[10] >= '0' && t[10] <= '9')) { continue; }
+        if !route { err(path, i + 1, "const CSRF belongs in route.goose; a page's POST always checks the token"); return false; }
+        if starts_with(t, "const CSRF = false;") || starts_with(t, "const CSRF = true;") { found = true; }
+        else { err(path, i + 1, "write const CSRF = false; to turn off this route's CSRF check (or const CSRF = true;)"); }
+    }
+    return found;
 }
 
 fn read(path: const u8[:], out: u8[>..]&) -> bool {
@@ -933,6 +951,8 @@ fn gen_route_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     var allow: u8[>..] = [];
     allow_list(d, allow);
     format(m, "fn route_", i, SIG, " {   // app/", d.rel, if d.rel.len > 0 { "/" } else { "" }, "route.goose\n");
+    if d.csrf_const { format(m, "    if ", d.route_ns, "::CSRF && !web::csrf_ok(req, res) { return; }\n"); }
+    else if d.methods & 0x3c != 0 { m.append("    if !web::csrf_ok(req, res) { return; }\n"); }
     middleware_before(m, d);
     m.append("    match req.method {\n");
     for k in 7 {
@@ -969,6 +989,13 @@ fn gen_page_reply(m: u8[>..]&, d: const Dir&, props: bool, indent: const u8[:]) 
     format(m, "\n", indent, "}\n");
 }
 
+// True when the page, or a layout around it, writes web::csrf_ fields.
+fn starts_token(d: const Dir&) -> bool {
+    if d.page_csrf { return true; }
+    for o in dirs { if o.layout && o.layout_csrf && is_ancestor(o.rel, d.rel) { return true; } }
+    return false;
+}
+
 fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     let allow = if d.has_post { "GET, HEAD, POST, OPTIONS" } else { "GET, HEAD, OPTIONS" };
     format(m, "fn page_", i, SIG, " {   // app/", d.rel, if d.rel.len > 0 { "/" } else { "" }, "page.html\n");
@@ -977,8 +1004,10 @@ fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     format(m, "        Options => { web::options(res, \"", allow, "\"); return; },\n");
     format(m, "        _ => { web::method_not_allowed(res, \"", allow, "\"); return; },\n");
     m.append("    }\n");
+    if d.has_post { m.append("    if !web::csrf_ok(req, res) { return; }\n"); }
     middleware_before(m, d);
     m.append("    web::html(res, http::Status.Ok);\n");
+    if starts_token(d) { m.append("    if !web::csrf_begin(req, ctx, res) { return; }\n"); }
     if d.frags.len > 0 {
         m.append("    let part = web::fragment_index(req, [");
         for n, k in split(d.frags, ' ') { if k > 0 { m.append(", "); } format(m, "\"", n, "\""); }
@@ -986,7 +1015,6 @@ fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     }
     if d.has_post {
         m.append("    if req.method == http::Method.Post {\n");
-        m.append("        if web::cross_site(req) { http::text(res, http::Status.Forbidden, \"cross-site POST refused\\n\"); return; }\n");
         format(m, "        let props = ", d.page_ns, "::POST(req, ctx);\n");
         gen_page_reply(m, d, true, "        ");
         m.append("    } else {\n");
@@ -1106,8 +1134,13 @@ fn gen_finish(m: u8[>..]&) {
         m.append("            ctx.title.clear();\n            res.body.clear();\n            web::html(res, http::Status.NotFound);\n");
         var root_layout: u8[>..] = [];
         for d in dirs { if d.rel.len == 0 && d.layout { root_layout.append(d.layout_ns); } }
-        if root_layout.len > 0 { format(m, "            ", root_layout, "::render(res.body, req, ctx) { nf::render(res.body, req, ctx); };\n"); }
-        else { m.append("            nf::render(res.body, req, ctx);\n"); }
+        var root_csrf = not_found_csrf;
+        for d in dirs { if d.rel.len == 0 && d.layout && d.layout_csrf { root_csrf = true; } }
+        m.append("            ");
+        if root_csrf { m.append("if web::csrf_begin(req, ctx, res) { "); }
+        if root_layout.len > 0 { format(m, root_layout, "::render(res.body, req, ctx) { nf::render(res.body, req, ctx); };"); }
+        else { m.append("nf::render(res.body, req, ctx);"); }
+        m.append(if root_csrf { " }\n" } else { "\n" });
     } else {
         m.append("            res.body.clear();\n            web::plain_not_found(res);\n");
     }
@@ -1121,7 +1154,7 @@ fn gen_main() -> u8[>..] {
     m.append("import web from \""); lit(m, pkg_source(0)); m.append("\";\n");
     m.append("import net from \""); lit(m, pkg_source(1)); m.append("\";\n");
     if uses_sqlite { m.append("import sqlite from \""); lit(m, pkg_source(2)); m.append("\";\n"); }
-    m.append("import net.http;\nimport web.template;\nimport web.static;\nimport web.owner;\nimport web.form;\n");
+    m.append("import net.http;\nimport web.template;\nimport web.static;\nimport web.owner;\nimport web.form;\nimport web.csrf;\n");
     for d in dirs {
         if d.route { format(m, "import ", d.route_ns, ";\n"); }
         if d.page_html { format(m, "import ", d.page_ns, "_html;\n"); if d.page_goose { format(m, "import ", d.page_ns, ";\n"); } }
@@ -1328,6 +1361,7 @@ fn gen(dev: bool) -> bool {
             var code: u8[>..] = [];
             if copy_prefixed(src, d.route_ns, code) {
                 for k in 7 { if defines(code, METHODS[k]) { d.methods |= 1 << k; } }
+                d.csrf_const = csrf_const(src, code, true);
                 if d.methods == 0 { err(src, 0, "route.goose defines none of fn GET(, POST(, PUT(, PATCH(, DELETE(, HEAD(, OPTIONS("); }
             }
         }
@@ -1346,6 +1380,8 @@ fn gen(dev: bool) -> bool {
             app_path(src, d.rel, "layout.html");
             var imports: u8[>..] = [];
             var frags: u8[>..] = [];
+            var text: u8[>..] = [];
+            if read_file(src, text) { d.layout_csrf = mentions_csrf(text); }
             add_default_imports(imports);
             gen_template(src, d.layout_ns, d.layout_ns,
                          "fn render<F>(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&)", imports, K_LAYOUT, -1, frags);
@@ -1360,12 +1396,16 @@ fn gen(dev: bool) -> bool {
                     d.has_load = defines(code, "load");
                     d.has_post = defines(code, "POST");
                     if d.has_post && !d.has_load { err(src, 0, "fn POST( needs fn load( beside it"); }
+                    csrf_const(src, code, false);
+                    if mentions_csrf(code) { d.page_csrf = true; }
                     imports_of(code, imports);
                 }
             }
             add_default_imports(imports);
             var src: u8[>..] = [];
             app_path(src, d.rel, "page.html");
+            var html: u8[>..] = [];
+            if read_file(src, html) && mentions_csrf(html) { d.page_csrf = true; }
             var base: u8[>..] = [];
             format(base, d.page_ns, "_html");
             let sig = if d.has_load { "fn render<P>(out: u8[>..]&, req: const http::Request&, ctx: const web::Ctx&, props: const P&)" }
@@ -1375,7 +1415,10 @@ fn gen(dev: bool) -> bool {
             d.frags.append(frags);
         }
     }
+    not_found_csrf = false;
     if has_not_found {
+        var text: u8[>..] = [];
+        if read_file("app/not-found.html", text) { not_found_csrf = mentions_csrf(text); }
         var imports: u8[>..] = [];
         add_default_imports(imports);
         var frags: u8[>..] = [];

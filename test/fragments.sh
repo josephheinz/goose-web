@@ -19,6 +19,7 @@ GWEB="$ROOT/gweb"
 PORT=${PORT:-3991}
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/gweb-fragments.XXXXXX")
 PID=""
+TK=0123456789abcdef0123456789abcdef
 cleanup() {
   [ -n "$PID" ] && kill "$PID" 2>/dev/null
   rm -rf "$WORK"
@@ -60,10 +61,10 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
   if [ -z "$up" ]; then
     bad "the server did not answer on port $PORT"
   else
-    req whole GET /
+    req whole GET / -H "Cookie: gw_csrf=$TK"
     check "$([ "$(status whole)" = 200 ] && body_has whole '<html' && body_has whole '__gweb/id' && ! has_header whole 'gw-fragment' && echo ok)" "GET /: 200, the whole page with the dev script, no echo"
 
-    req list GET / -H 'GW-Fragment: list'
+    req list GET / -H 'GW-Fragment: list' -H "Cookie: gw_csrf=$TK"
     check "$([ "$(status list)" = 200 ] && has_header list 'gw-fragment: list' && echo ok)" "fragment list: 200 and the GW-Fragment echo"
     check "$(has_header list 'cache-control: no-store' && echo ok)" "fragment list: Cache-Control: no-store"
     check "$(! body_has list '__gweb/id' && ! body_has list '<html' && ! body_has list 'gwi.js' && echo ok)" "fragment list: no dev script, no layout, no runtime tag"
@@ -71,29 +72,29 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     check "$(body_has whole '__gweb/id' && echo ok)" "the whole page has the dev script"
     check "$(body_has list '<form method="post" action="/" gw-target="list">' && ! body_has list 'whole page only' && echo ok)" "fragment list: the region and nothing else"
 
-    req side GET / -H 'GW-Fragment: side'
+    req side GET / -H 'GW-Fragment: side' -H "Cookie: gw_csrf=$TK"
     check "$([ "$(cat "$WORK/side.b")" = '<b>7</b>' ] && has_header side 'gw-fragment: side' && substring side whole && echo ok)" "fragment side (the second): exactly its region"
 
-    req nope GET / -H 'GW-Fragment: nope'
+    req nope GET / -H 'GW-Fragment: nope' -H "Cookie: gw_csrf=$TK"
     check "$([ "$(status nope)" = 200 ] && cmp -s "$WORK/nope.b" "$WORK/whole.b" && ! has_header nope 'gw-fragment' && echo ok)" "an unknown fragment name: the whole page, no echo"
 
-    req pf POST / -H 'GW-Fragment: list' -d 'title=hello'
+    req pf POST / -H 'GW-Fragment: list' -H "Cookie: gw_csrf=$TK" -d 'title=hello&_csrf='"$TK"
     check "$([ "$(status pf)" = 200 ] && has_header pf 'gw-fragment: list' && body_has pf 'hello' && ! body_has pf '<html' && echo ok)" "POST with the header: a fragment"
-    req pw POST / -d 'title=hello'
+    req pw POST / -H "Cookie: gw_csrf=$TK" -d 'title=hello&_csrf='"$TK"
     check "$([ "$(status pw)" = 200 ] && body_has pw '<html' && body_has pw 'hello' && ! has_header pw 'gw-fragment' && echo ok)" "POST without the header: the whole page"
-    req dec POST / -H 'GW-Fragment: list' -d 'title=a+b%26c%3Cd%C3%A9x%25'
+    req dec POST / -H 'GW-Fragment: list' -H "Cookie: gw_csrf=$TK" -d 'title=a+b%26c%3Cd%C3%A9x%25&_csrf='"$TK"
     check "$(body_has dec 'a b&amp;c&lt;dé' && body_has dec 'x%' && echo ok)" "web::form decodes +, %26, %3C, UTF-8 and %25"
-    req xs POST / -H 'GW-Fragment: list' -H 'Sec-Fetch-Site: cross-site' -d 'title=hello'
-    check "$([ "$(status xs)" = 403 ] && ! body_has xs 'hello' && echo ok)" "Sec-Fetch-Site: cross-site gives 403"
-    req ss POST / -H 'GW-Fragment: list' -H 'Sec-Fetch-Site: same-origin' -d 'title=hello'
+    req xs POST / -H 'GW-Fragment: list' -H 'Sec-Fetch-Site: cross-site' -H "Cookie: gw_csrf=$TK" -d 'title=hello&_csrf='"$TK"
+    check "$([ "$(status xs)" = 403 ] && ! body_has xs 'hello' && body_has xs 'cross-site request refused' && echo ok)" "Sec-Fetch-Site: cross-site gives 403"
+    req ss POST / -H 'GW-Fragment: list' -H 'Sec-Fetch-Site: same-origin' -H "Cookie: gw_csrf=$TK" -d 'title=hello&_csrf='"$TK"
     check "$([ "$(status ss)" = 200 ] && echo ok)" "Sec-Fetch-Site: same-origin is allowed"
     req put PUT /
     check "$([ "$(status put)" = 405 ] && has_header put 'allow: get, head, post, options' && echo ok)" "PUT gives 405 with Allow: GET, HEAD, POST, OPTIONS"
     req opt OPTIONS /
     check "$(has_header opt 'allow: get, head, post, options' && echo ok)" "OPTIONS lists POST"
-    req r303 POST / -H 'GW-Fragment: list' -d 'go=1'
+    req r303 POST / -H 'GW-Fragment: list' -H "Cookie: gw_csrf=$TK" -d 'go=1&_csrf='"$TK"
     check "$([ "$(status r303)" = 303 ] && has_header r303 'location: /other' && ! has_header r303 'gw-fragment' && echo ok)" "a 303 from POST passes through"
-    req r303b POST / -d 'go=1'
+    req r303b POST / -H "Cookie: gw_csrf=$TK" -d 'go=1&_csrf='"$TK"
     check "$([ "$(status r303b)" = 303 ] && has_header r303b 'location: /other' && echo ok)" "a 303 from POST without the header passes through"
     req plainpost POST /plain -d 'a=1'
     check "$([ "$(status plainpost)" = 405 ] && has_header plainpost 'allow: get, head, options' && echo ok)" "a page without POST still answers 405 to POST"
@@ -113,6 +114,28 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     req rt GET /_gw/gwi.js
     check "$([ "$(status rt)" = 200 ] && has_header rt 'content-type: text/javascript' && echo ok)" "a project with no component serves /_gw/gwi.js"
     check "$([ ! -d "$WORK/ok/components" ] && echo ok)" "the site has no components folder"
+
+    req tk0 GET /
+    check "$([ "$(grep -c '^set-cookie: gw_csrf=[0-9a-f]\{32\}; path=/; httponly; samesite=lax$' "$WORK/tk0.h")" = 1 ] && [ "$(grep -c '^set-cookie:' "$WORK/tk0.h")" = 1 ] && has_header tk0 'cache-control: no-store' && body_has tk0 'name="_csrf" value="' && echo ok)" "GET / without a cookie: one gw_csrf cookie, no-store, a _csrf field"
+    req tk1 GET / -H "Cookie: gw_csrf=$TK"
+    check "$(! has_header tk1 'set-cookie' && body_has tk1 "value=\"$TK\"" && echo ok)" "GET / with the cookie: no Set-Cookie, the same token in the field"
+    req tk2 GET /plain
+    check "$(! has_header tk2 'set-cookie' && ! has_header tk2 'cache-control' && echo ok)" "GET /plain: no Set-Cookie, no Cache-Control"
+    req tk3 POST / -d 'title=hello'
+    check "$([ "$(status tk3)" = 403 ] && body_has tk3 'CSRF token missing or wrong' && echo ok)" "POST / without a token: 403 and the message"
+    req tk4 POST / -H "Cookie: gw_csrf=$TK" -d '_csrf=0123456789abcdef0123456789abcdee'
+    check "$([ "$(status tk4)" = 403 ] && echo ok)" "POST / with a token one digit off: 403"
+    req tk5 POST / -H "Cookie: gw_csrf=$TK" -H "X-CSRF-Token: $TK" -d 'title=hello'
+    check "$([ "$(status tk5)" = 200 ] && echo ok)" "POST / with the X-CSRF-Token header and no field: 200"
+    req tk6 POST / -H "Cookie: gw_csrf=$TK" -H 'Sec-Fetch-Site: same-site' -d "_csrf=$TK"
+    check "$([ "$(status tk6)" = 403 ] && body_has tk6 'cross-site request refused' && echo ok)" "Sec-Fetch-Site: same-site gives 403 with a good token"
+    req tk7 POST /save
+    check "$([ "$(status tk7)" = 403 ] && echo ok)" "POST /save without a token: 403"
+    req tk8 POST /save -H "Cookie: gw_csrf=$TK" -H "X-CSRF-Token: $TK"
+    check "$([ "$(status tk8)" = 200 ] && body_has tk8 'saved' && echo ok)" "POST /save with the cookie and header: 200"
+    req tk9 POST /webhook -H 'Sec-Fetch-Site: cross-site'
+    check "$([ "$(status tk9)" = 200 ] && body_has tk9 'hook' && echo ok)" "POST /webhook (const CSRF = false) with no token, cross-site: 200"
+    check "$(grep -qF '::CSRF && !web::csrf_ok(req, res)' "$WORK/ok/.gooseweb/main.goose" && echo ok)" "the generated main checks the CSRF constant"
   fi
   kill "$PID" 2>/dev/null
   wait "$PID" 2>/dev/null
@@ -206,6 +229,9 @@ expect_fail $P '<a href="/api" gw-target="a">x</a>' 2 "gw-target: /api is a rout
 expect_fail $P '<a href="/plain" gw-target="a">x</a>' 2 "gw-target: app/plain/page.html has no {#fragment a}"
 expect_fail $P '<a href="?x" gw-target="a">x</a>' 2 "gw-target: app/page.html has no {#fragment a}"
 expect_fail $P '<form method="post" action="/other" gw-target="a">x</form>' 2 'gw-target: method="post" needs fn POST( in app/other/page.goose'
+# CSRF constant (DESIGN-ADDENDUM-7).
+expect_fail bare:app/api/route.goose 'const CSRF = 0;' 1 "write const CSRF = false; to turn off this route's CSRF check (or const CSRF = true;)"
+expect_fail bare:app/page.goose 'const CSRF = false;' 1 "const CSRF belongs in route.goose; a page's POST always checks the token"
 
 # 3. gweb routes.
 routes=$("$GWEB" -C "$HERE/fragments/site" routes 2>&1)
