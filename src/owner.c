@@ -3,6 +3,7 @@
 #include "goose.h"
 
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -17,8 +18,10 @@ typedef struct {
     int n;
     int *owner;     /* owner's end of pair i */
     int *worker;    /* worker's end of pair i */
-    struct pollfd *pfds;
+    struct pollfd *pfds;    /* n channels, then the quit pipe's read end */
     int next;
+    int quit[2];            /* a byte is written when every user has left */
+    atomic_int left;
 } gweb_chans;
 
 static int write_all(int fd, const uint8_t *p, size_t len) {
@@ -46,7 +49,8 @@ uint64_t gweb_chans_new(int32_t n) {
     c->n = n;
     c->owner = calloc((size_t)n, sizeof(int));
     c->worker = calloc((size_t)n, sizeof(int));
-    c->pfds = calloc((size_t)n, sizeof(struct pollfd));
+    c->pfds = calloc((size_t)n + 1, sizeof(struct pollfd));
+    if (!c->owner || !c->worker || !c->pfds || pipe(c->quit) < 0) return 0;
     for (int i = 0; i < n; i++) {
         int sv[2];
         if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) return 0;
@@ -92,12 +96,25 @@ void gweb_set_recv_timeout(int32_t fd, int64_t ms) {
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
 }
 
-/* Blocks for the next request from any worker, round robin. Returns the worker index, or -1 on an error. */
+/* Each user of a channel (a worker or a job runner, and its supervisor) calls this once when it is done for good.
+   After the n-th call gweb_owner_next, once it has served every frame still pending, returns -3. */
+void gweb_chans_leave(uint64_t h) {
+    gweb_chans *c = (gweb_chans *)(uintptr_t)h;
+    if (!c) return;
+    if (atomic_fetch_add(&c->left, 1) + 1 == c->n) {
+        uint8_t b = 1;
+        while (write(c->quit[1], &b, 1) < 0 && errno == EINTR) {}
+    }
+}
+
+/* Blocks for the next request from any worker, round robin. Returns the worker index, -1 on an error,
+   or -3 once every user has left and no frame is pending. */
 int32_t gweb_owner_next(uint64_t h, gs_rref out) {
     gweb_chans *c = (gweb_chans *)(uintptr_t)h;
     for (;;) {
         for (int i = 0; i < c->n; i++) c->pfds[i] = (struct pollfd){ c->owner[i], POLLIN, 0 };
-        int r = poll(c->pfds, (nfds_t)c->n, -1);
+        c->pfds[c->n] = (struct pollfd){ c->quit[0], POLLIN, 0 };
+        int r = poll(c->pfds, (nfds_t)c->n + 1, -1);
         if (r < 0) { if (errno == EINTR) continue; return -1; }
         for (int k = 0; k < c->n; k++) {
             int i = (c->next + k) % c->n;
@@ -109,6 +126,7 @@ int32_t gweb_owner_next(uint64_t h, gs_rref out) {
                 c->owner[i] = -1;
             }
         }
+        if (c->pfds[c->n].revents & POLLIN) return -3;
     }
 }
 

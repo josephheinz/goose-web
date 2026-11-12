@@ -7,6 +7,7 @@ import std;
 import os;
 import net;   // the root file declares it: import net from "OWNER/goose-net@<tag>";
 import net.http;
+import net.lifecycle;
 import json;
 
 // ---------------------------------------------------------------- types
@@ -15,6 +16,8 @@ struct Params { n: i64, names: u8[..32][8], values: u8[..256][8],
                 rest_name: u8[..32] = "", rest: u8[..1024] = "" }   // the catch-all tail has its own, larger field
 
 enum Outcome { Continue, NotFound, Redirect }
+
+enum Level { Debug, Info, Warn, Error }
 
 // Ctx holds no references or slices, so a handler may shrink res while it still reads req and ctx.
 struct Ctx {
@@ -27,11 +30,25 @@ struct Ctx {
     redirect_status: i64,
     location: u8[..1024],
     title: u8[..256],
-    set_cookies: u8[..2048]   // pending Set-Cookie lines; run_worker moves them to res
+    set_cookies: u8[..2048],  // pending Set-Cookie lines; run_worker moves them to res
+    route: i64 = -1,          // the dispatcher sets the route's index (its position in ROUTES) before it calls the handler
+    request_id: u8[..64] = "",    // set when the access log or tracing is on
+    trace_id: u8[..32] = "",      // set when tracing is on; sampled or not
+    span_id: u8[..16] = "",       // the current span: the request's, or the innermost open web::span
+    parent_span: u8[..16] = "",   // the caller's span from a traceparent header
+    sampled: bool = false,
+    start_us: i64 = 0,            // monotonic; 0 when nothing needed the time
+    job_id: i64 = 0,              // set in a job runner's ctx
+    attempt: i64 = 0
 }
 
 struct Config { port: i64, host: u8[..64], workers: i64, log: bool, idle_ms: i64, max_body: i64,
-                dev_id: i64 }   // 0 = off
+                dev_id: i64,            // 0 = off
+                drain_ms: i64, drain_delay_ms: i64,
+                log_format: u8[..8], log_level: u8[..8],   // "text" or "json"; "debug", "info", "warn" or "error"
+                metrics: bool, job_runners: i64, job_queue: i64, job_attempts: i64,
+                schedule: bool,         // false: jobs run, but no schedule fires
+                probe: bool }           // --probe: config_from_args answers it and exits
 
 fn no_params() -> Params { Params { n: 0, names: [""; 8], values: [""; 8] } }
 
@@ -318,23 +335,69 @@ fn default_workers() -> i64 {
 
 fn default_config() -> Config {
     Config { port: 3000, host: "0.0.0.0", workers: default_workers(), log: false,
-             idle_ms: 5000, max_body: 1048576, dev_id: 0 }
+             idle_ms: 5000, max_body: 1048576, dev_id: 0,
+             drain_ms: 10000, drain_delay_ms: 0, log_format: "text", log_level: "info",
+             metrics: false, job_runners: 1, job_queue: 10000, job_attempts: 5, schedule: true, probe: false }
 }
 
-// Reads --port N, --host H, --workers N, --log, --idle-ms N, --max-body N,
-// and the PORT and WEB_WORKERS environment variables (flags win).
+fn env_int(name: const u8[:]) -> i64, bool {
+    var e: u8[>..] = [];
+    if !env(name, e) { return 0, false; }
+    return parse_int(trim(e));
+}
+
+fn valid_log_level(s: const u8[:]) -> bool { s == "debug" || s == "info" || s == "warn" || s == "error" }
+
+fn valid_log_format(s: const u8[:]) -> bool { s == "text" || s == "json" }
+
+// config_from(args()), then --probe: GET http://127.0.0.1:PORT/__gweb/ready; exit 0 on 200, else 1.
 fn config_from_args() -> Config {
+    let cfg = config_from(args());
+    if cfg.probe { exit(probe(cfg.port)); }
+    return cfg;
+}
+
+fn probe(port: i64) -> i64 {
+    var url: u8[>..] = [];
+    format(url, "http://127.0.0.1:", port, "/__gweb/ready");
+    var body: u8[>..] = [];
+    let status, ok = http::get(url, body);
+    return if ok && http::code(status) == 200 { 0 } else { 1 };
+}
+
+// Reads --port N, --host H, --workers N, --log, --idle-ms N, --max-body N, --drain-ms N, --drain-delay-ms N,
+// --log-format text|json, --log-level debug|info|warn|error, --metrics, --job-runners N, --job-queue N,
+// --job-attempts N, --no-schedule, --probe, and the environment: PORT, WEB_WORKERS, GWEB_DRAIN_MS,
+// GWEB_DRAIN_DELAY_MS, GWEB_LOG_FORMAT, GWEB_LOG_LEVEL, GWEB_METRICS=1, GWEB_JOB_RUNNERS, GWEB_SCHEDULE=0 (flags win).
+// a[0] is the program name. Exits with 2 on a bad flag.
+fn config_from(a: const u8[:][:]) -> Config {
     var cfg = default_config();
     var e: u8[>..] = [];
     if env("PORT", e) { let p, ok = parse_int(trim(e)); if ok { cfg.port = p; } }
     e.clear();
     if env("WEB_WORKERS", e) { let w, ok = parse_int(trim(e)); if ok && w > 0 { cfg.workers = w; } }
-    let a = args();
+    let drain, has_drain = env_int("GWEB_DRAIN_MS");
+    if has_drain && drain >= 0 { cfg.drain_ms = drain; }
+    let delay, has_delay = env_int("GWEB_DRAIN_DELAY_MS");
+    if has_delay && delay >= 0 { cfg.drain_delay_ms = delay; }
+    let runners, has_runners = env_int("GWEB_JOB_RUNNERS");
+    if has_runners && runners >= 0 { cfg.job_runners = runners; }
+    e.clear();
+    if env("GWEB_LOG_FORMAT", e) && valid_log_format(trim(e)) { cfg.log_format.clear(); cfg.log_format.append(trim(e)); }
+    e.clear();
+    if env("GWEB_LOG_LEVEL", e) && valid_log_level(trim(e)) { cfg.log_level.clear(); cfg.log_level.append(trim(e)); }
+    e.clear();
+    if env("GWEB_METRICS", e) && trim(e) == "1" { cfg.metrics = true; }
+    e.clear();
+    if env("GWEB_SCHEDULE", e) && trim(e) == "0" { cfg.schedule = false; }
     var i = 1;
     while i < a.len {
         let flag = a[i];
         let has_value = i + 1 < a.len;
         if flag == "--log" { cfg.log = true; i += 1; continue; }
+        if flag == "--metrics" { cfg.metrics = true; i += 1; continue; }
+        if flag == "--no-schedule" { cfg.schedule = false; i += 1; continue; }
+        if flag == "--probe" { cfg.probe = true; i += 1; continue; }
         if has_value {
             let v = a[i + 1];
             let n, ok = parse_int(v);
@@ -343,10 +406,17 @@ fn config_from_args() -> Config {
             if flag == "--idle-ms" && ok { cfg.idle_ms = n; i += 2; continue; }
             if flag == "--max-body" && ok { cfg.max_body = n; i += 2; continue; }
             if flag == "--dev-id" && ok { cfg.dev_id = n; i += 2; continue; }
+            if flag == "--drain-ms" && ok && n >= 0 { cfg.drain_ms = n; i += 2; continue; }
+            if flag == "--drain-delay-ms" && ok && n >= 0 { cfg.drain_delay_ms = n; i += 2; continue; }
+            if flag == "--job-runners" && ok && n >= 0 { cfg.job_runners = n; i += 2; continue; }
+            if flag == "--job-queue" && ok && n > 0 { cfg.job_queue = n; i += 2; continue; }
+            if flag == "--job-attempts" && ok && n > 0 { cfg.job_attempts = n; i += 2; continue; }
+            if flag == "--log-format" && valid_log_format(v) { cfg.log_format.clear(); cfg.log_format.append(v); i += 2; continue; }
+            if flag == "--log-level" && valid_log_level(v) { cfg.log_level.clear(); cfg.log_level.append(v); i += 2; continue; }
             if flag == "--host" { cfg.host.clear(); cfg.host.append(v[..min(v.len, 64)]); i += 2; continue; }
         }
         print("unknown or incomplete flag: ", flag);
-        print("flags: --port N --host H --workers N --log --idle-ms N --max-body N (--dev-id N: gweb dev only)");
+        print("flags: --port N --host H --workers N --log --idle-ms N --max-body N --drain-ms N --drain-delay-ms N --log-format text|json --log-level debug|info|warn|error --metrics --job-runners N --job-queue N --job-attempts N --no-schedule --probe (--dev-id N: gweb dev only)");
         exit(2);
     }
     return cfg;
@@ -354,21 +424,30 @@ fn config_from_args() -> Config {
 
 // ---------------------------------------------------------------- the worker loop
 
-// D, the generated dispatcher, returns the index of a static file to send, or -1; S gives its bytes, sent without a copy. Never returns.
-fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) {
+// D, the generated dispatcher, returns the index of a static file to send, or -1; S gives its bytes, sent without a copy.
+// routes is the route patterns joined by newlines, in the order of the indexes D puts in ctx.route; it names the
+// route in the access log and in spans. Returns when the process is stopping and this worker has drained.
+fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config, routes: const u8[:] = "") {
     // One worker takes every waiting connection per pass; several take one each, so a burst spreads.
     let lp = net::connection_loop(server, cfg.idle_ms, cfg.max_body, if cfg.workers == 1 { 0 } else { 1 });
+    let tracing = c_otel_on() != 0;
+    let json_log = cfg.log_format == "json";
+    let timed = cfg.log || cfg.metrics || tracing;
+    let want_id = cfg.log || tracing;
     var raw: u8[>..] = [];
     loop {
         raw.clear();
         let conn, ev = lp.next(raw);
+        if cfg.metrics { c_metrics_conn(slot as i32, lp.open_connections()); }
         var res = http::new_response();
         match ev {
             Request => {
+                let t0 = if timed { c_now_us() } else { 0 };
                 let req, parsed = http::parse_request(raw);
+                var ctx = new_ctx(slot, owner_fd);
                 var keep = false;
                 var static_index = -1;
-                var dev_request = false;
+                var internal = false;   // answered here: not logged, not counted
                 match parsed {
                     Ready => {
                         keep = http::wants_keep_alive(req);
@@ -376,15 +455,33 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                         let get_like = req.method == http::Method.Get || req.method == http::Method.Head;
                         if cfg.dev_id != 0 && p == "/__gweb/id" {
                             dev_status(res, cfg.dev_id);
-                            dev_request = true;
+                            internal = true;
+                        } else if get_like && p == "/__gweb/health" {
+                            http::text(res, http::Status.Ok, "ok\n");
+                            http::set_header(res, "Cache-Control", "no-store");
+                            internal = true;
+                        } else if get_like && p == "/__gweb/ready" {
+                            if net::stopping() { http::text(res, http::Status.ServiceUnavailable, "stopping\n"); }
+                            else { http::text(res, http::Status.Ok, "ready\n"); }
+                            http::set_header(res, "Cache-Control", "no-store");
+                            internal = true;
+                        } else if get_like && cfg.metrics && p == "/__gweb/metrics" {
+                            http::text(res, http::Status.Ok, "");
+                            res.content_type.clear();
+                            res.content_type.append("text/plain; version=0.0.4; charset=utf-8");
+                            c_metrics_render(res.body, trim(WEB_VERSION));
+                            http::set_header(res, "Cache-Control", "no-store");
+                            internal = true;
                         } else if get_like && p.len > 1 && p[p.len - 1] == '/' {
+                            if want_id { begin_request(req, ctx, tracing); }
                             var to: u8[>..] = [];
                             to.append(p[..p.len - 1]);
                             if req.query.len > 0 { to.push('?'); to.append(req.query); }
                             res.status = http::Status.PermanentRedirect;
                             http::set_header(res, "Location", to);
                         } else {
-                            var ctx = new_ctx(slot, owner_fd);
+                            if want_id { begin_request(req, ctx, tracing); }
+                            ctx.start_us = t0;
                             static_index = D(req, ctx, res);
                             if !apply_cookies(ctx, res) { static_index = -1; }
                             if !ctx.fragment { dev_inject(res, cfg.dev_id); }
@@ -393,15 +490,36 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config) 
                     Reject r => http::json_error(res, r.status, http::reason(r.status)),
                     Closed => {},
                 }
+                keep = keep && !net::draining();
+                if ctx.request_id.len > 0 { http::add_header(res, "X-Request-Id", ctx.request_id); }
                 let head_only = req.method == http::Method.Head;
                 let sent = if static_index >= 0 {
                     http::send_response_with(conn, res, S(static_index), head_only, keep)
                 } else {
                     http::send_response(conn, res, head_only, keep)
                 };
-                if cfg.log && !dev_request { print("[", slot, "] ", req.method_text, " ", req.target, " -> ", res.status); }
+                if !internal && (cfg.log || cfg.metrics || ctx.sampled) {
+                    let dur = c_now_us() - t0;
+                    let route_index = if static_index >= 0 { -2 } else { ctx.route };
+                    if cfg.metrics {
+                        c_metrics_request(slot as i32, route_index as i32, method_index(req.method) as i32,
+                                          http::code(res.status) as i32, dur);
+                    }
+                    if cfg.log || ctx.sampled {
+                        let label = if static_index >= 0 { "static" } else { route_name(routes, ctx.route) };
+                        if cfg.log {
+                            let blen = if static_index >= 0 { S(static_index).len } else { res.body.len };
+                            var line: u8[>..] = [];
+                            access_line(line, json_log, slot, req.method_text, req.target, label, res.status, dur, blen,
+                                        ctx.request_id, ctx.trace_id, ctx.span_id);
+                            log_write(Level.Info, line);
+                        }
+                        if ctx.sampled { push_server_span(ctx, req, label, res.status, dur); }
+                    }
+                }
                 if !sent || !keep { lp.close_connection(conn); }
             },
+            Stopped => { lp.free(); return; },
             Failed => {},
             _ => {
                 let status = match ev {
@@ -450,3 +568,206 @@ fn dev_inject(res: http::Response&, dev_id: i64) {
 }
 
 fn no_static(i: i64) -> const u8[:] { "" }
+
+// ---------------------------------------------------------------- operations
+// Logging, metrics and tracing helpers that run_worker needs; ops.goose and jobs.goose build the app API on them.
+
+let WEB_VERSION = embed_file("VERSION");
+
+extern fn c_now_us() -> i64 = "gweb_now_us";
+extern fn c_rfc3339(out: u8[>..]&) = "gweb_rfc3339";
+extern fn c_rand_hex(out: u8[>..]&, nbytes: i32) = "gweb_rand_hex";
+extern fn c_log_line(line: const u8[:]) = "gweb_log_line";
+extern fn c_log_config(level: i32, json: i32) = "gweb_log_config";
+extern fn c_log_level() -> i32 = "gweb_log_level";
+extern fn c_log_json() -> i32 = "gweb_log_json";
+extern fn c_metrics_init(workers: i32, route_names_nl: const u8[:]) = "gweb_metrics_init";
+extern fn c_metrics_request(worker: i32, route: i32, method: i32, status: i32, dur_us: i64) = "gweb_metrics_request";
+extern fn c_metrics_conn(worker: i32, open_count: i64) = "gweb_metrics_conn";
+extern fn c_metric_count(name: const u8[:], n: i64) = "gweb_metric_count";
+extern fn c_metric_gauge(name: const u8[:], v: f64) = "gweb_metric_gauge";
+extern fn c_metrics_render(out: u8[>..]&, version: const u8[:]) = "gweb_metrics_render";
+
+extern fn c_unix_ns() -> i64 = "gweb_unix_ns";
+extern fn c_trace_parse(header: const u8[:], trace_out: u8[>..]&, parent_out: u8[>..]&, sampled: i32&) -> i32 = "gweb_trace_parse";
+extern fn c_otel_sample(parent_sampled: i32, trace_id: const u8[:]) -> i32 = "gweb_otel_sample";
+extern fn c_traceparent(out: u8[>..]&, trace: const u8[:], span: const u8[:], sampled: i32) = "gweb_traceparent";
+extern fn c_span_push(trace: const u8[:], span: const u8[:], parent: const u8[:], name: const u8[:], kind: i32,
+                      start_ns: i64, end_ns: i64, status: i32, method: const u8[:], route: const u8[:],
+                      path: const u8[:], http_status: i32, attr_key: const u8[:], attr_val: const u8[:],
+                      attr_is_int: i32) -> i32 = "gweb_span_push";
+extern fn c_otel_start_from_env() -> i32 = "gweb_otel_start_from_env";
+extern fn c_otel_on() -> i32 = "gweb_otel_on";
+extern fn c_otel_flush(timeout_ms: i32) -> i32 = "gweb_otel_flush";
+
+fn level_name(l: Level) -> const u8[:] {
+    match l { Debug => "debug", Info => "info", Warn => "warn", Error => "error" }
+}
+
+fn level_num(l: Level) -> i64 {
+    match l { Debug => 0, Info => 1, Warn => 2, Error => 3 }
+}
+
+// "info" for anything that is not a level name.
+fn level_from_name(s: const u8[:]) -> Level {
+    if s == "debug" { return Level.Debug; }
+    if s == "warn" { return Level.Warn; }
+    if s == "error" { return Level.Error; }
+    return Level.Info;
+}
+
+// Sets the level and format every log_write and log_message uses (process-wide, in C).
+fn log_configure(level: Level, json: bool) {
+    c_log_config(level_num(level) as i32, if json { 1 } else { 0 });
+}
+
+// Writes one finished line (no newline needed) when level is at or above the configured one.
+fn log_write(level: Level, line: const u8[:]) {
+    let floor = c_log_level() as i64;
+    if level_num(level) < floor { return; }
+    c_log_line(line);
+}
+
+// A framework message: the text as it is in text format, {"ts","level","msg"} in json format.
+fn log_message(level: Level, msg: const u8[:]) {
+    var line: u8[>..] = [];
+    if c_log_json() != 0 {
+        line.append("{\"ts\":\"");
+        c_rfc3339(line);
+        format(line, "\",\"level\":\"", level_name(level), "\",\"msg\":\"");
+        json_escape(line, msg);
+        line.append("\"}");
+    } else {
+        line.append(msg);
+    }
+    log_write(level, line);
+}
+
+// The bytes of one JSON string body: " and \ with a backslash, bytes below 0x20 as \u00XX, the rest as they are.
+fn json_escape_byte(out: u8[>..]&, c: u8) {
+    if c == 34 { out.append("\\\""); }
+    else if c == '\\' { out.append("\\\\"); }
+    else if c < 32 {
+        out.append("\\u00");
+        out.push(HEX_UPPER[c >> 4]);
+        out.push(HEX_UPPER[c & 15]);
+    }
+    else { out.push(c); }
+}
+
+// Appends s, escaped for the inside of a JSON string (no quotes).
+fn json_escape(out: u8[>..]&, s: const u8[:]) {
+    for c in s { json_escape_byte(out, c); }
+}
+
+// Like json_escape, but stops before the byte that would take out past max bytes; false when it stopped.
+fn json_escape_max(out: u8[>..]&, s: const u8[:], max: i64) -> bool {
+    for c in s {
+        let width = if c == 34 || c == '\\' { 2 } else if c < 32 { 6 } else { 1 };
+        if out.len + width > max { return false; }
+        json_escape_byte(out, c);
+    }
+    return true;
+}
+
+// 1 to 64 bytes of [A-Za-z0-9._-]: what run_worker accepts as the request's X-Request-Id.
+fn request_id_valid(s: const u8[:]) -> bool {
+    if s.len < 1 || s.len > 64 { return false; }
+    for c in s {
+        let ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+        if !ok { return false; }
+    }
+    return true;
+}
+
+// The order of http::Method, which the metrics table indexes by.
+fn method_index(m: http::Method) -> i64 {
+    match m { Get => 0, Head => 1, Post => 2, Put => 3, Patch => 4, Delete => 5, Options => 6, Other => 7 }
+}
+
+// Line i of routes (patterns joined by newlines); "" when there is none.
+fn route_name(routes: const u8[:], i: i64) -> const u8[:] {
+    if i < 0 { return ""; }
+    var n = 0;
+    var start = 0;
+    for k in 0..routes.len + 1 {
+        if k == routes.len || routes[k] == '\n' {
+            if n == i { return routes[start..k]; }
+            n += 1;
+            start = k + 1;
+        }
+    }
+    return "";
+}
+
+// Takes X-Request-Id when it is valid, else makes 16 hex digits. With tracing: reads traceparent (a new trace
+// id when it is missing or invalid), makes this request's span id and decides whether it is sampled.
+fn begin_request(req: const http::Request&, ctx: Ctx&, tracing: bool) {
+    let sent, has = http::header(req, "x-request-id");
+    if has && request_id_valid(trim(sent)) {
+        ctx.request_id.append(trim(sent));
+    } else {
+        var id: u8[>..] = [];
+        c_rand_hex(id, 8);
+        ctx.request_id.append(id);
+    }
+    if !tracing { return; }
+    var trace: u8[>..] = [];
+    var parent: u8[>..] = [];
+    var parent_sampled: i32 = -1;
+    var flag: i32 = 0;
+    let tp, has_tp = http::header(req, "traceparent");
+    if has_tp && c_trace_parse(trim(tp), trace, parent, flag) != 0 {
+        parent_sampled = flag;
+    } else {
+        trace.clear();
+        parent.clear();
+        c_rand_hex(trace, 16);
+    }
+    var sid: u8[>..] = [];
+    c_rand_hex(sid, 8);
+    ctx.trace_id.append(trace);
+    ctx.parent_span.append(parent);
+    ctx.span_id.append(sid);
+    ctx.sampled = c_otel_sample(parent_sampled, trace) != 0;
+}
+
+fn push_server_span(ctx: const Ctx&, req: const http::Request&, route: const u8[:], status: http::Status, dur_us: i64) {
+    var name: u8[>..] = [];
+    name.append(req.method_text);
+    if route.len > 0 { name.push(' '); name.append(route); }
+    let end_ns = c_unix_ns();
+    let code = http::code(status);
+    let kind_status = if code >= 500 { 2 } else { 0 };
+    c_span_push(ctx.trace_id, ctx.span_id, ctx.parent_span, name, 2, end_ns - dur_us * 1000, end_ns, kind_status,
+                req.method_text, route, req.path, code as i32, "", "", 0);
+}
+
+// Appends one access line. Text: [slot] METHOD target -> 200 OK 42us. Json: one object with ts, level, msg "request",
+// method, target, route ("-" when none), status, dur_us, bytes, worker, and request_id, trace_id and span_id when set.
+fn access_line(out: u8[>..]&, json: bool, slot: i64, method: const u8[:], target: const u8[:], route: const u8[:],
+               status: http::Status, dur_us: i64, bytes: i64, request_id: const u8[:], trace_id: const u8[:],
+               span_id: const u8[:]) {
+    if !json {
+        format(out, "[", slot, "] ", method, " ", target, " -> ", status, " ", dur_us, "us");
+        return;
+    }
+    out.append("{\"ts\":\"");
+    c_rfc3339(out);
+    out.append("\",\"level\":\"info\",\"msg\":\"request\",\"method\":\"");
+    json_escape(out, method);
+    out.append("\",\"target\":\"");
+    json_escape(out, target);
+    out.append("\",\"route\":\"");
+    json_escape(out, if route.len > 0 { route } else { "-" });
+    format(out, "\",\"status\":", http::code(status), ",\"dur_us\":", dur_us, ",\"bytes\":", bytes, ",\"worker\":", slot);
+    if request_id.len > 0 { out.append(",\"request_id\":\""); json_escape(out, request_id); out.append("\""); }
+    if trace_id.len > 0 {
+        out.append(",\"trace_id\":\"");
+        json_escape(out, trace_id);
+        out.append("\",\"span_id\":\"");
+        json_escape(out, span_id);
+        out.append("\"");
+    }
+    out.append("}");
+}
