@@ -140,4 +140,7 @@ Goal: a CMS built on gweb, structured like Kentico, with inspiration from Storyb
 - Built in v0.2.0: CSRF, catch-all routes, the SQLite writer, forms and cookies.
 - Missing: sessions and login (see "Auth and signed sessions" above), rendering a widget by name chosen at run time from data (today a template names its components at build time), markdown rendering and media uploads.
 
+**Later (after v1):**
+- **Several templates per page type.** v1 has one template per type (user, 2026-11-12). Later, a developer writes several layouts for a type, and an editor picks one per page and can switch it, like Kentico page templates. Switching must move widgets from the old template's zones into the new one's.
+
 **Questions for the architect:** how widgets declare properties and how admin forms are generated (reflection?), the widget data storage format, the section, zone and layout model, the page builder editor (drag and drop, live preview), the cache and its invalidation, and the repo layout.
