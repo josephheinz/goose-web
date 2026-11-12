@@ -51,8 +51,10 @@ goose-architect agent.
 | `app/**/middleware.goose` | `fn before` and/or `fn after` for the subtree |
 | `app/not-found.html` | The 404 page, inside the root layout |
 | `app/state.goose` | State owned by the main thread: `Msg`, `Reply`, `fn handle`, optional `fn init` |
+| `app/sitemap.goose` | Turns on `/sitemap.xml` and `/robots.txt`; optional `fn entries` |
+| `app/socket.goose` | Optional `fn open`, `fn message`, `fn close` for WebSocket connections |
 | `lib/**.goose` | Your modules: `import lib.catalog;` (write their `namespace`) |
-| `public/**` | Static files, embedded in the binary, with ETags |
+| `public/**` | Static files, embedded in the binary, with ETags and hashed URLs |
 
 A folder named `[id]` is a dynamic segment; `[...slug]` and `[[...slug]]` are
 catch-alls (see below). Folders starting with `_` are ignored. App files get their
@@ -153,7 +155,8 @@ names its replacement.
 gweb [-C dir] new <dir>      a starter project
 gweb gen                     write .gooseweb/ only
 gweb build [--debug]         gen, then goose build to .gooseweb/server
-gweb start [flags]           build and run (--port N --workers N --log --idle-ms N --max-body N)
+gweb start [flags]           build and run (--port N --host H --workers N --log --idle-ms N --max-body N)
+gweb export [-o DIR]         build, then write the site as static files to DIR (default out/)
 gweb dev [flags]             build, run with --log on 2 workers and port 60053 (unless --port), rebuild on change
 gweb routes                  the route table (GET,POST and a frag line for each fragment)
 gweb test                    component parity: test_* functions as Goose and as JavaScript (writes .gooseweb.test/; leaves .gooseweb/ alone)
@@ -182,8 +185,10 @@ goose build -o gweb cli/gweb.goose
 - Each worker runs under a supervisor that restarts it after an abort.
 - `app/state.goose` lives on the main thread. Workers reach it over one
   socketpair each (`src/owner.c`), with a 5 s reply timeout.
-- Pages render on every request into one buffer; static files go out from
-  the binary's data with `writev`, without a copy.
+- Pages render on every request into one buffer (unless `REVALIDATE`, below); static files go out
+  from the binary's data with `writev`, without a copy.
+- goose-web speaks plain HTTP/1.1. For TLS, HTTP/2 and compression run it behind Caddy or
+  nginx: see [docs/DEPLOY-PROXY.md](docs/DEPLOY-PROXY.md).
 
 ## SQLite
 
@@ -323,6 +328,175 @@ page.
   (the dev overlay shows it as a `page error`). The last request per target wins.
 
 The demo is `../examples/shop/app/fragments` (`/fragments`, `/fragments/products`).
+
+## Assets and caching
+
+Every file in `public/` is served at its plain URL and at a hashed one: `/css/site.css` and
+`/css/site.3f9a1c2b.css` (the first 8 hex digits of its ETag). The hashed URL sends
+`Cache-Control: public, max-age=31536000, immutable`; the plain URL sends `max-age=0, must-revalidate`
+and answers 304. `/_gw/` files follow the same rule, and pages link the hashed names.
+
+```html
+<link rel="stylesheet" href="@asset("/css/site.css")">      <!-- /css/site.3f9a1c2b.css -->
+```
+
+- `@asset("/path")` takes one string literal and fails the build when `public/path` does not exist.
+  For a path known at run time, `web::asset_url(path)` returns the hashed URL, or `path` when unknown.
+- Text files of 1 KB or more are gzipped at build time (`Content-Encoding: gzip`, `Vary: Accept-Encoding`,
+  ETag ending `-gz`) when the client sends `Accept-Encoding: gzip`. HTML and JSON are not compressed here;
+  the proxy does that.
+- CSS is minified in `build`, `start` and `export` (not `dev`; `--no-minify` turns it off). Comments go
+  except `/*! ... */`; strings and `url(...)` stay as written.
+- A hashed URL that equals another static or route URL is a build error.
+- URLs inside CSS (`url(/img/x.png)`) are not rewritten; they use the plain URL and revalidate with 304.
+
+## Images and metadata
+
+```html
+@image("/img/hero.png", props.alt)
+@image("/img/hero.png", "", "class=\"wide\" loading=\"eager\"")
+```
+
+`@image(path, alt[, attrs])` writes `<img src width height alt loading="lazy" decoding="async">`. The size
+is read from the file at build time (PNG, GIF, JPEG, WebP, SVG; no `width`/`height` when unreadable). A file
+`hero@2x.png` beside `hero.png` adds `srcset="... 1x, ... 2x"`. `alt` is any expression and is escaped;
+`attrs` is a string literal copied as written, and `loading` or `decoding` in it replace the defaults.
+There is no resizing; make the variants yourself.
+
+```goose
+fn load(req: const http::Request&, ctx: web::Ctx&) -> Props {
+    ctx.title = "Pricing";
+    web::meta_description(ctx, "Plans and prices.");
+    web::meta_canonical(ctx, "/pricing");     // "/..." becomes absolute with SITE_URL
+    web::meta_image(ctx, "/img/og.png");
+    web::meta_robots(ctx, "noindex");
+    ...
+}
+```
+
+Put `@meta()` once in `layout.html`'s `<head>` (it is an error elsewhere). It writes only the tags that are
+set: `description`, `canonical`, `robots`, `og:title` (from `ctx.title`), `og:description`, `og:url`,
+`og:image` and `twitter:card`. It does not write `<title>`. Setters cut at 320, 512, 512 and 64 bytes.
+`import web.meta;` for the setters.
+
+Set `SITE_URL=https://example.com` in production. Without it, absolute URLs use the `Host` header, which
+the client controls. `web::site_url(req, out)` appends the base.
+
+## Sitemap and robots.txt
+
+An `app/sitemap.goose` (even an empty one) turns on `GET /sitemap.xml` and, unless `public/robots.txt`
+exists, `/robots.txt` (`Allow: /` and the sitemap line). Both send `Cache-Control: public, max-age=3600`.
+
+```goose
+import std;
+import net.http;
+import web;
+import web.sitemap;
+
+fn entries(req: const http::Request&, ctx: web::Ctx&, s: web::Sitemap&) {
+    web::sitemap_add(s, "/blog/hello", "2026-11-12");    // path starts with /, lastmod is YYYY-MM-DD or ""
+}
+```
+
+The sitemap lists every page with no dynamic segment, then the entries. Leave a page out with
+`const SITEMAP = false;` in its `page.goose`. `sitemap_add` returns false for a bad path or date,
+and past 50,000 URLs. `public/sitemap.xml` beside `app/sitemap.goose` is a build error.
+
+## Page cache and `gweb export`
+
+```goose
+const REVALIDATE = 60;     // page.goose: cache this page's GET reply for 60 s
+```
+
+- The cache is per worker (up to `workers` renders per expiry), keyed by path and query, and holds a 200
+  reply of at most 1 MB. It answers with an `ETag` and `Cache-Control: public, max-age=0, must-revalidate`,
+  and 304 to `If-None-Match`. Middleware `before` still runs on every request.
+- Never cache a page that reads cookies or the user: every visitor would get the same HTML. A reply that sets
+  a cookie is not stored, and a page that starts a CSRF token with `REVALIDATE` is a build error.
+- POST and fragment requests skip the cache. Each worker keeps at most 512 entries and 16 MB.
+
+`gweb export [-o DIR]` builds, renders the site in process and writes it to `DIR` (default `out/`):
+`/` as `index.html`, `/about` as `about.html`, every static file at both URLs, and `sitemap.xml` and
+`robots.txt` when enabled. Run it with `SITE_URL` set.
+
+```goose
+fn static_paths() -> u8[..1024][>..] {        // page.goose of a dynamic page
+    var paths: u8[..1024][>..] = [];
+    paths.push("/post/1");
+    return paths;
+}
+```
+
+A dynamic page without `static_paths` is skipped and listed. A non-200 page is an error and the exit
+code is 1. Forms, fragments, routes and component handlers that call routes need a server.
+
+## Streaming
+
+A handler can send a body in chunks instead of one buffer:
+
+```goose
+import web.stream;
+
+fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
+    res.content_type.clear();
+    res.content_type.append("text/csv");
+    var s = web::stream_begin(req, ctx, res);   // sends the head, cookies included
+    for row in rows { web::write(s, row); }     // false when the client went away
+    web::end(ctx, s);                           // without it the connection closes
+}
+```
+
+HTTP/1.0 clients get the body without chunking. A stream holds its worker until it ends: use it for
+exports and downloads, and use `subscribe` (below) for anything that waits on events. `res.body` is
+ignored.
+
+## Server push and WebSockets
+
+One hub thread (from goose-net's `net::Hub`) owns every long-lived connection, so idle clients cost no
+worker. gweb starts it when any file under `app/` or `lib/` mentions `web::subscribe(` or
+`web::websocket(`, or `app/socket.goose` exists. A connection has one topic (at most 64 bytes);
+`publish` reaches every connection on a topic. Needs `import web.push;`.
+
+Server-sent events:
+
+```goose
+fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
+    res.content_type.clear();
+    res.content_type.append("text/event-stream");
+    web::subscribe(req, ctx, res, "news", ": ping\n\n");   // heartbeat chunk every 30 s
+}
+// anywhere, on any thread's ctx:
+web::publish(ctx, "news", "data: hello\n\n");
+```
+
+WebSockets:
+
+```goose
+fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
+    web::websocket(req, ctx, res, "chat");                 // or (..., "chat", "https://other.example")
+}
+```
+
+```goose
+// app/socket.goose: all three optional; messages are dropped without fn message
+fn open(ctx: web::Ctx&, id: u64, topic: const u8[:]) { }
+fn message(ctx: web::Ctx&, id: u64, topic: const u8[:], data: const u8[:], binary: bool) {
+    web::publish(ctx, topic, data, binary);                // or web::send(ctx, id, data)
+}
+fn close(ctx: web::Ctx&, id: u64, topic: const u8[:]) { }
+```
+
+- `subscribe` and `websocket` return false after writing a reply: 503 without a hub, 400 for a bad
+  request, 426 for a wrong WebSocket version, 403 for another origin.
+- A browser's `Origin` must match `Host`, or the optional `allow_origin`. This stops other sites
+  from using a visitor's cookies. A reverse proxy must keep `Host`.
+- Other helpers: `web::send(ctx, id, data)`, `web::close_socket(ctx, id)`, `web::subscribers(ctx, topic)`.
+  The handlers in `socket.goose` can call `state::ask`.
+- Limits: 10,000 connections, 64 KB per WebSocket message, 1 MB queued per slow client (then closed).
+  No `permessage-deflate`.
+- Authenticate in the route before calling `websocket` or `subscribe`; cookies and `ctx` work as in any
+  route. A route is not CSRF-checked for GET.
+- Behind a proxy: see [docs/DEPLOY-PROXY.md](docs/DEPLOY-PROXY.md).
 
 ## Example
 
