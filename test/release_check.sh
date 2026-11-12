@@ -87,6 +87,7 @@ step components sh "$HERE/components.sh"
 step templates sh "$HERE/templates.sh"
 step fragments env PORT="${PORT:-3991}" sh "$HERE/fragments.sh"
 step catchall env PORT="${PORT:-3994}" sh "$HERE/catchall.sh"
+step ops env PORT="${PORT:-3996}" sh "$HERE/ops.sh"
 
 gweb_new() {
   mkdir "$WORK/lone"
