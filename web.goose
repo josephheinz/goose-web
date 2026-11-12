@@ -24,6 +24,7 @@ struct Ctx {
     outcome: Outcome,
     fragment: bool = false,   // fragment replies get no dev script
     csrf: u8[..32] = "",      // the page's CSRF token; "" until web::csrf_begin
+    locale: i64 = 0,          // index into the generated t::TAGS; 0 is the default locale
     redirect_status: i64,
     location: u8[..1024],
     title: u8[..256],
