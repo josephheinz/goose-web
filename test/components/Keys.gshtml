@@ -1,0 +1,22 @@
+<script goose>
+// gw-key values go through the same escaping as any attribute.
+struct Item { id: i64, name: u8[..40] }
+struct State { err: bool, draft: u8[..40], items: Item[>..<] }
+
+fn test_keys(s: State&) {
+    s.items.push(Item { id: 1, name: "a\"b&<c'" });
+    s.items.push(Item { id: 2, name: "two" });
+    s.items.push(Item { id: 3, name: "three" });
+}
+
+fn test_swap(s: State&) {
+    test_keys(s);
+    let t = s.items[0];
+    s.items[0] = s.items[2];
+    s.items[2] = t;
+    s.err = true;
+}
+</script>
+{#if s.err}<span gw-key="err">bad</span>{/if}<input bind:value="draft">
+<ul>{#for t in s.items}<li gw-key="{t.id}" title="{t.name}">{t.name}</li>{/for}</ul>
+{#for t in s.items}<p gw-key="{t.name}">{t.id}</p>{/for}
