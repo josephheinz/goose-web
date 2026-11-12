@@ -54,8 +54,9 @@ goose-architect agent.
 | `lib/**.goose` | Your modules: `import lib.catalog;` (write their `namespace`) |
 | `public/**` | Static files, embedded in the binary, with ETags |
 
-A folder named `[id]` is a dynamic segment. Folders starting with `_` are
-ignored. App files get their namespace from `gweb`; do not write one.
+A folder named `[id]` is a dynamic segment; `[...slug]` and `[[...slug]]` are
+catch-alls (see below). Folders starting with `_` are ignored. App files get their
+namespace from `gweb`; do not write one.
 
 ## Signatures
 
@@ -72,6 +73,47 @@ Helpers: `web::param(ctx, "id")`, `web::param_int`, `web::query(req, "q", out)`,
 `web::html(res, status)`, `web::json(res, status)`, `web::not_found(ctx)`,
 `web::redirect(ctx, "/to", 302)`, and `state::ask(ctx, state::Msg.List) -> Reply, bool`.
 Set `ctx.title` in `load`; layouts read it.
+
+## Catch-all routes
+
+| Folder | Matches | Example under `app/docs/` |
+|---|---|---|
+| `[...name]` | 1 or more trailing segments | `/docs/a` and `/docs/a/b`, not `/docs` |
+| `[[...name]]` | 0 or more trailing segments | `/docs`, `/docs/a` and `/docs/a/b` |
+
+`web::param(ctx, "name")` returns the tail as it appeared in the path, joined with `/`
+and not decoded: `a/b%20c/d`. It is `""` when an optional catch-all matched no segment.
+`web::path_decode(out, tail)` appends the decoded text to a `u8[>..]` and returns false
+for anything the router already refuses, so it cannot fail on a matched tail. Split the
+tail with `split(web::param(ctx, "name"), '/')`.
+
+```goose
+fn load(req: const http::Request&, ctx: web::Ctx&) -> Props {
+    var path: u8[>..] = [];
+    web::path_decode(path, web::param(ctx, "path"));
+    ...
+}
+```
+
+Rules:
+- `public/` files are tried first for GET and HEAD, so a public file wins over `[id]`
+  and catch-all routes. Then the routes with the same number of folders or a catch-all
+  that fits are ranked per segment: a literal folder, then `[id]`, then a catch-all.
+- The first route whose literal folders match wins. If it refuses a value, the answer is
+  404; the next route is not tried. `/blog/<300 bytes>` is a 404 from `blog/[id]`, not a
+  catch-all hit.
+- A catch-all folder is the last folder of its route and holds no folder of its own. A
+  folder holds one catch-all at most. `[[...name]]` cannot sit beside a `page.html` or
+  `route.goose` in its parent, which would answer the same URL. Its name must differ from the
+  `[id]` names above it. A route is at most 16 folders deep.
+- The tail is at most 1,024 bytes, with any number of segments.
+- The answer is 404 when the tail has an empty segment, a `.` or `..` segment (also
+  percent-encoded), a `%2F` or `%5C`, a raw `\`, a control byte, or a malformed `%`. A
+  trailing slash on GET or HEAD redirects with 308 first.
+- A `[id]` value gets none of these checks. Decoded, it can hold `..`, so never join it
+  to a file path without checking it.
+- `gw-target` links to a catch-all page are checked at build time by the shape of their
+  URL: `/docs`, `/docs/a/b` and `/docs/{p.slug}` all resolve to `app/docs/[[...path]]`.
 
 ## Templates
 
