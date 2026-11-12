@@ -114,6 +114,20 @@ fn dev_error_script(out: u8[>..]&, e: const ErrorInfo&) {
 
 // ---------------------------------------------------------------- dev detail (D13)
 
+// The lines of s as slices (web::split is the router's, so std's is out of reach here).
+fn split_lines(s: const u8[:], sep: u8) -> const u8[:][>..] {
+    var out: const u8[:][>..] = [];
+    var start = 0;
+    for c, i in s {
+        if c == sep {
+            out.push(s[start..i]);
+            start = i + 1;
+        }
+    }
+    out.push(s[start..]);
+    return out;
+}
+
 fn path_stop(c: u8) -> bool {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '"' || c == '\'' || c == '(' || c == ')'
         || c == '<' || c == '>' || c == '[' || c == ']' || c == ',' || c == '=';
@@ -121,7 +135,7 @@ fn path_stop(c: u8) -> bool {
 
 // The source file of a generated file name in .gooseweb/map.txt ("gen.goose<TAB>source"); "" when absent.
 fn map_source(map: const u8[:], base: const u8[:]) -> const u8[:] {
-    for line in split(map, '\n') {
+    for line in split_lines(map, '\n') {
         let name, path, ok = split_once(line, '\t');
         if ok && name == base { return path; }
     }
@@ -151,7 +165,7 @@ fn add_excerpt(d: u8[>..]&, gen_path: const u8[:], gen_line: i64, map: const u8[
         format(g, ".gooseweb/", base);
         var code: u8[>..] = [];
         if read_file(g, code) {
-            let ls = split(code, '\n');
+            let ls = split_lines(code, '\n');
             if gen_line >= 1 && gen_line - 1 < ls.len {
                 let tag = find(ls[gen_line - 1], "// gw:line ");
                 if tag >= 0 {
@@ -172,7 +186,7 @@ fn add_excerpt(d: u8[>..]&, gen_path: const u8[:], gen_line: i64, map: const u8[
     format(d, "\n", src, ":", line, "\n");
     var text: u8[>..] = [];
     if read_file(src, text) {
-        let ls = split(text, '\n');
+        let ls = split_lines(text, '\n');
         let from = max(1, line - 2);
         let to = min(ls.len, line + 2);
         var n = from;
