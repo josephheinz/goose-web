@@ -140,7 +140,7 @@ web::set_cookie(ctx, "theme", "dark", web::CookieOptions { max_age: 31536000, ht
 web::clear_cookie(ctx, "theme");                            // pass the same path and domain it was set with
 ```
 
-A layout can read a cookie without a loader: `<body class="{{ web::cookie_or(req, "theme", "light") }}">`.
+A layout can read a cookie without a loader: `<body class="{web::cookie_or(req, "theme", "light")}">`.
 
 `CookieOptions` has `path` (`/`), `domain` (none, this host only), `max_age`
 (-1: until the browser closes), `secure` (false), `http_only` (true) and
