@@ -1238,6 +1238,21 @@ fn print_version() {
     write_stdout(out);
 }
 
+fn check_version() {
+    let home = goose_web_home();
+    if home.len == 0 { return; }
+    var path: u8[>..] = [];
+    format(path, home, "/VERSION");
+    var file: u8[>..] = [];
+    read(path, file);
+    if trim(file) != trim(EMBEDDED_VERSION) {
+        var msg: u8[>..] = [];
+        format(msg, "gweb: built from ", trim(EMBEDDED_VERSION), ", but ", home, " is ", trim(file), ": rebuild gweb\n");
+        write_stderr(msg);
+        exit(1);
+    }
+}
+
 // ---------------------------------------------------------------- components
 
 fn push_gw_static(url: const u8[:], file: const u8[:], data: const u8[:]) {
@@ -1942,12 +1957,13 @@ fn main() {
     if i >= a.len { usage(); }
     let cmd = a[i];
     let rest = a[i + 1..];
+    if cmd == "version" { print_version(); return; }
+    check_version();
     if cmd == "new" { if rest.len != 1 { usage(); } scaffold(rest[0]); return; }
     if cmd == "gen" { if !gen(false) || component_errors > 0 { exit(1); } write_stdout("gweb: wrote .gooseweb/\n"); return; }
     if cmd == "test" { if !test_cmd() { exit(1); } return; }
     if cmd == "build" { if !build(rest.len > 0 && rest[0] == "--debug", false) { exit(1); } return; }
     if cmd == "routes" { print_routes(); return; }
-    if cmd == "version" { print_version(); return; }
     if cmd == "start" {
         if !build(false, false) { exit(1); }
         c_exec(server_cmd(rest, false));
