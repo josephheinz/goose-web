@@ -1331,7 +1331,8 @@ fn main() {
 """);
     if uses_keys { m.append("    if cfg.auth.keys.n == 0 { print(\"goose-web: set WEB_SECRET (32 to 64 bytes; openssl rand -hex 32)\"); exit(2); }\n"); }
     if has_config { m.append("    if !config::check() { exit(2); }\n"); }
-    m.append("""    let server = net::listen(cfg.port, cfg.host, 1024);
+    m.append("""
+    let server = net::listen(cfg.port, cfg.host, 1024);
     guard server.ok() else { print("goose-web: cannot listen on port ", cfg.port, ": ", net::last_error()); exit(1); }
 
 """);
