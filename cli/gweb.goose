@@ -30,6 +30,7 @@ extern fn c_tree_stamp(path: const u8[:], count: i64&) -> i64 = "gweb_tree_stamp
 
 struct Dir {
     rel: u8[..512],
+    root: u8[..512],       // the folder holding this directory's files: app/users, or PKGDIR/app/users for a mounted package
     route: bool, page_html: bool, page_goose: bool, layout: bool, middleware: bool,
     methods: i64,          // bit i set: METHODS[i] is defined in route.goose
     has_load: bool, has_before: bool, has_after: bool,
@@ -38,6 +39,9 @@ struct Dir {
     route_ns: u8[..200], page_ns: u8[..200], layout_ns: u8[..32], mw_ns: u8[..32],
     page_csrf: bool = false, layout_csrf: bool = false, csrf_const: bool = false   // csrf_const: route.goose declares const CSRF
 }
+
+// A gweb package (DESIGN-ADDENDUM-18, D6). mount is the URL prefix without its leading slash, "" when the package has no `at`.
+struct Pkg { name: u8[..64], dir: u8[..512], mount: u8[..512], git: bool }
 
 struct Static { url: u8[..512], file: u8[..512], ctype: u8[..64], etag: u8[..24] }
 
@@ -53,6 +57,7 @@ let VARIANTS = ["Get", "Head", "Post", "Put", "Patch", "Delete", "Options"];
 
 var dirs: Dir[>..<];
 var statics: Static[>..<];
+var pkgs: Pkg[>..<];
 var errors = 0;
 var has_state = false;
 var has_state_init = false;
@@ -71,6 +76,7 @@ var overlay_src: u8[>..];              // lsp-gen --overlay: this source is read
 var overlay_tmp: u8[>..];
 var start_cwd: u8[>..];                // the folder gweb started in, before any -C
 var component_names: u8[..64][>..<];
+var component_paths: u8[..512][>..<];   // component_paths[i] is the source file of component_names[i]
 var component_lines: i64[>..<];
 var component_errors = 0;              // translator errors of this gen; the build still runs goose
 var uses_fragments = false;
@@ -171,27 +177,253 @@ fn is_ancestor(a: const u8[:], b: const u8[:]) -> bool {
     return b.len > a.len && starts_with(b, a) && b[a.len] == '/';
 }
 
-fn app_path(out: u8[>..]&, rel: const u8[:], file: const u8[:]) {
-    out.append("app/");
-    if rel.len > 0 { out.append(rel); out.push('/'); }
+fn app_path(out: u8[>..]&, d: const Dir&, file: const u8[:]) {
+    out.append(d.root);
+    out.push('/');
     out.append(file);
 }
 
 fn url_of(out: u8[>..]&, rel: const u8[:]) { out.push('/'); out.append(rel); }
 
+// ---------------------------------------------------------------- packages
+
+// A gweb package is listed in gweb.packages, one `SOURCE [at /prefix]` per line (DESIGN-ADDENDUM-18, D6).
+let PKG_LIST = "gweb.packages";
+let PKG_RESERVED = ["lib", "std", "os", "web", "net", "sqlite", "main", "state"];
+
+// owner/repo@tag: one '/', an '@' after it, and not a path.
+fn is_git_source(src: const u8[:]) -> bool {
+    if src.len == 0 || src[0] == '.' || src[0] == '/' || find(src, "@") < 0 { return false; }
+    var slashes = 0;
+    for c in src { if c == '/' { slashes += 1; } }
+    return slashes == 1;
+}
+
+fn git_part_ok(s: const u8[:], plus: bool) -> bool {
+    if s.len == 0 || s[0] == '.' || s[0] == '-' { return false; }
+    for c in s {
+        let ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-' || (plus && c == '+');
+        if !ok { return false; }
+    }
+    return true;
+}
+
+// The mount without its leading slash: literal folder names only, as a route is.
+fn mount_ok(prefix: const u8[:]) -> bool {
+    if prefix.len == 0 || prefix.len > 200 { return false; }
+    for seg in split(prefix, '/') {
+        if seg.len == 0 || seg_kind(seg) != 0 || seg[0] == '_' || seg[0] == '.' { return false; }
+        for c in seg {
+            let ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-' || c == '~';
+            if !ok { return false; }
+        }
+    }
+    return true;
+}
+
+// Clones owner/repo@tag into the cache when it is not there; never updates a cached tag. dir gets the folder.
+fn fetch_git(line: i64, src: const u8[:], dir: u8[>..]&) -> bool {
+    let slash = find(src, "/");
+    let at = find(src, "@");
+    var m: u8[>..] = [];
+    if at < slash { format(m, src, ": a git source is owner/repo@tag"); err(PKG_LIST, line, m); return false; }
+    let owner = src[..slash];
+    let repo = src[slash + 1..at];
+    let tag = src[at + 1..];
+    if !git_part_ok(owner, false) || !git_part_ok(repo, false) || !git_part_ok(tag, true) {
+        format(m, src, ": a git source is owner/repo@tag, with letters, digits, . _ - in each part");
+        err(PKG_LIST, line, m);
+        return false;
+    }
+    var cache: u8[>..] = [];
+    var v: u8[>..] = [];
+    var home: u8[>..] = [];
+    if env("GWEB_PKG_CACHE", v) && v.len > 0 { cache.append(v); }
+    else if env("HOME", home) && home.len > 0 { format(cache, home, "/.cache/gweb/pkgs"); }
+    else { err(PKG_LIST, line, "set HOME or GWEB_PKG_CACHE to fetch git packages"); return false; }
+    while cache.len > 1 && cache[cache.len - 1] == '/' { cache.pop(); }
+    format(dir, cache, "/", src);
+    if is_dir(dir) { return true; }
+    var parent: u8[>..] = [];
+    format(parent, cache, "/", owner);
+    var cmd: u8[>..] = [];
+    var out: u8[>..] = [];
+    cmd.append("mkdir -p ");
+    shq(cmd, parent);
+    c_run(cmd, out);
+    cmd.clear();
+    out.clear();
+    var url: u8[>..] = [];
+    format(url, "https://github.com/", owner, "/", repo);
+    cmd.append("git clone --depth 1 --branch ");
+    shq(cmd, tag);
+    cmd.push(' ');
+    shq(cmd, url);
+    cmd.push(' ');
+    shq(cmd, dir);
+    if c_run(cmd, out) != 0 {
+        format(m, src, ": git clone failed: ", trim(out));
+        err(PKG_LIST, line, m);
+        return false;
+    }
+    return true;
+}
+
+// Reads PKG/gweb.package: `name IDENT` and `gweb MAJOR.MINOR`, # comments. Returns the name, or false after reporting.
+fn read_manifest(path: const u8[:], text: const u8[:], name: u8[..64]&) -> bool {
+    var have_name = false;
+    var have_ver = false;
+    var ver_line = 0;
+    var want_major: i64 = 0;
+    var want_minor: i64 = 0;
+    var want_text: u8[>..] = [];
+    var good = true;
+    for raw, i in split(text, '\n') {
+        let t = trim(raw);
+        if t.len == 0 || t[0] == '#' { continue; }
+        let sp = find(t, " ");
+        var key: const u8[:] = t;
+        var val: const u8[:] = "";
+        if sp >= 0 { key = t[..sp]; val = trim(t[sp + 1..]); }
+        if key == "name" {
+            if !is_ident(val) || val.len > 64 { err(path, i + 1, "name needs a Goose identifier, as in name admin"); good = false; }
+            else { name.clear(); name.append(val); have_name = true; }
+        } else if key == "gweb" {
+            let parts = split(val, '.');
+            var ok = parts.len == 2;
+            var major: i64 = 0;
+            var minor: i64 = 0;
+            if ok {
+                let a, aok = parse_int(parts[0]);
+                let b, bok = parse_int(parts[1]);
+                ok = aok && bok && a >= 0 && b >= 0;
+                major = a;
+                minor = b;
+            }
+            if !ok { err(path, i + 1, "gweb needs MAJOR.MINOR, as in gweb 0.3"); good = false; }
+            else { have_ver = true; ver_line = i + 1; want_major = major; want_minor = minor; want_text.clear(); want_text.append(val); }
+        } else {
+            err(path, i + 1, "a line is `name IDENT` or `gweb MAJOR.MINOR`");
+            good = false;
+        }
+    }
+    if !have_name && good { err(path, 0, "needs a name line, as in name admin"); good = false; }
+    if !have_ver && good { err(path, 0, "needs a gweb line, as in gweb 0.3"); good = false; }
+    if !good { return false; }
+    let cur = split(trim(EMBEDDED_VERSION), '.');
+    if cur.len < 2 { return true; }
+    let cmaj, ok1 = parse_int(cur[0]);
+    let cmin, ok2 = parse_int(cur[1]);
+    if !ok1 || !ok2 { return true; }
+    if want_major > cmaj || (want_major == cmaj && want_minor > cmin) {
+        var m: u8[>..] = [];
+        format(m, name, ": needs gweb ", want_text, " or newer (this is ", trim(EMBEDDED_VERSION), ")");
+        err(path, ver_line, m);
+        return false;
+    }
+    return true;
+}
+
+fn load_packages() {
+    pkgs.clear();
+    if !file_exists(PKG_LIST) { return; }
+    var text: u8[>..] = [];
+    if !read(PKG_LIST, text) { return; }
+    var cwd: u8[>..] = [];
+    c_cwd(cwd);
+    for raw, i in split(text, '\n') {
+        let ln = i + 1;
+        let t = trim(raw);
+        if t.len == 0 || t[0] == '#' { continue; }
+        var source: const u8[:] = t;
+        var prefix: const u8[:] = "";
+        let at = find(t, " at ");
+        if at >= 0 || ends_with(t, " at") {
+            var mnt: const u8[:] = "";
+            if at >= 0 { source = trim(t[..at]); mnt = trim(t[at + 4..]); }
+            else { source = trim(t[..t.len - 3]); }
+            if mnt.len > 0 { prefix = mnt[1..]; }
+            while prefix.len > 0 && prefix[prefix.len - 1] == '/' { prefix = prefix[..prefix.len - 1]; }
+            if mnt.len == 0 || mnt[0] != '/' || !mount_ok(prefix) {
+                err(PKG_LIST, ln, "at needs a mount like /admin: literal folder names, no [id], no catch-all, not /");
+                continue;
+            }
+        }
+        if source.len == 0 || find(source, " ") >= 0 || find(source, "\t") >= 0 { err(PKG_LIST, ln, "a line is SOURCE or SOURCE at /prefix"); continue; }
+        var dir: u8[>..] = [];
+        if is_git_source(source) { if !fetch_git(ln, source, dir) { continue; } }
+        else if source[0] == '/' { dir.append(source); }
+        else { format(dir, cwd, "/", source); }
+        while dir.len > 1 && dir[dir.len - 1] == '/' { dir.pop(); }
+        if dir.len >= 400 || !is_dir(dir) {
+            var m: u8[>..] = [];
+            format(m, source, ": not a folder (or the path is too long)");
+            err(PKG_LIST, ln, m);
+            continue;
+        }
+        var manifest: u8[>..] = [];
+        format(manifest, dir, "/gweb.package");
+        var mtext: u8[>..] = [];
+        if !read_file(manifest, mtext) {
+            var m: u8[>..] = [];
+            format(m, source, ": no gweb.package in this folder");
+            err(PKG_LIST, ln, m);
+            continue;
+        }
+        var pk = Pkg { name: "", dir: "", mount: "", git: is_git_source(source) };
+        if !read_manifest(manifest, mtext, pk.name) { continue; }
+        pk.dir.append(dir);
+        pk.mount.append(prefix);
+        var m: u8[>..] = [];
+        for r in PKG_RESERVED { if pk.name == r { format(m, pk.name, ": this package name is taken by a module; rename it"); } }
+        for o in pkgs {
+            if o.name == pk.name { format(m, pk.name, ": a second package with this name (", o.dir, ")"); }
+            if prefix.len > 0 && o.mount.len > 0 && (is_ancestor(o.mount, prefix) || is_ancestor(prefix, o.mount)) {
+                format(m, pk.name, ": its mount /", prefix, " overlaps /", o.mount, " of package ", o.name);
+            }
+        }
+        if m.len > 0 { err(manifest, 0, m); continue; }
+        var sub: u8[>..] = [];
+        format(sub, dir, "/app");
+        let has_app = is_dir(sub);
+        sub.clear();
+        format(sub, dir, "/public");
+        let has_public = is_dir(sub);
+        if prefix.len == 0 {
+            if has_app { format(m, pk.name, ": a package without `at` has no app/ folder"); err(manifest, 0, m); continue; }
+            if has_public { format(m, pk.name, ": a package without `at` has no public/ folder"); err(manifest, 0, m); continue; }
+        } else {
+            var clash: u8[>..] = [];
+            format(clash, "app/", prefix);
+            if is_dir(clash) {
+                format(m, pk.name, ": the project has this folder, so the package cannot be mounted at /", prefix);
+                err(clash, 0, m);
+                continue;
+            }
+        }
+        pkgs.push(pk);
+    }
+}
+
 // ---------------------------------------------------------------- scan
 
-fn scan_dir(rel: const u8[:], todo: u8[..512][>..]&) {
+// base is the app folder ("app", or PKGDIR/app), prefix the mount ("" for the project); rel is relative to base.
+fn scan_dir(base: const u8[:], prefix: const u8[:], rel: const u8[:], todo: u8[..512][>..]&) {
     var path: u8[>..] = [];
-    path.append("app");
+    path.append(base);
     if rel.len > 0 { path.push('/'); path.append(rel); }
+    var full_rel: u8[>..] = [];
+    full_rel.append(prefix);
+    if prefix.len > 0 && rel.len > 0 { full_rel.push('/'); }
+    full_rel.append(rel);
     var names: u8[>..] = [];
     if !list_dir(path, names) { return; }
-    var d = Dir { rel: "", route: false, page_html: false, page_goose: false, layout: false, middleware: false,
+    var d = Dir { rel: "", root: "", route: false, page_html: false, page_goose: false, layout: false, middleware: false,
                   methods: 0, has_load: false, has_before: false, has_after: false, has_post: false, frags: "",
                   route_ns: "", page_ns: "", layout_ns: "", mw_ns: "" };
-    if rel.len >= 512 { err(path, 0, "path too long"); return; }
-    d.rel.append(rel);
+    if full_rel.len >= 512 || path.len >= 512 { err(path, 0, "path too long"); return; }
+    d.rel.append(full_rel);
+    d.root.append(path);
     var subdirs: u8[>..] = [];
     var catch_alls = 0;
     for name in split(names, '\n') {
@@ -223,10 +455,12 @@ fn scan_dir(rel: const u8[:], todo: u8[..512][>..]&) {
         else if name == "layout.html" { d.layout = true; }
         else if name == "middleware.goose" { d.middleware = true; }
         else if name == "not-found.html" {
-            if rel.len == 0 { has_not_found = true; } else { err(full, 0, "not-found.html belongs in app/ only"); }
+            if prefix.len > 0 || base != "app" { err(full, 0, "a package has no not-found.html; the project's app/ owns the 404 page"); }
+            else if rel.len == 0 { has_not_found = true; } else { err(full, 0, "not-found.html belongs in app/ only"); }
         }
         else if name == "state.goose" {
-            if rel.len == 0 { has_state = true; } else { err(full, 0, "state.goose belongs in app/ only"); }
+            if base != "app" { err(full, 0, "a package has no state.goose; the project's app/ owns the state"); }
+            else if rel.len == 0 { has_state = true; } else { err(full, 0, "state.goose belongs in app/ only"); }
         }
     }
     if d.route && d.page_html { err(path, 0, "a folder has route.goose or page.html, not both"); }
@@ -234,7 +468,7 @@ fn scan_dir(rel: const u8[:], todo: u8[..512][>..]&) {
     let i = dirs.len;
     var n: u8[>..] = [];
     var sl: u8[>..] = [];
-    slug(sl, rel);
+    slug(sl, full_rel);
     if d.route { n.clear(); format(n, "r", i); if sl.len > 0 { format(n, "_", sl); } d.route_ns.append(n[..min(n.len, 200)]); }
     if d.page_html { n.clear(); format(n, "p", i); if sl.len > 0 { format(n, "_", sl); } d.page_ns.append(n[..min(n.len, 200)]); }
     if d.layout { n.clear(); format(n, "l", i); d.layout_ns.append(n); }
@@ -254,13 +488,13 @@ fn scan_dir(rel: const u8[:], todo: u8[..512][>..]&) {
     }
 }
 
-fn scan_app() {
+fn scan_app(base: const u8[:], prefix: const u8[:]) {
     var todo: u8[..512][>..] = [];
     todo.push("");
     while todo.len > 0 {
         let rel: u8[..512] = todo[todo.len - 1];
         todo.pop();
-        scan_dir(rel, todo);
+        scan_dir(base, prefix, rel, todo);
     }
 }
 
@@ -302,9 +536,10 @@ fn etag_of(data: const u8[:]) -> u8[..24] {
     return t;
 }
 
-fn scan_public_dir(rel: const u8[:], todo: u8[..512][>..]&) {
+// base is the public folder ("public", or PKGDIR/public); prefix the mount; urls start with /prefix.
+fn scan_public_dir(base: const u8[:], prefix: const u8[:], rel: const u8[:], todo: u8[..512][>..]&) {
     var path: u8[>..] = [];
-    path.append("public");
+    path.append(base);
     if rel.len > 0 { path.push('/'); path.append(rel); }
     var names: u8[>..] = [];
     if !list_dir(path, names) { return; }
@@ -314,12 +549,13 @@ fn scan_public_dir(rel: const u8[:], todo: u8[..512][>..]&) {
         if rel.len > 0 { format(r, rel, "/"); }
         r.append(name);
         var full: u8[>..] = [];
-        format(full, "public/", r);
+        format(full, base, "/", r);
         if is_dir(full) { if r.len < 512 { var t: u8[..512] = ""; t.append(r); todo.push(t); } continue; }
         if r.len >= 500 { err(full, 0, "path too long"); continue; }
         var data: u8[>..] = [];
         if !read(full, data) { continue; }
         var s = Static { url: "/", file: "", ctype: "", etag: "" };
+        if prefix.len > 0 { s.url.append(prefix); s.url.push('/'); }
         s.url.append(r);
         s.file.append(full);
         s.ctype.append(content_type(name));
@@ -328,36 +564,60 @@ fn scan_public_dir(rel: const u8[:], todo: u8[..512][>..]&) {
     }
 }
 
-fn scan_public() {
+fn scan_public(base: const u8[:], prefix: const u8[:]) {
     var todo: u8[..512][>..] = [];
     todo.push("");
     while todo.len > 0 {
         let rel: u8[..512] = todo[todo.len - 1];
         todo.pop();
-        scan_public_dir(rel, todo);
+        scan_public_dir(base, prefix, rel, todo);
     }
 }
 
-fn scan_components() {
-    component_names.clear();
-    if is_dir("public/_gw") { err("public/_gw", 0, "/_gw/ is goose-web's component folder; rename this folder"); }
+struct Comp { name: u8[..64], path: u8[..512] }
+
+// Adds the components of one folder (the project's components/, or a package's) to found.
+fn scan_components_in(dir: const u8[:], found: Comp[>..<]&) {
     var names: u8[>..] = [];
-    if !list_dir("components", names) { return; }
-    var found: u8[..64][>..<] = [];
+    if !list_dir(dir, names) { return; }
     for f in split(names, '\n') {
         if f.len == 0 || f[0] == '.' || !ends_with(f, ".gshtml") { continue; }
         let n = f[..f.len - 7];
         var ok = n.len > 0 && n.len <= 64 && n[0] >= 'A' && n[0] <= 'Z';
         for c in n { if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) { ok = false; } }
         var p: u8[>..] = [];
-        format(p, "components/", f);
+        format(p, dir, "/", f);
         if !ok { err(p, 0, "a component's name is [A-Z][A-Za-z0-9]*, as in components/TodoBox.gshtml"); continue; }
-        var t: u8[..64] = "";
-        t.append(n);
-        found.push(t);
+        if p.len >= 512 { err(p, 0, "path too long"); continue; }
+        var c = Comp { name: "", path: "" };
+        c.name.append(n);
+        c.path.append(p);
+        found.push(c);
     }
-    sort(found) { a, b => compare(a, b) < 0 };
-    for t in found { component_names.push(t); }
+}
+
+fn scan_components() {
+    component_names.clear();
+    component_paths.clear();
+    if is_dir("public/_gw") { err("public/_gw", 0, "/_gw/ is goose-web's component folder; rename this folder"); }
+    var found: Comp[>..<] = [];
+    scan_components_in("components", found);
+    for pk in pkgs {
+        var dir: u8[>..] = [];
+        format(dir, pk.dir, "/components");
+        scan_components_in(dir, found);
+    }
+    sort(found) { a, b => compare(a.name, b.name) < 0 || (a.name == b.name && compare(a.path, b.path) < 0) };
+    for c, i in found {
+        if i > 0 && found[i - 1].name == c.name {
+            var m: u8[>..] = [];
+            format(m, "component ", c.name, " is also defined in ", found[i - 1].path, "; component names are one flat namespace");
+            err(c.path, 0, m);
+            continue;
+        }
+        component_names.push(c.name);
+        component_paths.push(c.path);
+    }
 }
 
 fn has_component(name: const u8[:]) -> bool {
@@ -373,8 +633,29 @@ fn scan() {
     has_state_init = false;
     has_not_found = false;
     if !is_dir("app") { err("app", 0, "no app/ folder here; run gweb in a project, or gweb new <dir>"); return; }
-    scan_app();
-    scan_public();
+    load_packages();
+    if errors > 0 { return; }
+    scan_app("app", "");
+    scan_public("public", "");
+    let own_statics = statics.len;
+    for pk in pkgs {
+        if pk.mount.len == 0 { continue; }
+        var base: u8[>..] = [];
+        format(base, pk.dir, "/app");
+        if is_dir(base) { scan_app(base, pk.mount); }
+        base.clear();
+        format(base, pk.dir, "/public");
+        if is_dir(base) { scan_public(base, pk.mount); }
+    }
+    for a, ai in statics {
+        if ai < own_statics { continue; }
+        for bi in ai {
+            if statics[bi].url != a.url { continue; }
+            var m: u8[>..] = [];
+            format(m, "this file has the same URL as ", statics[bi].file);
+            err(a.file, 0, m);
+        }
+    }
     scan_components();
     // A public file may not shadow a route at the same literal URL.
     for d in dirs {
@@ -390,7 +671,7 @@ fn check_route_shapes() {
     for d in dirs {
         if !d.route && !d.page_html { continue; }
         var path: u8[>..] = [];
-        app_path(path, d.rel, "");
+        app_path(path, d, "");
         if path[path.len - 1] == '/' { path.pop(); }
         let segs = split(d.rel, '/');
         if segs.len > 16 { err(path, 0, "a route is at most 16 folders deep"); }
@@ -409,7 +690,7 @@ fn check_route_shapes() {
             for p in dirs {
                 if p.rel != parent || (!p.route && !p.page_html) { continue; }
                 var pp: u8[>..] = [];
-                app_path(pp, parent, "");
+                app_path(pp, p, "");
                 if pp[pp.len - 1] == '/' { pp.pop(); }
                 var u: u8[>..] = [];
                 url_of(u, parent);
@@ -453,9 +734,11 @@ fn imports_sqlite(code: const u8[:]) -> bool {
     return false;
 }
 
-fn scan_lib_for_sqlite() {
+fn scan_lib_for_sqlite(root: const u8[:]) {
     var todo: u8[..512][>..] = [];
-    todo.push("lib");
+    var first: u8[..512] = "";
+    first.append(root);
+    todo.push(first);
     while todo.len > 0 {
         let dir: u8[..512] = todo[todo.len - 1];
         todo.pop();
@@ -1044,7 +1327,7 @@ fn check_targets() {
             continue;
         }
         var page: u8[>..] = [];
-        app_path(page, d.rel, "page.html");
+        app_path(page, d, "page.html");
         if !has_name(d.frags, t.name) {
             var m: u8[>..] = [];
             format(m, "gw-target: ", page, " has no {#fragment ", t.name, "}");
@@ -1052,7 +1335,7 @@ fn check_targets() {
         }
         if t.post && !d.has_post {
             var goose: u8[>..] = [];
-            app_path(goose, d.rel, "page.goose");
+            app_path(goose, d, "page.goose");
             var m: u8[>..] = [];
             format(m, "gw-target: method=\"post\" needs fn POST( in ", goose);
             err(t.path, t.line, m);
@@ -1311,7 +1594,16 @@ fn gen_dispatch(m: u8[>..]&) {
 
 fn gen_static(m: u8[>..]&) {
     for s, i in statics {
-        format(m, "let S", i, " = embed_file(\"../"); lit(m, s.file); m.append("\");\n");
+        if s.file.len > 0 && s.file[0] == '/' {
+            // A package's file lies outside the project: copy it beside main.goose and embed the copy.
+            var data: u8[>..] = [];
+            var dst: u8[>..] = [];
+            format(dst, gen_root, "/pkg_static_", i);
+            if read(s.file, data) { write(dst, data); }
+            format(m, "let S", i, " = embed_file(\"pkg_static_", i, "\");\n");
+        } else {
+            format(m, "let S", i, " = embed_file(\"../"); lit(m, s.file); m.append("\");\n");
+        }
     }
     m.append("fn static_bytes(i: i64) -> const u8[:] {\n");
     for s, i in statics { format(m, "    if i == ", i, " { return S", i, "; }\n"); }
@@ -1525,9 +1817,8 @@ fn gen_components(dev: bool) {
     var gw_dir: u8[>..] = [];
     format(gw_dir, gen_root, "/_gw");
     make_dir(gw_dir);
-    for n in component_names {
-        var path: u8[>..] = [];
-        format(path, "components/", n, ".gshtml");
+    for n, ci in component_names {
+        let path = component_paths[ci];
         var src: u8[>..] = [];
         component_lines.push(0);
         if !read(path, src) { continue; }
@@ -1571,16 +1862,26 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     uses_fragments = false;
     targets.clear();
     gen_components(dev);
-    if is_dir("lib") { scan_lib_for_sqlite(); }
+    if is_dir("lib") { scan_lib_for_sqlite("lib"); }
     if is_dir("lib") {
         var lib_link: u8[>..] = [];
         format(lib_link, root, "/lib");
         c_symlink("../lib", lib_link);
     }
+    // A package's lib/ is linked at <root>/NAME, so its code writes import NAME.module;
+    for pk in pkgs {
+        var lib: u8[>..] = [];
+        format(lib, pk.dir, "/lib");
+        if !is_dir(lib) { continue; }
+        scan_lib_for_sqlite(lib);
+        var pkg_link: u8[>..] = [];
+        format(pkg_link, root, "/", pk.name);
+        c_symlink(lib, pkg_link);
+    }
     for &d, di in dirs {
         if d.route {
             var src: u8[>..] = [];
-            app_path(src, d.rel, "route.goose");
+            app_path(src, d, "route.goose");
             var code: u8[>..] = [];
             if copy_prefixed(src, d.route_ns, code) {
                 for k in 7 { if defines(code, METHODS[k]) { d.methods |= 1 << k; } }
@@ -1590,7 +1891,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
         }
         if d.middleware {
             var src: u8[>..] = [];
-            app_path(src, d.rel, "middleware.goose");
+            app_path(src, d, "middleware.goose");
             var code: u8[>..] = [];
             if copy_prefixed(src, d.mw_ns, code) {
                 d.has_before = defines(code, "before");
@@ -1600,7 +1901,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
         }
         if d.layout {
             var src: u8[>..] = [];
-            app_path(src, d.rel, "layout.html");
+            app_path(src, d, "layout.html");
             var imports: u8[>..] = [];
             var frags: u8[>..] = [];
             var text: u8[>..] = [];
@@ -1613,7 +1914,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
             var imports: u8[>..] = [];
             if d.page_goose {
                 var src: u8[>..] = [];
-                app_path(src, d.rel, "page.goose");
+                app_path(src, d, "page.goose");
                 var code: u8[>..] = [];
                 if copy_prefixed(src, d.page_ns, code) {
                     d.has_load = defines(code, "load");
@@ -1626,7 +1927,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
             }
             add_default_imports(imports);
             var src: u8[>..] = [];
-            app_path(src, d.rel, "page.html");
+            app_path(src, d, "page.html");
             var html: u8[>..] = [];
             if read_src(src, html) && mentions_csrf(html) { d.page_csrf = true; }
             var base: u8[>..] = [];
@@ -1704,6 +2005,16 @@ fn rewrite_errors(text: const u8[:], cwd: const u8[:]) -> u8[>..] {
     cur.clear();
     cur.append(next);
     next.clear();
+    for pk in pkgs {
+        var from: u8[>..] = [];
+        var to: u8[>..] = [];
+        format(from, abs, gen_root, "/", pk.name, "/");
+        format(to, pk.dir, "/lib/");
+        format_replaced(next, cur, from, to);
+        cur.clear();
+        cur.append(next);
+        next.clear();
+    }
     format_replaced(next, cur, abs, "");
     return component_lines_back(next);
 }
@@ -1744,7 +2055,7 @@ fn component_lines_back(text: const u8[:]) -> u8[>..] {
                 }
             }
             if src_line > 0 { format(out, pre, src_line); }
-            else { format(out, "generated code for components/", n, ".gshtml"); }
+            else { format(out, "generated code for ", component_paths[i]); }
             p = e;
         }
         if !done { out.append("components/"); p = at + "components/".len; }
@@ -1917,9 +2228,8 @@ fn test_cmd() -> bool {
         p.clear();
         format(p, dir, "/gwi.js");
         write(p, GWI_SHIM);
-        for n in component_names {
-            var path: u8[>..] = [];
-            format(path, "components/", n, ".gshtml");
+        for n, ci in component_names {
+            let path = component_paths[ci];
             var src: u8[>..] = [];
             if !read(path, src) { return false; }
             var g: u8[>..] = [];
@@ -2092,7 +2402,7 @@ fn print_routes() {
         url_of(u, d.rel);
         if d.route {
             var src: u8[>..] = [];
-            app_path(src, d.rel, "route.goose");
+            app_path(src, d, "route.goose");
             codes.clear();
             read(src, codes);
             var ms: u8[>..] = [];
@@ -2104,9 +2414,9 @@ fn print_routes() {
             format(line, src, "\n");
         } else {
             var src: u8[>..] = [];
-            app_path(src, d.rel, "page.html");
+            app_path(src, d, "page.html");
             var goose: u8[>..] = [];
-            app_path(goose, d.rel, "page.goose");
+            app_path(goose, d, "page.goose");
             codes.clear();
             var has_post = false;
             if d.page_goose && read_file(goose, codes) { has_post = defines(codes, "POST"); }
@@ -2174,6 +2484,15 @@ fn stamp() -> i64 {
     var count = 0;
     var newest = 0;
     for dir in ["app", "lib", "public", "components"] { newest = max(newest, c_tree_stamp(dir, count)); }
+    // Path packages are edited beside the project; a git package is a cached tag and never changes.
+    for pk in pkgs {
+        if pk.git { continue; }
+        for sub in ["app", "lib", "public", "components"] {
+            var dir: u8[>..] = [];
+            format(dir, pk.dir, "/", sub);
+            newest = max(newest, c_tree_stamp(dir, count));
+        }
+    }
     return newest * 31 + count;
 }
 
@@ -2193,6 +2512,7 @@ fn dev(extra: u8[:][:]) {
         write_dev_errors(last_errors);
         write_stderr("gweb dev: fix the errors above; watching app/, lib/, public/ and components/\n");
     }
+    if pkgs.len > 0 { last = stamp(); }     // the package folders were not known before the first build
     loop {
         sleep_ms(250);
         if pid > 0 && c_wait(pid, 0) != -2 {
