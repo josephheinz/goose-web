@@ -430,6 +430,7 @@ Same shape as `components.sh`.
 - Add a todo: it appears, the page does not reload (`#stamp` unchanged), the input is empty and still focused.
 - Enter in the input adds as well.
 - Add with only spaces: the error line shows. The next valid add clears it.
+- After a spaces-only Enter, typing continues in the same input with no click; the same holds after the next valid add (follow-up 1).
 - Done, Undo and Remove each change only the list.
 - A category link on `/fragments/products` changes the rows without a reload. Quick view fills `#detail`.
 - Meta-click on a category link opens a new tab with the whole page.
@@ -475,3 +476,66 @@ Same shape as `components.sh`.
 - **Size:** 3,133 of 3,584 bytes. Any v2 swap mode will need the limit raised again.
 
 Prototype files: `/private/tmp/claude-501/-Users-joeheinz-Documents/4ae17d8b-d8e8-4e87-98d8-883f15c4658c/scratchpad/arch-fragments/w/goose-web/client/gwi.js`, `/private/tmp/claude-501/-Users-joeheinz-Documents/4ae17d8b-d8e8-4e87-98d8-883f15c4658c/scratchpad/arch-fragments/w/goose-web/form.goose`, `/private/tmp/claude-501/-Users-joeheinz-Documents/4ae17d8b-d8e8-4e87-98d8-883f15c4658c/scratchpad/arch-fragments/w/goose-web/web.goose`, and the hand-edited generated code in `/private/tmp/claude-501/-Users-joeheinz-Documents/4ae17d8b-d8e8-4e87-98d8-883f15c4658c/scratchpad/arch-fragments/w/goose-web/examples/shop/.gooseweb/`. Nothing outside the scratchpad was written, and nothing was committed.
+
+## Follow-up 1
+
+The focus loss is a demo-template fault, and the fix is to make the error the last child of the input's own `<p>`. I ran that fix in a scratch copy of the shop against main's `gweb` (df2a2a1). No runtime change.
+
+### 1. Focus lost when the error line appears or disappears
+
+**Decision: change the demo template and document an author rule; leave `client/gwi.js` alone.**
+
+**Template change** in `examples/shop/app/fragments/page.html`. Delete the line
+
+```html
+{#if props.error.len > 0}<p class="error">{props.error}</p>{/if}
+```
+
+and change the input line to
+
+```html
+<p><input name="title" value="{props.draft}" placeholder="What needs doing?"> <button name="add" value="1">Add</button>{#if props.error.len > 0} <span class="error">{props.error}</span>{/if}</p>
+```
+
+The error is now the last child of its parent, so showing or hiding it only appends or removes one trailing node. No sibling shifts.
+
+**Verified in the browser** (Chromium pane, scratch copy, production build on port 3392, script-driven clicks rather than real keystrokes):
+- **Spaces-only add:** the error shows; the input is the same element and still has focus; the `<ul>` is the same element.
+- **Next valid add:** the error is gone; same input, still focused and empty; same `<ul>`; the item is added.
+
+**Existing checks:** `check_site.py` line 258 looks for `class="error"`, which the `<span>` still satisfies. I did not rerun `check_site.py` or `fragments.sh` against the changed template; rerun both after the edit.
+
+**Author rule** (add to the README "Fragments" section, and it applies equally to components):
+
+> The morph matches sibling nodes by position; it has no keys. An element that comes and goes must be the last child of its parent, or always be rendered and left empty (or `hidden`) when unused. Otherwise every later sibling is rebuilt, and a focused input among them loses focus.
+
+**Browser test line to add:** after a spaces-only Enter, typing continues in the same input with no click; the same holds after the next valid add.
+
+**Rejected:**
+- **Keyed morph (match by `id` or a `gw-key`):** it needs lookahead in `morph`, adds bytes for every page, and changes component behaviour that the parity suite and browser lines already cover. Revisit only if list reordering becomes a requirement.
+- **A one-step lookahead on `nodeName`:** it would not have caught this case, because both siblings are `<p>`.
+- **Always rendering an empty `<p class="error">`:** it works, but leaves an empty styled block on the page; the trailing `<span>` needs no CSS.
+- **A build-time warning for a conditional element before siblings:** gweb does not parse HTML structure, so it would be guesswork.
+
+### 2. Builder interpretations
+
+- **1. Messages carry the real name, URL or path: confirmed.** `NAME`, `URL` and `app/x/…` in the design are placeholders, as in `gw-target: no page matches /zzz`.
+- **3. Script tag placement: confirmed.** First output with no newline in `page.html` and `not-found.html`; right before `F();` in a layout.
+- **6. The `id="NAME"` check: make it stricter.** The match must be at an attribute boundary: the byte before `id="NAME"` is a space or a tab.
+  - `data-id="a"` and `xid="a"` no longer satisfy it.
+  - The message is unchanged.
+  - Still double quotes only, and still a literal name.
+  - Add one expected-failure fixture to `test/fragments.sh`: `<div data-id="a">{#fragment a}` must fail with the existing message.
+
+### 3. Recorded, no change
+
+- **Network failure text:** the overlay shows `TypeError: Failed to fetch` without the fragment name. That is the browser's own error passed through `oops`. Adding the name would cost bytes for a dev-only nicety, so it stays.
+- **Syntax:** Addendum 4's examples read in Addendum 6 syntax as `{#fragment NAME}`, `{/fragment}`, `{expr}`. The rules in sections 2 and 5 are otherwise unchanged; a wildcard URL segment is one containing `{`.
+
+**Files the builder touches for this follow-up:**
+- `goose-web/examples/shop/app/fragments/page.html` (the two-line edit)
+- `goose-web/cli/gweb.goose` (the boundary test beside the `id="NAME"` substring check, near line 475)
+- `goose-web/test/fragments.sh` plus one fixture
+- `goose-web/README.md` (the author rule)
+
+Scratch copy with the tested template: `/private/tmp/claude-501/-Users-joeheinz-Documents/4ae17d8b-d8e8-4e87-98d8-883f15c4658c/scratchpad/arch-fragments/f1/shop/app/fragments/page.html`. Nothing outside the scratchpad was written.

@@ -223,9 +223,11 @@ sequenceDiagram
 - Extra new nodes are appended, and extra old nodes are removed.
 
 There are no keys. When a node is inserted before others, every later sibling
-is compared with the wrong partner, so it is rebuilt. That is why the fragments
-demo loses input focus when its error line appears; the fix is with the
-architect (DESIGN-ADDENDUM-4, follow-up 1).
+is compared with the wrong partner, so it is rebuilt, and a focused input among
+those siblings loses focus. The rule for authors (DESIGN-ADDENDUM-4, follow-up 1):
+an element that comes and goes must be the last child of its parent, or always
+be rendered and left empty. The fragments demo puts its error message in a
+trailing `<span>` inside the input's own `<p>` for this reason.
 
 ## 5. `gweb dev`
 

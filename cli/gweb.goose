@@ -473,7 +473,16 @@ fn template_fragment_open(path: const u8[:], ln: i64, name: const u8[:], line: c
             while lt > 0 && before[lt] != '<' { lt -= 1; }
             var want: u8[>..] = [];
             format(want, "id=\"", name, "\"");
-            ok = before[lt] == '<' && find(before[lt..], want) >= 0;
+            // id="NAME" must start an attribute: the byte before it is a space
+            // or a tab, so data-id="NAME" does not count (follow-up 1, point 6).
+            var from = lt;
+            while before[lt] == '<' && !ok {
+                let k2 = find(before[from..], want);
+                if k2 < 0 { break; }
+                let p = from + k2;
+                if p > 0 && (before[p - 1] == ' ' || before[p - 1] == '\t') { ok = true; }
+                from = p + 1;
+            }
         }
         if !ok {
             var m: u8[>..] = [];

@@ -198,6 +198,10 @@ page.
   (it needs `load` beside it). Return `load`'s props with what the form changed. A POST without the
   header renders the whole page with status 200; for post-redirect-get call `web::redirect(ctx, "/x", 303)`.
   A POST with `Sec-Fetch-Site: cross-site` gets 403; other methods get 405.
+- The morph matches sibling nodes by position; it has no keys. An element that comes and goes must
+  be the last child of its parent, or always be rendered and left empty (or `hidden`) when unused.
+  Otherwise every later sibling is rebuilt, and a focused input among them loses focus. This rule
+  applies to components too.
 - `import web.form;` gives `web::form(req, "name", out)` (URL-decoded, appended to `out`) and
   `web::form_int(req, "id")`. Several intents on one page are told apart by button names:
   `<button name="remove" value="3">`.

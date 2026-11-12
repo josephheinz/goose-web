@@ -179,6 +179,7 @@ expect_fail $P '<i id="a">{#fragment a}<b id="b">{#fragment b}x{/fragment}</b>{/
 expect_fail $P '{#fragment a}x{/fragment}</i>' 2 '{#fragment a} goes right after the opening tag that has id="a", on the same line'
 expect_fail $P '<i>{#fragment a}x{/fragment}</i>' 2 '{#fragment a} goes right after the opening tag that has id="a", on the same line'
 expect_fail $P '<i id="b">{#fragment a}x{/fragment}</i>' 2 '{#fragment a} goes right after the opening tag that has id="a", on the same line'
+expect_fail $P '<div data-id="a">{#fragment a}x{/fragment}</div>' 2 '{#fragment a} goes right after the opening tag that has id="a", on the same line'
 expect_fail $P '<i id="a"> {#fragment a}x{/fragment}</i>' 2 '{#fragment a} goes right after the opening tag that has id="a", on the same line'
 expect_fail $P '<i id="a">x{/fragment}</i>' 2 "{/fragment} does not close an open {#fragment}"
 expect_fail $P '<i id="a">{#fragment a}x{/fragment} </i>' 2 "{/fragment} goes right before the closing tag of the element"
