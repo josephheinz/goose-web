@@ -76,7 +76,7 @@ if out=$("$GWEB" -C "$WORK/site" build 2>&1); then
       sleep 0.2
     done
     check "$(grep -q 'news=2' "$WORK/count" && echo ok)" "/count shows two subscribers on news"
-    check "$(wait_for "$WORK/e1.h" 'x-accel-buffering' && grep -qi '^content-type: text/event-stream' "$WORK/e1.h" \
+    check "$(wait_for "$WORK/e1.h" 'X-Accel-Buffering' && grep -qi '^content-type: text/event-stream' "$WORK/e1.h" \
       && grep -qi '^cache-control: no-store' "$WORK/e1.h" && grep -qi '^x-accel-buffering: no' "$WORK/e1.h" && echo ok)" "/events: event-stream, no-store, X-Accel-Buffering: no"
     curl -s -X POST -d 'hello' "$URL/publish" > "$WORK/pub"
     check "$(wait_for "$WORK/e1.b" 'data: hello' && wait_for "$WORK/e2.b" 'data: hello' && echo ok)" "a POST that publishes reaches both curl -N clients"
