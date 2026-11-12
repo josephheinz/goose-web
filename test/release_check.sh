@@ -86,6 +86,7 @@ step catchall_test catchall_test
 step components sh "$HERE/components.sh"
 step templates sh "$HERE/templates.sh"
 step fragments env PORT="${PORT:-3991}" sh "$HERE/fragments.sh"
+step catchall env PORT="${PORT:-3994}" sh "$HERE/catchall.sh"
 
 gweb_new() {
   mkdir "$WORK/lone"
