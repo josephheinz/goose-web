@@ -38,9 +38,9 @@ fn main() {
     var city: u8[..10] = "";
     check(web::form_text(r1, "city", city, errs, true), "text with %XX");
     check_eq(city, "\xC3\xA9t\xC3\xA9", "%XX decoded");
-    var pad: u8[..10] = "";
-    check(web::form_text(r1, "pad", pad, errs, true), "padded text ok");
-    check_eq(pad, " x ", "not trimmed");
+    var padv: u8[..10] = "";
+    check(web::form_text(r1, "pad", padv, errs, true), "padded text ok");
+    check_eq(padv, " x ", "not trimmed");
     check(!web::has_errors(errs), "no errors so far");
 
     var absent: u8[..10] = "";
@@ -210,7 +210,8 @@ fn main() {
     check(res.status == http::Status.UnprocessableEntity, "errors_json status");
     check_eq(res.body, "{\"errors\":{\"email\":\"Required.\",\"name\":\"Say \\\"hi\\\"\"}}", "errors_json body");
     var res2 = http::new_response();
-    web::errors_json(res2, web::no_errors());
+    let none = web::no_errors();
+    web::errors_json(res2, none);
     check_eq(res2.body, "{\"errors\":{}}", "errors_json empty");
 
     // Ctx.status

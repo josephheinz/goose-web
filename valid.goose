@@ -165,7 +165,7 @@ fn field_value(out: u8[>..]&, req: const http::Request&, field: const u8[:], fal
 // out is any u8[>..]& target, so a u8[..N] struct field passes as is; N is out.cap.
 // Required and absent or blank (after trim): "Required." Optional and absent or blank: out is left alone.
 // Longer than N: "Use at most N characters.", out left alone. The value is stored as typed, not trimmed.
-fn form_text(req: const http::Request&, field: const u8[:], out: u8[>..]&, errs: FieldErrors&, required: bool) -> bool {
+fn form_text<T>(req: const http::Request&, field: const u8[:], out: T&, errs: FieldErrors&, required: bool) -> bool {
     var v: u8[>..] = [];
     let has = form(req, field, v);
     if !has || trim(v).len == 0 {

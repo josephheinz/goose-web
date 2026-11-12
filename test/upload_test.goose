@@ -353,15 +353,15 @@ fn main() {
     expect_fail(ct, text_big, http::Status.PayloadTooLarge, "text field over 64 KiB is 413");
 
     var head_big: u8[>..] = [];
-    var pad: u8[>..] = [];
-    for i in 20000 { pad.push('p'); }
-    format(head_big, "--", B, "\r\nContent-Disposition: form-data; name=\"a\"\r\nX-Pad: ", pad, "\r\n\r\nv\r\n");
+    var padv: u8[>..] = [];
+    for i in 20000 { padv.push('p'); }
+    format(head_big, "--", B, "\r\nContent-Disposition: form-data; name=\"a\"\r\nX-Pad: ", padv, "\r\n\r\nv\r\n");
     end_body(head_big, B);
     expect_fail(ct, head_big, http::Status.BadRequest, "part headers over 16 KiB are 400");
     var head_ok: u8[>..] = [];
-    pad.clear();
-    for i in 16000 { pad.push('p'); }
-    format(head_ok, "--", B, "\r\nContent-Disposition: form-data; name=\"a\"\r\nX-Pad: ", pad, "\r\n\r\nv\r\n");
+    padv.clear();
+    for i in 16000 { padv.push('p'); }
+    format(head_ok, "--", B, "\r\nContent-Disposition: form-data; name=\"a\"\r\nX-Pad: ", padv, "\r\n\r\nv\r\n");
     end_body(head_ok, B);
     for d in 2 {
         var ctx = new_ctx();
