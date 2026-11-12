@@ -357,3 +357,43 @@ In a template: `<html lang="{t::tag(ctx)}">` and `<p>{t::cart_items(ctx, p.n)}</
 2. **`locales/default` file versus a convention** (the default locale is `en` when present). Default: the explicit file.
 3. **Should route tests isolate state between tests** (rerun `state::init` per test, which is impossible for a SQLite writer claim), or share it (default)?
 4. **Version.** These additions go under `v0.3.0 (unreleased)`; no `VERSION` bump until release.
+
+## Build log
+
+No Goose compiler exists on this machine (`$GOOSE` unset, none on `PATH`, the Addendum 10 SDK path missing). Every step was written and reviewed but **none was compiled or run**. Only `sh -n` ran on the shell suites. The first job with a compiler is to run every test named below and fix what fails.
+
+| Step | Repo, branch | Commits | Status |
+|---|---|---|---|
+| Q1 query builder | goose-sqlite `arch/platform` | `97d9307` | written, untested |
+| R1 `respond` and `web.testing` | goose-web `arch/platform` | `4eb72d8`, `a826a59` | written, untested |
+| R2 `gweb test` runs `tests/` | goose-web | `e896b11`, `7cce428`, and the `gw_t` rename | written, untested |
+| I1 i18n runtime | goose-web | `1785aac` | written, untested |
+| I2 catalog compiler | goose-web | `13dab61` | written, untested |
+| Postgres driver | none | none | designed only (Decision 2) |
+
+**Review fixes by the architect:**
+- `test_send` compared a payload enum with `!=`; it now uses `match`.
+- `header_of` now answers `Content-Type` from `res.content_type`, which is not in `res.headers`.
+- `gweb test` writes `.gooseweb.test/site.goose` (`namespace site;`), so `fn site::get` has a namespace to define into. That namespace mirrors `state`, which exists as a file.
+- The generated test main's Tester is named `gw_t`, so it cannot shadow the `t` i18n namespace.
+
+**Builder choices accepted beyond the design:**
+- Q1:
+  - `table` must be a plain identifier, so aliases go in joins and columns only.
+  - `LIMIT ? OFFSET ?` always come as a pair; an offset alone binds a limit of -1.
+  - Extra misuse errors: an `arg` with no pending `?`, select-only clauses on other kinds, `returning` on a SELECT, a negative limit, and empty raw text.
+  - The whole-query checks run in `query_error`, `sql_text` and `prepare`.
+- R2: the final count is failed checks, not failed tests. Test output is printed when the run ends, not streamed.
+- I2:
+  - Extra build errors: a key that is both plain and plural, duplicate tags, unknown escapes and types, and `gw_`-prefixed and reserved names.
+  - `:int` must be written at an argument's first use in the default locale.
+  - `gweb dev` also watches `locales/`.
+  - Routes and middleware must `import t;` themselves.
+
+**Unverified Goose points to check first:**
+- Passing a generic function parameter on (`respond(..., D)`) and assigning a tuple result into existing `var`s.
+- Overloads that differ only in the first parameter type (`Ctx` against `i64`).
+- Writes to outer `var`s from inside `each_split` blocks (`pick_locale`).
+- Local fixed arrays of slices (`const u8[:][16]`).
+- `u8` to `i64` casts.
+- A sub-module of package `sqlite` that does `import sqlite;`.
