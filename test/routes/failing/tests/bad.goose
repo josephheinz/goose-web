@@ -5,6 +5,6 @@ import web.testing;
 
 fn test_x(t: web::Tester&) {
     let res = site::get(t, "/");
-    web::expect_status(t, copy(res), 200);
-    web::expect_status(t, copy(res), 201);
+    web::expect_status(t, res, 200);
+    web::expect_status(t, res, 201);
 }

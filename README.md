@@ -345,21 +345,21 @@ import web.testing;
 
 fn test_list(t: web::Tester&) {
     let res = site::get(t, "/api/todos");
-    web::expect_status(t, copy(res), 200);
+    web::expect_status(t, res, 200);
     web::expect_contains(t, res.body, "\"title\"");
 }
 
 fn test_add(t: web::Tester&) {
     site::get(t, "/fragments");                                   // sets the CSRF cookie
     let res = site::post_form(t, "/fragments", "add=1&title=milk");
-    web::expect_status(t, copy(res), 200);
+    web::expect_status(t, res, 200);
     web::expect_contains(t, site::get(t, "/fragments").body, "milk");
 }
 ```
 
 - `site::get`, `head`, `delete(t, target)`; `post_form`, `post_json`, `put_json`, `patch_json(t, target, body)`;
   `site::request(t, method, target, body, content_type)`. Each returns an `http::Response`.
-- `web::expect(t, ok, what)`, `expect_status`, `expect_contains(t, text, needle)`, `expect_header(t, res, name, value)`, which take the response by value: pass a temporary (`site::get(...)`) or `copy(res)`;
+- `web::expect(t, ok, what)`, `expect_status`, `expect_contains(t, text, needle)`, `expect_header(t, res, name, value)`, which take the response as `const&`, so bind it first (`let res = site::get(...)`);
   `web::header_of(res, name)` and `web::form_field(out, name, value)` help build and read messages.
 - The jar `t.cookies` keeps `Set-Cookie` values and sends them on the next request. With `t.auto_csrf` (the default) a
   non-GET request sends the jar's `gw_csrf` as `X-CSRF-Token`, adding a fixed token when there is none. Set

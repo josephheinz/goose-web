@@ -127,7 +127,7 @@ fn expect(t: Tester&, ok: bool, what: const u8[:]) {
     }
 }
 
-fn expect_status(t: Tester&, res: http::Response, code: i64) {
+fn expect_status(t: Tester&, res: const http::Response&, code: i64) {
     var msg: u8[..64] = "";
     format(msg, "status ", http::code(res.status), ", want ", code);
     expect(t, http::code(res.status) == code, msg);
@@ -139,7 +139,7 @@ fn expect_contains(t: Tester&, text: const u8[:], needle: const u8[:]) {
     expect(t, find(text, needle) >= 0, msg);
 }
 
-fn expect_header(t: Tester&, res: http::Response, name: const u8[:], value: const u8[:]) {
+fn expect_header(t: Tester&, res: const http::Response&, name: const u8[:], value: const u8[:]) {
     let got, has = header_of(res, name);
     var msg: u8[>..] = [];
     format(msg, "header ", name, " is '", got, "', want '", value, "'");
