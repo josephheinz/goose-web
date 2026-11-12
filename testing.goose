@@ -102,10 +102,13 @@ fn test_send<D, S>(t: Tester&, method: const u8[:], target: const u8[:], body: c
     var res = http::new_response();
     // req points into raw, so raw stays alive until the reply is built
     let req, parsed = http::parse_request(raw);
-    if parsed != http::Read.Ready {
-        expect(t, false, "test request did not parse");
-        http::json_error(res, http::Status.BadRequest, "test request did not parse");
-        return res;
+    match parsed {
+        Ready => {},
+        _ => {
+            expect(t, false, "test request did not parse");
+            http::json_error(res, http::Status.BadRequest, "test request did not parse");
+            return res;
+        },
     }
     var cfg = default_config();
     cfg.workers = 1;
