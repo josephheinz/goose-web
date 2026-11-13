@@ -648,8 +648,14 @@ fn parse(req: const http::Request&, prefix: const u8[:], out: u8[>..]&, errs: gw
     let before = errs.n;
     gw_parse_Props(req, prefix, p, errs);
 """);
-    if defines(code, "validate") { extra.append("    if errs.n == before { validate(p, errs); }\n"); }
-    extra.append("    if errs.n != before { return false; }\n    write(out, p);\n    return true;\n}\n");
+    // validate names its fields plainly ("title"); the form shows errors under the control's name, so they get the prefix.
+    if defines(code, "validate") {
+        extra.append("    if errs.n == before {\n        var ve = gweb::no_errors();\n        validate(p, ve);\n");
+        extra.append("        for k in ve.n {\n            var fname: u8[>..] = [];\n            if ve.items[k].field.len > 0 { format(fname, prefix, ve.items[k].field); }\n");
+        extra.append("            gweb::add_error(errs, fname, ve.items[k].message);\n        }\n    }\n");
+    }
+    // The JSON is written after an error too: it holds what the user sent, so the page can show the form again as typed.
+    extra.append("    write(out, p);\n    return errs.n == before;\n}\n");
     var more: u8[>..] = [];
     more.append("import json; import net.http; import gweb; import gweb.site.views; import gweb.forms.valid; ");
     write_prefixed(v.goose, v.ns, code, extra, more);

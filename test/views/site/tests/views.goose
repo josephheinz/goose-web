@@ -229,13 +229,26 @@ fn test_parse(t: gweb::Tester&) {
     eq(t, gweb::error_for(errs2, "count"), "Enter a whole number.", "a bad int");
     eq(t, gweb::error_for(errs2, "badge.level"), "Enter a whole number.", "a bad int in a group");
     eq(t, gweb::error_for(errs2, "ctas.0.align"), "Choose one of the options.", "a bad enum in a repeater item");
-    gweb::expect(t, out2.len == 0, "no JSON is written after an error");
+    has(t, out2, "\"count\":3", "the JSON is still written after an error: a field that did not parse keeps its default");
+    has(t, out2, "\"badge\":{\"text\":\"\",\"level\":0}", "and the rest is what was read");
 
     var errs3 = gweb::no_errors();
     var out3: u8[>..] = [];
     let req3 = post_req(raw, "title=x");
     gweb::expect(t, !views::widgets_parse(req3, "Hero", "", out3, errs3), "the user's validate runs");
     eq(t, gweb::error_for(errs3, "title"), "Use at least 2 characters.", "its message");
+
+    var errsp = gweb::no_errors();
+    var outp: u8[>..] = [];
+    let reqp = post_req(raw, "w.title=x&w.count=9");
+    gweb::expect(t, !views::widgets_parse(reqp, "Hero", "w.", outp, errsp), "validate runs with a prefix");
+    eq(t, gweb::error_for(errsp, "w.title"), "Use at least 2 characters.", "and its error is under the control's name, prefix included");
+    eq(t, gweb::error_for(errsp, "title"), "", "not under the bare field name");
+    has(t, outp, "\"title\":\"x\",\"count\":9", "the JSON of the failed form holds what was typed");
+    var shown: u8[>..] = [];
+    views::widgets_form(shown, "Hero", outp, errsp, "w.");
+    has(t, shown, "<span class=\"gw-error\" id=\"w.title-error\">Use at least 2 characters.</span>", "the form drawn from it shows the typed value and the message");
+    has(t, shown, "name=\"w.title\" value=\"x\"", "with the typed value");
 
     var errs4 = gweb::no_errors();
     var out4: u8[>..] = [];
