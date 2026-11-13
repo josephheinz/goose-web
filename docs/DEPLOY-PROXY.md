@@ -14,11 +14,13 @@ HTML and JSON.
 
 - **`SITE_URL`**: the public base URL, no trailing slash. `@meta()` and the sitemap build
   absolute URLs from it. Without it they use the `Host` header, which the client controls.
-- **Cookies**: set `secure: true` in `gweb::CookieOptions`. Behind `X-Forwarded-Proto: https`
-  the CSRF cookie is already `__Host-gw_csrf` with `Secure`.
+- **`GWEB_TRUST_PROXY=1`**: required. gweb reads `X-Forwarded-Proto` and `X-Forwarded-For` only when it is on.
+  Without it the session and CSRF cookies are plain `gw_session` and `gw_csrf`, with no `Secure`.
+- **Cookies**: set `secure: true` in `gweb::CookieOptions`. With `GWEB_TRUST_PROXY` on and `X-Forwarded-Proto: https`
+  the session and CSRF cookies are already `__Host-gw_session` and `__Host-gw_csrf` with `Secure`.
 - **`Host` preserved**: `gweb::websocket` refuses an `Origin` whose host differs from `Host`.
   The configs below keep it.
-- **`X-Forwarded-Proto`**: sent by the proxy; read by CSRF and `gweb::site_url`.
+- **`X-Forwarded-Proto`**: sent by the proxy; read by the cookie names and `gweb::site_url`, when `GWEB_TRUST_PROXY` is on.
 
 ## Caddy (recommended)
 

@@ -68,7 +68,11 @@ The unit's hardening options keep `fork`/`exec` (the reload) and the data direct
 
 **TLS is not served by gweb and is not covered here.** It is the subject of
 [Addendum 15](DESIGN-ADDENDUM-15-DELIVERY.md) (delivery). Until then, terminate TLS at a proxy and pass
-`X-Forwarded-Proto` (the CSRF cookie becomes `__Host-gw_csrf` with `Secure` behind `https`).
+`X-Forwarded-Proto`, and **set `GWEB_TRUST_PROXY=1`**. gweb reads `X-Forwarded-Proto` (the `__Host-` prefix and `Secure` of
+the session and CSRF cookies, and the scheme in `gweb::site_url`) and `X-Forwarded-For` (`client_ip`, rate limits) only
+when that variable is on, because a client can send those headers too. Without it an app behind a TLS proxy sets plain
+cookies, with no `Secure`. Turn it on only when every request comes through a proxy you run that sets the headers
+itself. `gweb dev` binds `127.0.0.1`; the server binds `0.0.0.0` (a container needs that). Put a proxy or a firewall in front.
 
 Block `/__gweb/metrics` from outside: it shares the main port. Let Prometheus scrape `127.0.0.1:3000` directly.
 
@@ -113,7 +117,7 @@ GET and HEAD only, `Cache-Control: no-store`, left out of the access log and met
 ## Logs and metrics
 
 Logs go to stdout, one line per event, one `write` per line. `--log-format json` (or `GWEB_LOG_FORMAT=json`)
-makes every line JSON, the framework's own messages included. `--log` turns on the access log; with it, and with
+makes every line JSON, the framework's own messages included. `--access-log` turns on the access log (`GWEB_ACCESS_LOG=1`); with it, and with
 tracing, each response carries `X-Request-Id`. Levels: `--log-level debug|info|warn|error`. Let Docker, journald
 or your platform collect stdout; the app writes no log files.
 
@@ -123,7 +127,7 @@ Access line, JSON: `ts`, `level`, `msg: "request"`, `method`, `target`, `route`,
 From your code: `gweb::log_info(ctx, "msg")`, `gweb::log_warn`, `gweb::log_error`, `gweb::log_debug`; add fields with
 `var e = gweb::log_event(ctx, gweb::Level.Info, "order placed"); gweb::log_field(e, "order_id", id); gweb::log_emit(e);`.
 
-`--metrics` (or `GWEB_METRICS=1`) serves Prometheus text at `/__gweb/metrics`: request counts by route, method
+`--metrics` (or `GWEB_METRICS=on`) serves Prometheus text at `/__gweb/metrics`: request counts by route, method
 and status class, a latency histogram per route, open connections, job gauges and counters, and
 `gweb_build_info`. Count your own things with `gweb::metric_count("signups_total", 1)` and `gweb::metric_gauge("queue_depth", n)`
 (names match `[a-z_][a-z0-9_]*`; 256 at most).
@@ -212,23 +216,45 @@ An in-memory `jobs::enqueue` after the commit is fine as a speed-up on top of th
 
 ## Config summary
 
-Flags win over environment variables.
+One rule. Every setting has a flag and a `GWEB_*` variable of the same name: `--max-body` is `GWEB_MAX_BODY`. A flag
+beats the variable, the variable (the real environment, then `.env` files) beats the default. A value that does not
+parse or is out of range stops the server with exit status 2 and a message that names it
+(`gweb: GWEB_PORT=abc: must be a whole number from 1 to 65535`). An empty variable is unset.
+Booleans are `1/0`, `true/false`, `yes/no`, `on/off` in any case. A boolean flag is bare (`--metrics`), `--no-metrics`,
+or `--metrics=off`. `PORT` is an alias of `GWEB_PORT` for platforms that set it; `GWEB_PORT` wins.
+`.gweb/server --help` prints this list.
 
 | Flag | Env | Default |
 |---|---|---|
-| `--port N` | `PORT` | 3000 |
+| `--port N` | `GWEB_PORT`, `PORT` | 3000 (1 to 65535) |
+| `--host H` | `GWEB_HOST` | `0.0.0.0` (`gweb dev`: `127.0.0.1`) |
 | `--workers N` | `GWEB_WORKERS` | min(performance cores, 4) |
-| `--log` | | off |
+| `--access-log` | `GWEB_ACCESS_LOG` | off |
+| `--idle-ms N` | `GWEB_IDLE_MS` | 5000 (0: never) |
+| `--max-body N` | `GWEB_MAX_BODY` | 1048576 |
+| `--max-upload N` | `GWEB_MAX_UPLOAD` | 33554432 |
+| `--max-upload-parts N` | `GWEB_MAX_UPLOAD_PARTS` | 64 |
+| `--max-upload-files N` | `GWEB_MAX_UPLOAD_FILES` | 8 (at most 16) |
+| `--max-upload-text N` | `GWEB_MAX_UPLOAD_TEXT` | 65536 (one text field) |
+| `--upload-dir D` | `GWEB_UPLOAD_DIR` | `.gweb.uploads` |
+| `--csp`, `--csp=report-only`, `--csp=off` | `GWEB_CSP` | off |
+| `--trust-proxy` | `GWEB_TRUST_PROXY` | off |
+| `--security-headers` | `GWEB_SECURITY_HEADERS` | on |
+| `--hsts N` | `GWEB_HSTS` | 0 (off) |
+| `--session-idle N` | `GWEB_SESSION_IDLE` | 86400 |
+| `--session-max N` | `GWEB_SESSION_MAX` | 2592000 |
 | `--log-format text\|json` | `GWEB_LOG_FORMAT` | text |
 | `--log-level L` | `GWEB_LOG_LEVEL` | info |
-| `--metrics` | `GWEB_METRICS=1` | off |
+| `--metrics` | `GWEB_METRICS` | off |
 | `--drain-ms N` | `GWEB_DRAIN_MS` | 10000 |
 | `--drain-delay-ms N` | `GWEB_DRAIN_DELAY_MS` | 0 |
 | `--job-runners N` | `GWEB_JOB_RUNNERS` | 1 |
-| `--job-queue N` | | 10000 |
-| `--job-attempts N` | | 5 |
-| `--no-schedule` | `GWEB_SCHEDULE=0` | schedules on |
-| `--probe` | | exits 0 or 1 and stops |
+| `--job-queue N` | `GWEB_JOB_QUEUE` | 10000 |
+| `--job-attempts N` | `GWEB_JOB_ATTEMPTS` | 5 |
+| `--no-schedule` (or `--schedule=off`) | `GWEB_SCHEDULE=0` | schedules on |
+
+Flags only, because they choose a mode: `--probe` (exits 0 or 1 and stops), `--export DIR`, `--dev-id N` (`gweb dev`).
+Variables only: `GWEB_SECRET` (a secret does not belong on a command line), `GWEB_ENV`.
 
 Environment only: `TZ` (cron time zone; `UTC` in the Docker image), `OTEL_*` (see Tracing).
 Signals: SIGTERM or SIGINT drain and exit; SIGUSR2 hands over to a new process (systemd `reload`).

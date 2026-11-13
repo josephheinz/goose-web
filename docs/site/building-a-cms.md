@@ -54,10 +54,14 @@ the package's pages. The module is mounted inside the package and gets the packa
 
 ```goose
 fn before(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) -> bool {
-    if starts_with(req.target, "/admin/login") { return true; }
-    return gweb::require_login(req, ctx, res, "/admin/login");
+    var login: u8[>..] = [];
+    format(login, cms::MOUNT, "/login");      // gweb writes cms::MOUNT: "/admin" here, wherever the host mounts it
+    if starts_with(req.target, login) { return true; }
+    return gweb::require_login(req, ctx, res, login);
 }
 ```
+
+A package does not hard-code its mount. gweb writes `NAME::MOUNT` (here `cms::MOUNT`) into the package's namespace.
 
 `login/submit` checks the password with `gweb::password_verify` and calls `gweb::login`. The session and CSRF cookies are
 `Path=/`, host-only, and `__Host-` behind HTTPS. Mounts do not change them. Because the cookie is host-only, put the

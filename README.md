@@ -57,6 +57,11 @@ goose-architect agent.
 | `app/state.goose` | State owned by the main thread: `Msg`, `Reply`, `fn handle`, optional `fn init`; `const VARIABLE_MSG = true;` when `Msg` has a variable-size payload such as `u8[]` (then `fn handle(m: const Msg..&)`) |
 | `app/sitemap.goose` | Turns on `/sitemap.xml` and `/robots.txt`; optional `fn entries` and `fn robots` |
 | `app/socket.goose` | Optional `fn open`, `fn message`, `fn close` for WebSocket connections |
+| `app/jobs.goose` | Background jobs: `enum Job`, `fn run`, optional `fn schedule` |
+| `app/config.goose` | Optional `fn check() -> bool`, run before the server listens |
+| `stores/<Name>.gshtml` | A shared client store for components (see Components) |
+| `gweb.packages` | The packages this project uses, one source per line, `at /prefix` to mount (see Packages) |
+| `gweb.package` | In a package: `name IDENT` and `gweb VERSION`, the lowest gweb it needs (`gweb 1.0` accepts any 1.x) |
 | `views/<group>/<Name>.goose` and `.html` | A view: `struct Props` and its template; gweb generates a JSON codec, an admin form and a by-name registry (see Views) |
 | `lib/**.goose` | Your modules: `import lib.catalog;` (write their `namespace`) |
 | `public/**` | Static files, embedded in the binary, with ETags and hashed URLs |
@@ -69,14 +74,46 @@ namespace from `gweb`; do not write one.
 
 ## Signatures
 
+Every function gweb calls in your code. These names and signatures are stable (see [stability](docs/site/stability.md)).
+Write the ones you need; each is optional unless its file says otherwise.
+
 ```goose
-fn GET(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&)        // route.goose
-fn load(req: const http::Request&, ctx: gweb::Ctx&) -> Props                      // page.goose
-fn POST(req: const http::Request&, ctx: gweb::Ctx&) -> Props                      // page.goose, optional (fragments)
+// app/**/route.goose: any of the seven methods
+fn GET(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&)          // also POST, PUT, PATCH, DELETE, HEAD, OPTIONS
+
+// app/**/page.goose
+fn load(req: const http::Request&, ctx: gweb::Ctx&) -> Props                      // Props is yours; the template reads it
+fn POST(req: const http::Request&, ctx: gweb::Ctx&) -> Props                      // needs load (fragments and forms)
 fn POST(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) -> Props   // either page fn may take res; gweb::done(ctx) then keeps what it wrote
+fn static_paths() -> u8[..1024][>..]                                              // for gweb export, on a page with a dynamic segment
+
+// app/**/middleware.goose
 fn before(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) -> bool   // false: res is final
 fn after(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&)
-fn handle(msg: const Msg&) -> Reply                                               // state.goose
+
+// app/state.goose: Msg and Reply are yours
+fn init()                                                                         // before the workers start
+fn handle(msg: const Msg&) -> Reply                                               // const Msg..& when const VARIABLE_MSG = true;
+fn shutdown()                                                                     // after the drain, before exit
+
+// app/jobs.goose: Job is yours
+fn run(job: const Job&, ctx: gweb::Ctx&) -> bool                                  // false: retried with backoff
+fn schedule(s: gweb::Schedules&)
+
+// app/config.goose
+fn check() -> bool                                                                // false: the server exits 2 before it listens
+
+// app/sitemap.goose
+fn entries(req: const http::Request&, ctx: gweb::Ctx&, s: gweb::Sitemap&)
+fn robots(req: const http::Request&, ctx: gweb::Ctx&, out: u8[>..]&)
+
+// app/socket.goose
+fn open(ctx: gweb::Ctx&, id: u64, topic: const u8[:])
+fn message(ctx: gweb::Ctx&, id: u64, topic: const u8[:], data: const u8[:], binary: bool)
+fn close(ctx: gweb::Ctx&, id: u64, topic: const u8[:])
+
+// views/<group>/<Name>.goose
+fn validate(p: const Props&, errs: gweb::FieldErrors&)
 ```
 
 Helpers: `gweb::param(ctx, "id")`, `gweb::param_int`, `gweb::query(req, "q", out)`,
@@ -282,27 +319,45 @@ precision in the browser. Component state lives in the page only. Handlers get n
 gweb [-C dir] new <dir>      a starter project
 gweb gen                     write .gweb/ only
 gweb build [--debug]         gen, then goose build to .gweb/server
-gweb start [flags]           build and run (--port N --host H --workers N --log --idle-ms N --max-body N --max-upload N --upload-dir D --csp)
+gweb start [flags]           build and run; the server flags below
 gweb export [-o DIR]         build, then write the site as static files to DIR (default out/)
-gweb dev [flags]             build, run with --log on 2 workers and port 60053 (unless --port), rebuild on change
+gweb dev [flags]             build, run on 127.0.0.1:60053 with 2 workers and the access log, rebuild on change
 gweb routes                  the route table (GET,POST and a frag line for each fragment)
 gweb test                    component parity (test_* as Goose and JavaScript), then tests/*.goose route tests (writes .gweb.test/; leaves .gweb/ alone)
 gweb check                   goose check on a copy of the site; errors name .gshtml and page.html lines
 gweb lsp                     language server for .gshtml and templates (needs node)
-gweb version                 the gweb version and the package sources it declares
+gweb version                 the gweb version and the package sources it declares (also gweb --version)
+gweb help                    the usage (also gweb --help, gweb -h and gweb COMMAND --help); exit 0
 ```
 
-Server flags (`gweb start`, `.gweb/server`; env in `docs/DEPLOY.md`):
+`gweb dev` listens on `127.0.0.1`, because its overlay, `/__gweb/id` and the dev secret are not for a network.
+`gweb dev --host 0.0.0.0` (or `GWEB_HOST=0.0.0.0`) opens it. `start` and the server keep `0.0.0.0`, which a container needs.
+
+**Server flags** (`gweb start`, `.gweb/server`; the whole table is in [docs/DEPLOY.md](docs/DEPLOY.md)). Every one has a
+`GWEB_*` variable of the same name (`--max-body` is `GWEB_MAX_BODY`), and a flag beats the variable. A value that does not
+parse, or is out of range, stops the server with exit status 2 and a message that names it. Booleans take `1/0`,
+`true/false`, `yes/no`, `on/off` and are written `--metrics`, `--no-metrics` or `--metrics=off`.
 
 ```
+--port N              1 to 65535 (3000; PORT is an alias of GWEB_PORT)
+--host H              the address to listen on (0.0.0.0; gweb dev 127.0.0.1)
+--workers N           worker threads
+--access-log          the access log, with X-Request-Id
+--idle-ms N, --max-body N, --max-upload N, --upload-dir D
+--max-upload-parts N, --max-upload-files N, --max-upload-text N     multipart limits (64, 8 up to 16, 65536)
+--csp[=report-only|off], --trust-proxy, --security-headers, --hsts N
+--session-idle N, --session-max N
 --drain-ms N          drain time after SIGTERM before connections are cut (10000; dev 200)
 --drain-delay-ms N    keep accepting this long after SIGTERM while /__gweb/ready says 503 (0)
 --log-format text|json, --log-level debug|info|warn|error
 --metrics             serve Prometheus text at /__gweb/metrics
 --job-runners N, --job-queue N, --job-attempts N   background jobs (1, 10000, 5)
---no-schedule         run jobs, fire no schedules
+--no-schedule         run jobs, fire no schedules (GWEB_SCHEDULE=0)
 --probe               GET /__gweb/ready on --port, exit 0 on 200 (the Docker HEALTHCHECK)
 ```
+
+`--export DIR` and `--dev-id N` are flags only: `gweb export` and `gweb dev` use them. `GWEB_SECRET` and `GWEB_ENV` are
+variables only. `--help` on the server prints the list.
 
 The build prints warnings and goes on; `gweb dev` shows them in a small box at the bottom right.
 `gen`, `build`, `start` and `test` take `--strict`: any warning fails the run (`gweb: --strict: 2 warnings stop the build`).
@@ -457,6 +512,19 @@ A package's `views/` folder joins the project's views, like its `components/`. A
 another package's mount (`../shop at /admin/shop` beside `../admin at /admin`), when the outer package has no folder
 of that name.
 
+`gweb.package` has `name IDENT` and `gweb VERSION`, the lowest gweb it needs. `gweb 1.0` accepts 1.0.0 and every later
+1.x and 2.x; `1.2.3` and `1.0.0-rc1` work too. The versions are compared as numbers (0.10 is above 0.7), and a
+prerelease is below its release.
+
+A mounted package learns where it is mounted. gweb writes `NAME::MOUNT` for it, as in `cms::MOUNT == "/admin"`
+(`"/admin/shop"` for a module mounted inside it), so a login guard does not hard-code `/admin/login`:
+
+```goose
+var login: u8[>..] = [];
+format(login, cms::MOUNT, "/login");
+return gweb::require_login(req, ctx, res, login);
+```
+
 ## How it runs
 
 - The default is min(performance cores, 4) workers; `--workers N` or
@@ -483,7 +551,7 @@ Full guide: [docs/DEPLOY.md](docs/DEPLOY.md). Design: [DESIGN-ADDENDUM-16-OPERAT
 - **Health.** `/__gweb/health` (liveness) and `/__gweb/ready` (503 once a stop begins). `server --probe` exits 0 or 1 for a Docker `HEALTHCHECK`.
 - **Graceful stop.** SIGTERM or SIGINT stops accepting, finishes requests for up to `--drain-ms` (10 s), runs `state::shutdown` if defined, and exits 0. `--drain-delay-ms` keeps accepting first, so a load balancer can stop routing. A second signal exits at once.
 - **Restarts.** SIGUSR2 starts the new binary on the same socket and drains the old one (systemd `reload`). A systemd socket unit or a rolling update also loses no request. Migrations must keep the previous release working.
-- **Logs.** stdout. `--log-format json` for JSON lines, `--log-level`, `--log` for the access log (with `X-Request-Id`). In code: `gweb::log_info(ctx, "msg")`, or `gweb::log_event`, `gweb::log_field`, `gweb::log_emit`.
+- **Logs.** stdout. `--log-format json` for JSON lines, `--log-level`, `--access-log` for the access log (with `X-Request-Id`). In code: `gweb::log_info(ctx, "msg")`, or `gweb::log_event`, `gweb::log_field`, `gweb::log_emit`.
 - **Metrics.** `--metrics` serves Prometheus text at `/__gweb/metrics`; block it at the proxy. `gweb::metric_count(name, n)` and `gweb::metric_gauge(name, v)` add your own.
 - **Tracing.** Set `OTEL_EXPORTER_OTLP_ENDPOINT` (plain `http://`, a local collector). W3C `traceparent` in, OTLP/HTTP JSON out; `gweb::span(ctx, "name")` adds spans.
 - **Jobs.** An in-memory queue and a scheduler, in `app/jobs.goose`:
@@ -595,8 +663,9 @@ secret, one token for the browser session.
 - A route turns both checks off with `const CSRF = false;` on a line of its own, for APIs called by
   clients that are not browsers, webhooks, and cross-site browser callbacks (an OIDC `form_post`, a
   3-D Secure return). A route that opts out must not trust cookies for authority. Pages have no opt-out.
-- Behind a proxy that sends `X-Forwarded-Proto: https` the cookie is `__Host-gw_csrf` with `Secure`,
-  and a plain `gw_csrf` cookie is ignored.
+- Behind a TLS proxy that sends `X-Forwarded-Proto: https`, with `GWEB_TRUST_PROXY=1`, the cookie is `__Host-gw_csrf`
+  with `Secure`, and a plain `gw_csrf` cookie is ignored. Without `GWEB_TRUST_PROXY` the header is ignored, because a client
+  can send it, and the cookie is plain `gw_csrf`.
 - `gweb::login` rotates the token. The token itself needs no `GWEB_SECRET`.
 
 ## Config and secrets
@@ -619,8 +688,10 @@ GWEB_SECRET=3f1c...64 hex digits...   # openssl rand -hex 32
 - Read your own settings with `gweb::env_str`, `env_int`, `env_bool` and `env_required`. An
   optional `app/config.goose` with `fn check() -> bool` runs before the server listens; false exits 2.
 - `GWEB_SESSION_IDLE` and `GWEB_SESSION_MAX` are seconds (defaults 86400 and 2592000).
-  `GWEB_TRUST_PROXY=1` makes `client_ip` read the last `X-Forwarded-For` item; leave it off unless a
-  proxy you run sets that header, or clients can pick their own address.
+- **`GWEB_TRUST_PROXY=1`** makes gweb believe the proxy headers: the last `X-Forwarded-For` item for `client_ip`, and
+  `X-Forwarded-Proto: https` for the `__Host-` prefix and `Secure` of the session and CSRF cookies and for `gweb::site_url`.
+  **An app behind a TLS proxy must set it**, or its cookies are not `Secure`. Leave it off when clients reach the server
+  directly, or they can pick their own address and scheme.
 
 ## Sessions and login
 
@@ -658,7 +729,7 @@ fn before(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) -> b
   A login holds a worker for a fraction of a second, so rate-limit it.
 - `gweb::require_login_api` answers `401` JSON. In templates: `gweb::user_id(ctx)`, `gweb::logged_in(ctx)`.
 - A page's `fn POST` cannot refuse with a `429`; do the login in a `route.goose` and point the form at it.
-- Behind HTTPS (`X-Forwarded-Proto: https`) the cookie is `__Host-gw_session` with `Secure`.
+- Behind a TLS proxy (`X-Forwarded-Proto: https` and `GWEB_TRUST_PROXY=1`) the cookie is `__Host-gw_session` with `Secure`.
 - Also available: `gweb::set_signed_cookie` and `gweb::signed_cookie` (700 bytes, name under the MAC).
 
 ## Rate limits
@@ -780,6 +851,12 @@ fn POST(req: const http::Request&, ctx: gweb::Ctx&) -> Props {
 
 - Other checks: `gweb::check_length`, `check_range`, `check_one_of`, `add_error(errs, field, msg)`. The first
   error per field is kept. A route answers with `gweb::errors_json(res, errs)` (422).
+- `FieldErrors` holds 64 errors. When a form would go past that, the last slot becomes a form-level error
+  (`gweb::error_for(errs, "")`, "Too many errors to show here") and `errs.dropped` is true, so the editor is told that
+  some are missing.
+- Two helpers once shared a name: `gweb::form_int(req, "id")` reads one field as `i64, bool`, and `gweb::form_i64(req,
+  field, out, errs, required)` is what a `*Form` decoder calls for an `i64` field. `form_text`, `form_bool`, `form_enum`
+  and `form_upload` are the other decoders; they all live in `gweb.forms.valid`.
 - `field_value` shows what was posted, so a bad number comes back as typed.
 - A 422 reply to a `gw-target` form is morphed in like a 200; without JavaScript it is a normal page.
   Keep the error `<span>` last in its parent (see the morph rule under Fragments).
@@ -806,10 +883,11 @@ var name: u8[>..] = [];  gweb::safe_name(name, p.form.photo.filename);
 gweb::save_upload(p.form.photo, dest);            // false if dest exists; the file moves
 ```
 
-- `--max-upload N` (default 32 MiB) caps a multipart body; `--max-body` still caps everything else.
+- `--max-upload N` (`GWEB_MAX_UPLOAD`, default 32 MiB) caps a multipart body; `--max-body` still caps everything else.
   A multipart body over 64 KiB is spooled to a file in `--upload-dir D` (default `.gweb.uploads`) as it arrives.
   One server per upload dir: files left by an earlier run are deleted at start.
-- Limits: 8 files, 64 parts, 64 KiB per text field. A malformed body is a 400, a ninth file a 413.
+- Limits: 8 files (`--max-upload-files`, up to 16), 64 parts (`--max-upload-parts`), 64 KiB per text field
+  (`--max-upload-text`); each has a `GWEB_*` variable. A malformed body is a 400, a file over the limit a 413.
 - Unsaved files are deleted after the response. Use `gweb::save_upload` to keep one.
 - `filename` and `content_type` are what the client said. `check_upload` checks the sniffed type (PNG, JPEG,
   GIF, WebP, PDF; never SVG). Build the saved name with `gweb::safe_name`.
@@ -1028,15 +1106,17 @@ a plain 404.
 - `Content-Type` comes from the extension (`gweb::mime_type(name)`); `opts.content_type` overrides it.
   `X-Content-Type-Options: nosniff` comes from the default headers. HTML and SVG also get
   `Content-Security-Policy: sandbox`, so an uploaded page cannot run scripts on your origin.
-- `ETag` is `"SIZE-MTIME"`, so a 304 reads no bytes. `If-None-Match` takes one tag, a list or `*`.
+- `ETag` is `"SIZE-MTIME"`, so a 304 reads no bytes. `If-None-Match` takes one tag, a list or `*`. `Last-Modified` is
+  sent too, and `If-Modified-Since` (an HTTP date) gets a 304 when the file is not newer, but only when the request has
+  no `If-None-Match`; a date in another format is ignored.
 - `Cache-Control` is `public, max-age=0, must-revalidate`, or with `opts.immutable` one year and `immutable`.
 - `opts.download` adds `Content-Disposition: attachment`; `opts.filename` sets the name shown (it also adds
   `inline; filename=` on its own). Non-ASCII names get an ASCII fallback and `filename*`.
 - A file of `opts.stream_over` bytes or less (1 MiB) is read into the reply with a `Content-Length`. A bigger one is
   sent in 256 KiB windows through the stream helpers, so it never sits in memory whole. Under `gweb test` there is no
   connection, so every file is read whole.
-- HEAD sends the head of a GET. A HEAD for a streamed file has a chunked head and no `Content-Length`.
-- There are no range requests, no `If-Modified-Since` and no compression.
+- HEAD sends the head of a GET, with the `Content-Length` the body would have. A HEAD for a streamed file reads nothing.
+- There are no range requests and no compression.
 
 ## Server push and WebSockets
 
@@ -1190,6 +1270,39 @@ fn before(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) -> b
 
 Not in v1: translations inside `.gshtml` components (pass translated text in as data), number, date and currency
 formatting, HTML inside messages, and decimal plural operands.
+
+
+## Limits
+
+What you can change, and what is fixed. A fixed limit is part of the 1.x contract: it may grow, never shrink.
+
+| Limit | Value | Change it with |
+|---|---|---|
+| Request size | 1 MiB | `--max-body`, `GWEB_MAX_BODY` |
+| Multipart body | 32 MiB | `--max-upload`, `GWEB_MAX_UPLOAD` |
+| Multipart parts, files, one text field | 64, 8, 64 KiB | `--max-upload-parts`, `--max-upload-files` (at most 16), `--max-upload-text` |
+| Idle connection | 5 s | `--idle-ms`, `GWEB_IDLE_MS` (0: never) |
+| Drain after SIGTERM | 10 s | `--drain-ms` |
+| Job queue, attempts | 10000, 5 | `--job-queue`, `--job-attempts` |
+| Markdown input | 64 KiB | the third argument of `gweb::markdown(out, src, max_input)` |
+| Route parameters | 8, a name of 32 bytes, a value of 256 | fixed |
+| Catch-all tail | 1,024 bytes | fixed |
+| Route depth | 16 folders | fixed |
+| Fragments per page, a fragment name | 8, 64 bytes | fixed |
+| Component names (`@prop`, `@state`, `@computed`) | 31 | fixed |
+| Fields of a view, slots, a repeater | 32, 8, 64 items | fixed |
+| `FieldErrors` | 64 (the last is the form-level overflow error), a field of 64 bytes, a message of 200 | fixed |
+| Cookie name, value, all `Set-Cookie` lines of a reply | 64, 1,024 encoded, 2,048 bytes | fixed |
+| Session data, a signed cookie | 256, 700 bytes | fixed |
+| A password | 1,024 bytes | fixed |
+| `ctx.title`, a redirect URL | 256, 1,024 bytes | fixed |
+| Meta description, canonical, image, robots | 320, 512, 512, 64 bytes | fixed |
+| Page cache | a reply of 1 MiB, a key of 1,280 bytes, 512 entries and 16 MB per worker | fixed |
+| Sitemap | 50,000 URLs, 2,048 bytes a path | fixed |
+| Topic of a stream or socket | 64 bytes | fixed |
+| A log line | 2,048 bytes; a longer one is cut and marked `truncated` | fixed |
+| Metric names | 256 | fixed |
+| Secret keys | 1 to 4, of 32 to 64 bytes | fixed |
 
 ## Example
 

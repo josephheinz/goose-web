@@ -54,7 +54,9 @@ name admin
 gweb 0.3
 ```
 
-`name` is a Goose identifier. `gweb` is the lowest gweb version it needs.
+`name` is a Goose identifier. `gweb` is the lowest gweb version it needs: `MAJOR.MINOR`, `MAJOR.MINOR.PATCH` or
+with a prerelease (`1.0.0-rc1`). `gweb 1.0` accepts 1.0.0 and every later 1.x and 2.x. Versions are compared as numbers
+(0.10 is above 0.7), and a prerelease is below its release.
 
 Files in `lib/` start with `namespace NAME;`:
 
@@ -66,6 +68,10 @@ fn user_count() -> i64 { return 3; }
 
 The project then writes `import admin.users;` and `admin::user_count()`.
 
+**Where it is mounted.** A package that is mounted with `at` gets a constant in its namespace, written by gweb:
+`admin::MOUNT` is `"/admin"` (`"/admin/shop"` for a module mounted inside it). A guard builds its login URL from it,
+so the package works at any mount. `MOUNT` is reserved in the package's namespace.
+
 ## Refused
 
 - `state.goose` and `not-found.html` in a package: the project owns the state
@@ -74,7 +80,7 @@ The project then writes `import admin.users;` and `admin::user_count()`.
 - A package name that is `lib`, `std`, `os`, `gweb`, `web`, `net`, `sqlite`, `main` or
   `state`, or that two packages share.
 - A package that needs a newer gweb than yours:
-  `admin: needs gweb 0.3 or newer (this is 0.2.1)`.
+  `admin: needs gweb 1.0 or newer (this is 0.7.0)`.
 - A public file with the same URL as another, or as a route.
 
 Errors name the package path.
