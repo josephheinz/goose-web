@@ -1,0 +1,7 @@
+<script goose>
+// with: RCart
+// expect: components/FailRUseNot.gshtml:5: error: RCart::count: write @use RCart; first
+@state var n: i64 = 0;
+fn f() { n = RCart::count; }
+</script>
+<p>x</p>

@@ -1,0 +1,5 @@
+<script goose>
+// expect: stores/FailSAwait.gshtml:4: error: a store function cannot await
+@state var n: i64 = 0;
+fn f() { n = await http::get("/x"); }
+</script>

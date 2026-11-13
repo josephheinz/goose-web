@@ -39,7 +39,9 @@ struct FnDef { name: u8[..64], tok: i64, line: i64, first: i64, n: i64, ret: Ty,
                event: bool,       // reactive: `@event fn name(params);`, no body
                r: i64, w: i64,    // reactive: the bits it reads and writes, through calls
                is_async: bool,    // reactive: awaits, or calls one that does
-               emits: bool }      // reactive: sends an @event, or calls a function that does
+               emits: bool,       // reactive: sends an @event, or calls a function that does
+               st: u8[..64],      // a store function as a component sees it (`Cart::add`): the store, else empty
+               sf: u8[..64] }     // and the function's own name
 
 struct Var { name: u8[..64], ty: Ty, js: u8[..72] }
 
@@ -48,6 +50,7 @@ struct Var { name: u8[..64], ty: Ty, js: u8[..72] }
 let R_PROP = 0;
 let R_STATE = 1;
 let R_COMPUTED = 2;
+let R_STORE = 3;     // `Store::name` of a @use'd store (Addendum 12 section 7.7): read-only here, a copy of the store's value
 
 // A T_ARRAY whose cap is RO is `S[:]`, a read-only array (props only).
 let RO = 1;
@@ -58,7 +61,8 @@ let RO = 1;
 // order: for a computed, its place in rorder.
 // ts, te: the type's text in the source (offsets), as the Goose structs write it.
 struct RDecl { kind: i64, name: u8[..64], tok: i64, line: i64, ty: Ty, keyword_tok: i64, init: i64,
-               bit: i64, mask: i64, r: i64, order: i64, ts: i64, te: i64 }
+               bit: i64, mask: i64, r: i64, order: i64, ts: i64, te: i64,
+               st: u8[..64], sn: u8[..64] }    // R_STORE: the store and its name for the value; name is `Store$sn`
 
 let RB_WATCH = 0;
 let RB_MOUNT = 1;
@@ -68,7 +72,8 @@ let RB_EVERY = 3;
 // @watch, @mount, @unmount or @every(ms) with its block. r and w as for a function. lb: the block's `{` token.
 struct RBlock { kind: i64, tok: i64, line: i64, ms: i64, body: i64, r: i64, w: i64, is_async: bool, lb: i64, emits: bool }
 
-struct RUse { name: u8[..64], line: i64 }
+struct RUse { name: u8[..64], line: i64, base: i64, n: i64,   // base, n: its R_STORE declarations
+              s: i64, e: i64 }                               // the statement's text in the source
 
 let RM_TEXT = 0;
 let RM_IF = 1;
@@ -254,6 +259,11 @@ var chk: u8[>..];              // the body of gw_check
 var raw_st = 0;                // tscan's <script>/<style> state across markup lines
 
 var reactive = false;          // the script has @ declarations (set by parse_script)
+var store_mode = false;        // compiling stores/Name.gshtml (set by compile_store)
+var store_next = false;        // compile_store asks the next compile() for store mode
+var store_local: u8[..64];     // @store(local: "key"): the localStorage key, or empty
+var store_at = -1;             // the tokens of the @store line: first and last
+var store_end = -1;
 var rdecls: RDecl[>..<];
 var rblocks: RBlock[>..<];
 var ruses: RUse[>..<];
@@ -304,6 +314,7 @@ struct RegC { name: u8[..64], done: i64 }
 var reg: RegC[>..<];
 var reg_props: u8[>..];        // `Name\tprop\tt\tcap\tdefault in Goose\tdefault in JavaScript\n`, each @prop of each reactive component
 var reg_events: u8[>..];       // `Name\tevent\ttype codes (1 i64, 2 bool, 3 text), comma separated\n`, each @event of each reactive component
+var reg_stores: u8[>..];       // `S\tStore\tname\tt\tcap\n` for each @state and @computed of each store, `F\tStore\tfn\tmask\n` for each function a component may call
 var kids: u8[..64][>..<];      // the components this module calls (its imports)
 var child_use = 0;             // gwc.js helpers the module imports: 1 H (render), 2 Q (top-level part), 4 M (block)
 
@@ -717,6 +728,11 @@ recursive fn parse_binary(level: i64, ns: bool) -> i64 {
 }
 
 recursive fn parse_unary(ns: bool) -> i64 {
+    if store_mode && is("await") {
+        report(toks[pos].line, "a store function cannot await");
+        perr = true;
+        return -1;
+    }
     if reactive && is("await") {
         let n = new_node(E_AWAIT, pos);
         pos += 1;
@@ -888,6 +904,14 @@ recursive fn parse_primary(ns: bool) -> i64 {
     pos += 1;
     if is("::") {
         pos += 1;
+        // Store::name, the value of a @use'd store (d: the token of its name).
+        if reactive && at_k(K_ID) && !tok_is(pos + 1, "(") {
+            let sn = new_node(E_NAME, name);
+            nodes[sn].d = pos;
+            nodes[sn].t1 = pos;
+            pos += 1;
+            return sn;
+        }
         if !at_k(K_ID) || !tok_is(pos + 1, "(") { bad_tok(pos - 1); return -1; }
         let n = new_node(E_CALL, name);
         nodes[n].d = pos;
@@ -1129,7 +1153,7 @@ fn parse_fn(bodyless: bool) {
     let fi = fns.len;
     fns.push(FnDef { name: tok_name(name_tok), tok: name_tok, line: line, first: params.len, n: 0,
                      ret: ty(T_VOID), body: -1, js: "", handler: false, test: false,
-                     event: false, r: 0, w: 0, is_async: false, emits: false });
+                     event: false, r: 0, w: 0, is_async: false, emits: false, st: "", sf: "" });
     check_reserved(name_tok);
     while !is(")") {
         if !at_k(K_ID) || is_keyword(pos) { bad_tok(pos); return; }
@@ -1176,6 +1200,7 @@ fn rmark(k: i64) -> u8[..16] {
     var r: u8[..16] = "";
     if k == R_PROP { r.append("@prop"); }
     else if k == R_STATE { r.append("@state"); }
+    else if k == R_STORE { r.append("store value"); }
     else { r.append("@computed"); }
     return r;
 }
@@ -1224,7 +1249,7 @@ fn parse_rdecl(kind: i64) {
     var mask = 1;
     for k in min(di, 62) { mask *= 2; }
     rdecls.push(RDecl { kind: kind, name: tok_name(nt), tok: nt, line: line, ty: ty(T_ERR), keyword_tok: kw,
-                        init: -1, bit: di, mask: mask, r: 0, order: -1, ts: 0, te: 0 });
+                        init: -1, bit: di, mask: mask, r: 0, order: -1, ts: 0, te: 0, st: "", sn: "" });
     let name = tok_name(nt);
     let mk = rmark(kind);
     check_reserved(nt);
@@ -1356,20 +1381,108 @@ fn parse_revent() {
     if fns.len > before { fns[fns.len - 1].event = true; }
 }
 
+// @use Store; gives the component an R_STORE declaration (one bit, a copy in State) for each scalar @state and
+// @computed of the store, and a function entry (Store::name, body -1) for each function of the store that writes its
+// state and returns nothing. The store was compiled before this component, and left its names in reg_stores.
 fn parse_ruse() {
     let line = toks[pos].line;
+    let from = toks[pos - 1].s;
     pos += 1;
     if !at_k(K_ID) || is_keyword(pos) { bad_tok(pos); return; }
-    ruses.push(RUse { name: tok_name(pos), line: line });
+    let sname = tok_name(pos);
     pos += 1;
-    report(line, "@use is not built yet (Addendum 12 step 12)");
     expect(";");
+    for u in ruses {
+        if u.name == sname {
+            var m: u8[>..] = [];
+            format(m, "@use ", sname, " twice");
+            report(line, m);
+            return;
+        }
+    }
+    var found = false;
+    for l in split(reg_stores, '\n') { if fld(l, 0) == "U" && fld(l, 1) == sname { found = true; } }
+    if !found {
+        var m: u8[>..] = [];
+        format(m, "@use ", sname, ": there is no store named ", sname, " (stores/", sname, ".gshtml)");
+        report(line, m);
+        return;
+    }
+    let base = rdecls.len;
+    var n = 0;
+    var sbits: i64[>..] = [];     // the store's bit of each copy, by copy
+    for l in split(reg_stores, '\n') {
+        if fld(l, 0) != "S" || fld(l, 1) != sname { continue; }
+        let t, tok = parse_int(fld(l, 3));
+        let cap, cok = parse_int(fld(l, 4));
+        let sb, bok = parse_int(fld(l, 5));
+        let di = rdecls.len;
+        var mask = 1;
+        for k in min(di, 62) { mask *= 2; }
+        var d = RDecl { kind: R_STORE, name: "", tok: 0, line: line, ty: ty(t), keyword_tok: 0, init: -1, bit: di, mask: mask,
+                        r: 0, order: -1, ts: 0, te: 0, st: "", sn: "" };
+        d.ty.cap = cap;
+        d.st.append(sname);
+        d.sn.append(fld(l, 2));
+        format(d.name, "gw_", sname, "_", d.sn);
+        rdecls.push(d);
+        sbits.push(sb);
+        n += 1;
+        if di == 31 { report(line, "a component may have at most 31 @prop, @state and @computed names (a @use'd store adds one for each of its names)"); }
+    }
+    ruses.push(RUse { name: sname, line: line, base: base, n: n, s: from, e: toks[pos - 1].e });
+    for l in split(reg_stores, '\n') {
+        if fld(l, 0) != "F" || fld(l, 1) != sname { continue; }
+        let sw, wok = parse_int(fld(l, 3));
+        var wm = 0;
+        for j in n { if ((sw >> sbits[j]) & 1) != 0 { wm = wm | rdecls[base + j].mask; } }
+        var nm: u8[..64] = "";
+        format(nm, sname, "::", fld(l, 2));
+        fns.push(FnDef { name: nm, tok: 0, line: line, first: params.len, n: 0, ret: ty(T_VOID), body: -1, js: "",
+                         handler: false, test: false, event: false, r: 0, w: wm, is_async: false, emits: false, st: "", sf: "" });
+        fns[fns.len - 1].st.append(sname);
+        fns[fns.len - 1].sf.append(fld(l, 2));
+    }
+}
+
+// @store(local: "key") must be the first thing in a store's script.
+fn parse_rstore(at: i64) {
+    let line = toks[at].line;
+    if !store_mode { report(line, "@store goes in a file of stores/"); perr = true; return; }
+    if at != 0 { report(line, "@store goes first in the script"); perr = true; return; }
+    pos += 1;
+    if !expect("(") { return; }
+    if !is("local") { bad_tok(pos); return; }
+    pos += 1;
+    if !expect(":") { return; }
+    if !at_k(K_STR) { bad_tok(pos); return; }
+    let kt = pos;
+    pos += 1;
+    if !expect(")") { return; }
+    store_at = at;
+    store_end = pos - 1;
+    if is(";") { store_end = pos; pos += 1; }
+    let key = text[toks[kt].s + 1..toks[kt].e - 1];
+    var good = key.len > 0 && key.len <= 48 && toks[kt].e - toks[kt].s >= 3 && text[toks[kt].s] == '"';
+    for c in key { if c < 33 || c > 126 || c == '"' || c == '\\' || c == '<' || c == '>' || c == '&' { good = false; } }
+    if !good { report(line, "@store(local: \"key\") needs a key of 1 to 48 plain characters"); return; }
+    store_local.append(key);
 }
 
 // pos is at the @.
 fn parse_at() {
+    let at = pos;
     pos += 1;
     if !at_k(K_ID) { bad_tok(pos); return; }
+    if is("store") { parse_rstore(at); return; }
+    if store_mode && (is("prop") || is("watch") || is("mount") || is("unmount") || is("every") || is("event") || is("use")) {
+        var m: u8[>..] = [];
+        format(m, "a store cannot have @", text[toks[pos].s..toks[pos].e],
+               if is("prop") { "; it has no props" } else if is("event") { "; it has no parent" } else if is("use") { "; stores do not use stores" } else { "; it has no lifecycle" });
+        report(toks[pos].line, m);
+        perr = true;
+        return;
+    }
     if is("prop") { parse_rdecl(R_PROP); }
     else if is("state") { parse_rdecl(R_STATE); }
     else if is("computed") { parse_rdecl(R_COMPUTED); }
@@ -1407,6 +1520,7 @@ fn parse_script(first_line: i64, close: i64) -> bool {
     let before = nerr;
     pos = tokenize(line_start[first_line], line_start[close], first_line + 1);
     detect_reactive();
+    if store_mode { reactive = true; }
     while !at_k(K_EOF) {
         let start = pos;
         perr = false;
@@ -1669,12 +1783,49 @@ fn type_call(n: i64) {
     nodes[n].ty = res;
 }
 
+// The store named name that this component @use'd (its index in ruses), or -1.
+fn use_of(name: const u8[:]) -> i64 {
+    for u, i in ruses { if u.name == name { return i; } }
+    return -1;
+}
+
+// A Store:: reference that cannot be taken: the store is not used, or is not a store at all. True when reported.
+fn store_ref_bad(n: i64) -> bool {
+    let sname = tok_name(nodes[n].tok);
+    var known = false;
+    for l in split(reg_stores, '\n') { if fld(l, 0) == "U" && fld(l, 1) == sname { known = true; } }
+    if !known { return false; }
+    var m: u8[>..] = [];
+    if store_mode { format(m, "a store cannot use another store (", sname, "::", tok_name(nodes[n].d), ")"); }
+    else if use_of(sname) < 0 { format(m, sname, "::", tok_name(nodes[n].d), ": write @use ", sname, "; first"); }
+    if m.len == 0 { return false; }
+    report(nodes[n].line, m);
+    return true;
+}
+
 recursive fn check_expr(n: i64) {
     let k = nodes[n].k;
     let line = nodes[n].line;
     if k == E_INT { nodes[n].ty = ty(T_INT); return; }
     if k == E_BOOL { nodes[n].ty = ty(T_BOOL); return; }
     if k == E_STR { nodes[n].ty = ty(T_STR); return; }
+    if k == E_NAME && nodes[n].d >= 0 {
+        // Store::name: the component's copy of the store's value.
+        if store_ref_bad(n) { return; }
+        var full: u8[..64] = "";
+        format(full, "gw_", tok_name(nodes[n].tok), "_", tok_name(nodes[n].d));
+        let d = find_rdecl(full);
+        if d < 0 {
+            var m: u8[>..] = [];
+            format(m, tok_name(nodes[n].tok), " has no value ", tok_name(nodes[n].d),
+                   " to read here (a component reads the i64, bool and u8[..N] @state and @computed of a store)");
+            report(line, m);
+            return;
+        }
+        nodes[n].ref2 = d;
+        nodes[n].ty = rdecls[d].ty;
+        return;
+    }
     if k == E_NAME {
         let v = lookup(nodes[n].tok);
         if v < 0 && reactive {
@@ -1722,7 +1873,22 @@ recursive fn check_expr(n: i64) {
     if k == E_CALL {
         let tk = nodes[n].tok;
         if nodes[n].d >= 0 {
-            if tok_is(tk, "web") && tok_is(nodes[n].d, "has") { nodes[n].ref = B_HAS; }
+            if store_ref_bad(n) { return; }
+            if reactive && use_of(tok_name(tk)) >= 0 {
+                // Store::fn(...): a function of the store that writes its state.
+                var q: u8[..160] = "";
+                format(q, tok_name(tk), "::", tok_name(nodes[n].d));
+                let fi = find_fn(q);
+                if fi < 0 {
+                    var m: u8[>..] = [];
+                    format(m, tok_name(tk), " has no function ", tok_name(nodes[n].d),
+                           " that a component can call (one that changes the store's state and returns nothing)");
+                    report(line, m);
+                    return;
+                }
+                nodes[n].ref = fi;
+            }
+            else if tok_is(tk, "web") && tok_is(nodes[n].d, "has") { nodes[n].ref = B_HAS; }
             else if reactive && is_http(n) {
                 var m: u8[>..] = [];
                 format(m, "http::", tok_name(nodes[n].d), " needs await");
@@ -2127,6 +2293,9 @@ fn rw_write(d: i64, line: i64) {
         report(line, m);
     } else if dc.kind == R_COMPUTED {
         format(m, "@computed ", dc.name, " is set by the framework; component code cannot assign it");
+        report(line, m);
+    } else if dc.kind == R_STORE {
+        format(m, dc.st, "::", dc.sn, " belongs to the store; only a function of ", dc.st, " changes it");
         report(line, m);
     }
 }
@@ -2570,7 +2739,13 @@ recursive fn rec_expr(n: i64) {
     let k = nodes[n].k;
     if k == E_NAME {
         let d = nodes[n].ref2;
-        if d >= 0 { add_edit(toks[nodes[n].tok].s, 0, if rdecls[d].kind == R_PROP { "gw_p." } else { "gw_s." }); }
+        if d >= 0 && rdecls[d].kind == R_STORE {
+            // Cart::count is the component's copy, gw_s.gw_Cart_count.
+            var nm: u8[>..] = [];
+            format(nm, "gw_s.", rdecls[d].name);
+            edit_range(toks[nodes[n].tok].s, toks[nodes[n].d].e, nm);
+        }
+        else if d >= 0 { add_edit(toks[nodes[n].tok].s, 0, if rdecls[d].kind == R_PROP { "gw_p." } else { "gw_s." }); }
         return;
     }
     if k == E_FIELD || k == E_UN { rec_expr(nodes[n].a); return; }
@@ -2594,7 +2769,10 @@ recursive fn rec_expr(n: i64) {
         format(nm, if r == B_HTTP_GET { "gw_get_" } else { "gw_post_" }, nodes[n].tv);
         edit_range(toks[nodes[n].tok].s, toks[nodes[n].d].e, nm);
     }
-    if r >= 0 && takes_state(r) {
+    if r >= 0 && fns[r].st.len > 0 {
+        // Cart::add(x) is Cart::gw_x_add(x) on the server, a function that does nothing (a handler never runs there).
+        add_edit(toks[nodes[n].d].s, 0, "gw_x_");
+    } else if r >= 0 && takes_state(r) {
         add_edit(toks[nodes[n].tok + 1].e, 0, if nodes[n].a >= 0 { "gw_p, gw_s, " } else { "gw_p, gw_s" });
     }
     var a = nodes[n].a;
@@ -2640,8 +2818,11 @@ fn has_init_fn(d: RDecl) -> bool {
 
 // After check_reactive: the edits of the script lines. Markup edits are recorded as the markup is compiled.
 fn rec_script() {
+    if store_at >= 0 { edit_range(toks[store_at].s, toks[store_end].e, ""); }
+    for u in ruses { edit_range(u.s, u.e, ""); }
     for i in rdecls.len {
         let d = rdecls[i];
+        if d.kind == R_STORE { continue; }
         let semi = semi_after(d.tok);
         if semi < 0 { continue; }
         let from = toks[d.keyword_tok - 2].s;
@@ -2847,6 +3028,13 @@ recursive fn emit_args(n: i64) {
     }
 }
 
+// The name of a @use'd store's module in the output.
+fn store_js(name: const u8[:]) -> u8[..72] {
+    var r: u8[..72] = "";
+    format(r, if compact { "$" } else { "gw_" }, name);
+    return r;
+}
+
 recursive fn emit_call(n: i64, top: bool) {
     let r = nodes[n].ref;
     if r >= 0 && fns[r].event {
@@ -2857,6 +3045,18 @@ recursive fn emit_call(n: i64, top: bool) {
         wo(", [");
         emit_args(n);
         w("])");
+        return;
+    }
+    if r >= 0 && fns[r].st.len > 0 {
+        // Cart::add(x): the store module's function runs on the store's state and tells every subscriber.
+        w(store_js(fns[r].st));
+        w(".");
+        w(fns[r].sf);
+        w("(");
+        w(c_js);
+        if nodes[n].a >= 0 { wo(", "); }
+        emit_args(n);
+        w(")");
         return;
     }
     if r >= 0 {
@@ -3395,6 +3595,37 @@ fn emit_table(which: i64) {
             wo(" => {");
             emit_block(b.body);
         }
+        // A component that @uses a store subscribes when it starts: its store keys and their bits in this component.
+        for u, ui in ruses {
+            if !first { w(","); }
+            if !compact { w(" "); }
+            first = false;
+            format(js, "gw_s", ui);
+            wo(": (");
+            w(s_js);
+            w(",");
+            wo(" ");
+            w(c_js);
+            w(")");
+            wo(" => ");
+            w(store_js(u.name));
+            w(".sub(");
+            w(s_js);
+            w(",");
+            wo(" ");
+            w(c_js);
+            w(",");
+            wo(" {");
+            for j in u.n {
+                if j > 0 { w(","); }
+                wo(" ");
+                w(rdecls[u.base + j].sn);
+                wo(": ");
+                format(js, rdecls[u.base + j].mask);
+            }
+            if u.n > 0 && !compact { w(" "); }
+            w("})");
+        }
     }
     if !compact && !first { w(" "); }
     w("}");
@@ -3805,6 +4036,30 @@ fn emit_reactive_init() {
     w(p_js);
     if !compact { w(" "); }
     w("};");
+    // The copies of the stores' values start as the stores' initial state.
+    for u in ruses {
+        nl();
+        w("{");
+        wo(" ");
+        w("const ");
+        w(c_js);
+        wo(" = ");
+        w(store_js(u.name));
+        w(".i();");
+        for j in u.n {
+            wo(" ");
+            w(s_js);
+            w(".");
+            w(rdecls[u.base + j].name);
+            wo(" = ");
+            w(c_js);
+            w(".");
+            w(rdecls[u.base + j].sn);
+            w(";");
+        }
+        wo(" ");
+        w("}");
+    }
     for d in rdecls {
         if d.kind != R_STATE || !has_init_fn(d) { continue; }
         nl();
@@ -3837,15 +4092,22 @@ fn emit_reactive_init() {
 }
 
 fn emit_reactive_call(watch: bool) {
-    helper(H_COMPONENT);
-    w("(\"");
-    js.append(isl);
-    w("\",");
-    wo(" { ");
-    w("r");
-    wo(": ");
-    w(render_js);
-    wo(", ");
+    if store_mode {
+        // A store is registered like a component (gweb test runs its tests; there are no roots), and its module
+        // exports what gws.js makes of it.
+        w(if compact { "const $d=" } else { "const gw_def = " });
+        wo("{ ");
+    } else {
+        helper(H_COMPONENT);
+        w("(\"");
+        js.append(isl);
+        w("\",");
+        wo(" { ");
+        w("r");
+        wo(": ");
+        w(render_js);
+        wo(", ");
+    }
     w("u");
     wo(": ");
     w(u_js);
@@ -3904,9 +4166,9 @@ fn emit_reactive_call(watch: bool) {
         if !compact { w(" "); }
         w("}");
     }
-    // l: the lifecycle entries: mount keys, unmount keys, [ms, key] intervals.
-    if rblocks.len > 0 {
-        var any = false;
+    // l: the lifecycle entries: mount keys (the store subscriptions first), unmount keys, [ms, key] intervals.
+    if rblocks.len > 0 || ruses.len > 0 {
+        var any = ruses.len > 0;
         for b in rblocks { if b.kind != RB_WATCH { any = true; } }
         if any {
             wo(", ");
@@ -3916,6 +4178,15 @@ fn emit_reactive_call(watch: bool) {
             for kind in 1..4 {
                 if kind == RB_EVERY { wo(" v: ["); } else if kind == RB_MOUNT { wo(" m: ["); } else { wo(" u: ["); }
                 var firstk = true;
+                if kind == RB_MOUNT {
+                    for ui in ruses.len {
+                        if !firstk { w(","); }
+                        firstk = false;
+                        w("\"");
+                        format(js, "gw_s", ui);
+                        w("\"");
+                    }
+                }
                 for bi in rblocks.len {
                     if rblocks[bi].kind != kind { continue; }
                     if !firstk { w(","); }
@@ -3946,10 +4217,33 @@ fn emit_reactive_call(watch: bool) {
     wo(", ");
     w("t");
     emit_table(1);
+    if store_mode {
+        wo(" };");
+        if !compact { w("\n"); }
+        helper(H_COMPONENT);
+        w("(\"");
+        js.append(isl);
+        w("\",");
+        wo(" ");
+        w(if compact { "$d" } else { "gw_def" });
+        w(");");
+        if !compact { w("\n"); }
+        w("export default ");
+        w(if compact { "$s" } else { "gw_store" });
+        w("(\"");
+        js.append(isl);
+        w("\",");
+        wo(" ");
+        w(if compact { "$d" } else { "gw_def" });
+        if store_local.len > 0 { w(","); wo(" "); js_str(store_local); }
+        w(");");
+        if !compact { w("\n"); }
+        return;
+    }
     wo(" });");
     if !compact { w("\n"); }
-    // A component with any block starts eagerly (Addendum 12, 7.2).
-    if rblocks.len > 0 {
+    // A component with a block or a @use'd store starts eagerly (Addendum 12, 7.2).
+    if rblocks.len > 0 || ruses.len > 0 {
         life_use = 1;
         w(if compact { "$l" } else { "life" });
         w("(");
@@ -5416,6 +5710,7 @@ fn emit_json_writer(out: u8[>..]&) {
 // A declaration's type as the Goose structs write it: as in the source, with const on u8[:] and S[:] props.
 fn decl_type(d: RDecl) -> u8[>..] {
     var r: u8[>..] = [];
+    if d.kind == R_STORE { r.append(stub_ty(d.ty)); return r; }
     if (d.ty.t == T_STR && d.ty.cap == 0) || (d.ty.t == T_ARRAY && d.ty.cap == RO) { r.append("const "); }
     r.append(text[d.ts..d.te]);
     return r;
@@ -5423,7 +5718,7 @@ fn decl_type(d: RDecl) -> u8[>..] {
 
 // State holds @state, then @computed, in declaration order, and the array @state last.
 fn in_state(d: RDecl, pass: i64) -> bool {
-    if pass == 0 { return d.kind == R_STATE && d.ty.t != T_ARRAY; }
+    if pass == 0 { return (d.kind == R_STATE || d.kind == R_STORE) && d.ty.t != T_ARRAY; }
     if pass == 1 { return d.kind == R_COMPUTED; }
     return d.kind == R_STATE && d.ty.t == T_ARRAY;
 }
@@ -5504,6 +5799,12 @@ fn emit_reactive_tail(name: const u8[:], out: u8[>..]&) {
     out.append(if first { "}\n" } else { " }\n" });
     emit_stubs(out);
     out.append("fn gw_init(gw_p: const Props&) -> State { var gw_s = State { .. }; ");
+    // The copies of the stores' values start as the stores' initial state.
+    for u in ruses {
+        format(out, "{ var gw_t = ", u.name, "::Props { .. }; let gw_v = ", u.name, "::gw_init(gw_t); ");
+        for j in u.n { format(out, "gw_s.", rdecls[u.base + j].name, " = gw_v.", rdecls[u.base + j].sn, "; "); }
+        out.append("} ");
+    }
     for d in rdecls {
         if d.kind == R_STATE && has_init_fn(d) { format(out, "gw_s.", d.name, " = gw_i_", d.name, "(gw_p, gw_s); "); }
     }
@@ -5537,12 +5838,28 @@ fn emit_reactive_tail(name: const u8[:], out: u8[>..]&) {
         }
     }
     out.append(if first { "out.append(\"{}\"); }\n" } else { "out.push('}'); }\n" });
+    if store_mode {
+        // What a component calls (Store::add(x) is Store::gw_x_add(x) there): the Goose side runs no handler.
+        for f in fns {
+            if f.body < 0 || f.test || f.w == 0 || f.ret.t != T_VOID { continue; }
+            var close = f.tok + 2;
+            while !tok_is(close, ")") { close += 1; }
+            format(out, "fn gw_x_", f.name, "(", text[toks[f.tok + 1].e..toks[close].s], ") {}\n");
+        }
+        return;
+    }
     // nest is the child form (a parent's markup calls it with the child's key); component adds the module script.
     format(out, "fn nest(out: u8[>..]&, gw_p: const Props&, gw_k: const u8[:], gw_a: const u8[:]) { let gw_s = gw_init(gw_p); out.append(\"<div data-component=\\\"", name,
            "\\\"\"); if gw_k.len > 0 { out.append(\" gw-key=\\\"\"); web::put(out, gw_k); out.append(\"\\\"\"); } out.append(gw_a); out.append(\">\"); ",
            "render(out, gw_p, gw_s); out.append(\"</div><script type=\\\"application/json\\\">\"); gw_json(out, gw_p, gw_s); out.append(\"</script>\"); }\n");
-    format(out, "fn component(out: u8[>..]&, gw_p: const Props&) { nest(out, gw_p, \"\", \"\"); ",
-           "out.append(\"<script type=\\\"module\\\" src=\\\"/_gw/", name, ".js\\\"></script>\"); }\n");
+    // Each store this component @uses has its initial state written after the root (the client reads the first of them).
+    format(out, "fn component(out: u8[>..]&, gw_p: const Props&) { nest(out, gw_p, \"\", \"\"); ");
+    for u in ruses {
+        format(out, "{ var gw_t = ", u.name, "::Props { .. }; let gw_v = ", u.name, "::gw_init(gw_t); ",
+               "out.append(\"<script type=\\\"application/json\\\" data-store=\\\"", u.name, "\\\">\"); ",
+               u.name, "::gw_json(out, gw_t, gw_v); out.append(\"</script>\"); } ");
+    }
+    format(out, "out.append(\"<script type=\\\"module\\\" src=\\\"/_gw/", name, ".js\\\"></script>\"); }\n");
 }
 
 fn check_structs() {
@@ -5674,6 +5991,7 @@ fn is_reactive() -> bool { return reactive; }
 // components it calls; compile() records each one's props here, which a caller's arguments are checked against.
 fn registry_clear() {
     reg.clear();
+    reg_stores.clear();
     reg_props.clear();
     reg_events.clear();
 }
@@ -5739,6 +6057,11 @@ fn reset() {
     gline.clear();
     cat_open = false;
     reactive = false;
+    store_mode = store_next;
+    store_next = false;
+    store_local.clear();
+    store_at = -1;
+    store_end = -1;
     rdecls.clear();
     rblocks.clear();
     ruses.clear();
@@ -5781,6 +6104,14 @@ fn reset() {
     child_use = 0;
 }
 
+// A store (stores/Name.gshtml): compiled like a component without props or markup (Addendum 12 section 7.7). gweb
+// compiles every store before the components, which read what it leaves in reg_stores. Same arguments as compile().
+fn compile_store(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: bool,
+                 goose_out: u8[>..]&, js_out: u8[>..]&, errs: u8[>..]&, warns: u8[>..]&) -> bool {
+    store_next = true;
+    return compile(name, path, src, compact_js, goose_out, js_out, errs, warns);
+}
+
 // Errors go to errs as `path:LINE: error: MSG` lines; false when there were any.
 // Warnings go to warns as `code\tpath:LINE: warning: MSG` lines.
 // goose_out is written even then, so the Goose compiler can report its own errors.
@@ -5819,6 +6150,11 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
     let ri = reg_find(name);
     if ri >= 0 { reg[ri].done = 1; }
     parse_script(1, close);
+    if store_mode {
+        for li in close + 1..nlines {
+            if trim(text[line_start[li]..line_end[li]]).len > 0 { report(li + 1, "a store has no markup"); break; }
+        }
+    }
     // The header: a reactive component imports the components its markup calls (they were compiled before it).
     format(goose_out, "namespace ", name, "; import std; import json; import web; import web.template;");
     if reactive {
@@ -5837,6 +6173,7 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
             }
         }
     }
+    for u in ruses { format(goose_out, " import ", u.name, ";"); }
     goose_out.push('\n');
     if reactive { check_rmodel(); } else { check_structs(); }
     for &f in fns {
@@ -5855,7 +6192,8 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
         else { goose_out.append(text[line_start[li]..line_end[li]]); }
         goose_out.push('\n');
     }
-    if reactive { goose_out.append("fn render(out: u8[>..]&, gw_p: const Props&, gw_s: const State&) {\n"); }
+    if store_mode { goose_out.append(""); }
+    else if reactive { goose_out.append("fn render(out: u8[>..]&, gw_p: const Props&, gw_s: const State&) {\n"); }
     else { goose_out.append("fn render(out: u8[>..]&, s: const State&) {\n"); }
     if reactive {
         for d in rdecls {
@@ -5888,11 +6226,13 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
         }
     }
     if !reactive || nerr == 0 { for i in fns.len { if fns[i].body >= 0 { emit_js_fn(i); } } }
-    await_ctx.clear();
-    await_ctx.append("markup");
-    compile_markup(close + 1, close + 1, goose_out);
-    await_ctx.clear();
-    if close + 1 >= nlines { goose_out.append("}\n"); }
+    if !store_mode {
+        await_ctx.clear();
+        await_ctx.append("markup");
+        compile_markup(close + 1, close + 1, goose_out);
+        await_ctx.clear();
+        if close + 1 >= nlines { goose_out.append("}\n"); }
+    }
     if !reactive {
         emit_zero();
         emit_component_call();
@@ -5933,6 +6273,8 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
         }
         if life_use != 0 { js_out.append("import{life as $l}from\"./gwl.js\";"); }
         if mods_use != 0 { js_out.append("import\"./gwm.js\";"); }
+        if store_mode { js_out.append("import{store as $s}from\"./gws.js\";"); }
+        for u in ruses { format(js_out, "import $", u.name, " from\"./", u.name, ".js\";"); }
         for k in kids { format(js_out, "import\"./", k, ".js\";"); }
         if child_use != 0 {
             js_out.append("import{");
@@ -5960,6 +6302,8 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
         }
         if life_use != 0 { js_out.append("import { life } from \"./gwl.js\";\n"); }
         if mods_use != 0 { js_out.append("import \"./gwm.js\";\n"); }
+        if store_mode { js_out.append("import { store as gw_store } from \"./gws.js\";\n"); }
+        for u in ruses { format(js_out, "import gw_", u.name, " from \"./", u.name, ".js\";\n"); }
         for k in kids { format(js_out, "import \"./", k, ".js\";\n"); }
         if child_use != 0 {
             js_out.append("import { ");
@@ -5974,6 +6318,19 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
         }
     }
     js_out.append(js);
+    if store_mode {
+        // What the components that @use this store read: `U` the store, `S` each scalar name with its type and bit,
+        // `F` each function that changes its state, with the bits.
+        format(reg_stores, "U\t", name, "\n");
+        for d in rdecls {
+            if d.ty.t == T_INT || d.ty.t == T_BOOL || (d.ty.t == T_STR && d.ty.cap > 0) {
+                format(reg_stores, "S\t", name, "\t", d.name, "\t", d.ty.t, "\t", d.ty.cap, "\t", d.bit, "\n");
+            }
+        }
+        for f in fns {
+            if f.body >= 0 && !f.test && f.w != 0 && f.ret.t == T_VOID { format(reg_stores, "F\t", name, "\t", f.name, "\t", f.w, "\n"); }
+        }
+    }
     errs.append(errs_buf);
     if nerr == 0 {
         warns.append(warns_buf);

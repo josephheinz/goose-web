@@ -1,0 +1,15 @@
+<script goose>
+// A shared store (Addendum 12 section 7.7): scalars and a computed that components read, an array they cannot,
+// functions that write; synced to localStorage under "rcart".
+@store(local: "rcart")
+struct Line { id: i64, qty: i64 }
+@state var count: i64 = 0;
+@state var total: i64 = 5;
+@state var lines: Line[>..<] = [];
+@computed let big: bool = count > 2;
+fn add(id: i64) { lines.push(Line { id: id, qty: 1 }); count += 1; total += id * 10; }
+fn clear_all() { lines.clear(); count = 0; total = 5; }
+fn peek() -> i64 { return count; }
+fn test_add() { add(1); add(2); add(3); }
+fn test_clear() { add(4); clear_all(); }
+</script>

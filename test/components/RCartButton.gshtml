@@ -1,0 +1,10 @@
+<script goose>
+// Calls the store's functions from handlers; the count shows in its own text too. A test calling a store function
+// leaves the component's copies alone on both sides.
+@use RCart;
+@state var clicks: i64 = 0;
+fn buy(id: i64) { clicks += 1; RCart::add(id); }
+fn empty() { RCart::clear_all(); }
+fn test_buy() { buy(2); RCart::add(7); }
+</script>
+<button on:click="buy(3)">buy</button><button on:click="empty">clear</button><span>{clicks} clicks, {RCart::count} in cart</span>

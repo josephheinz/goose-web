@@ -426,6 +426,15 @@ child (`/_gw/gwc.js`, served when a component calls one) and the child keeps its
 `change(qty);` from a handler or lifecycle block, not markup, computeds or watches. The parent listens with
 `@Qty(start: 1, on:change="picked")`: `picked` is its own function taking the same parameters, run like any handler.
 
+**Stores.** `stores/Cart.gshtml` holds one `<script goose>` block (no markup) of `@state`, `@computed`, structs and
+functions; `@store(local: "cart")` first in it keeps the state in `localStorage` too. A component writes `@use Cart;`,
+reads `Cart::count` (an `i64`, `bool` or `u8[..N]` name; each takes one of its 31 names) and calls `Cart::add(id)` from
+a handler (a store function that changes state and returns nothing, not directly in `on:`). Components cannot assign
+store values. Every component that uses the store shows and follows the same state (`/_gw/Cart.js`, `/_gw/gws.js`).
+A store has no `@prop`, `@watch`, `@mount`, `@unmount`, `@every`, `@event`, `@use` or `await`, and its name differs
+from every component's. Each using component copies the store's values into its own state; the server renders them
+from the store's initial state, and `data-store="Cart"` holds that state on the page.
+
 **Maintainers.** After editing `client/gwi.js`, run `client/build.sh` (esbuild
 0.28.2 through `npx`, or `ESBUILD=/path/to/esbuild`); it writes
 `client/gwi.min.js` with the source's FNV-1a hash in its banner.

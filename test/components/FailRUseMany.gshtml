@@ -1,0 +1,36 @@
+<script goose>
+// with: RCart
+// expect: components/FailRUseMany.gshtml:34: error: a component may have at most 31 @prop, @state and @computed names (a @use'd store adds one for each of its names)
+@state var s0: i64 = 0;
+@state var s1: i64 = 0;
+@state var s2: i64 = 0;
+@state var s3: i64 = 0;
+@state var s4: i64 = 0;
+@state var s5: i64 = 0;
+@state var s6: i64 = 0;
+@state var s7: i64 = 0;
+@state var s8: i64 = 0;
+@state var s9: i64 = 0;
+@state var s10: i64 = 0;
+@state var s11: i64 = 0;
+@state var s12: i64 = 0;
+@state var s13: i64 = 0;
+@state var s14: i64 = 0;
+@state var s15: i64 = 0;
+@state var s16: i64 = 0;
+@state var s17: i64 = 0;
+@state var s18: i64 = 0;
+@state var s19: i64 = 0;
+@state var s20: i64 = 0;
+@state var s21: i64 = 0;
+@state var s22: i64 = 0;
+@state var s23: i64 = 0;
+@state var s24: i64 = 0;
+@state var s25: i64 = 0;
+@state var s26: i64 = 0;
+@state var s27: i64 = 0;
+@state var s28: i64 = 0;
+@state var s29: i64 = 0;
+@use RCart;
+</script>
+<p>x</p>

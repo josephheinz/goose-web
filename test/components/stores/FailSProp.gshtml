@@ -1,0 +1,5 @@
+<script goose>
+// expect: stores/FailSProp.gshtml:4: error: a store cannot have @prop; it has no props
+@state var n: i64 = 0;
+@prop const p: i64;
+</script>

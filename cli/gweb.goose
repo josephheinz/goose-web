@@ -68,6 +68,7 @@ var gen_root: u8[>..];
 let TEST_DIR = ".gooseweb.test";
 let BUILD_DIR = ".gooseweb";
 var component_names: u8[..64][>..<];
+var store_names: u8[..64][>..<];       // stores/Name.gshtml (Addendum 12 section 7.7)
 var component_lines: i64[>..<];
 var component_reactive: i64[>..<];     // 1 for a component with @ declarations (parallel to component_names)
 var component_props: u8[>..];          // `Name\tprop\tdefault source\n` for each @prop of each reactive component
@@ -77,6 +78,7 @@ var uses_boost = false;               // a layout or page has <body gw-boost> (s
 var uses_mods = false;                // a component imports gwm.js (on: modifiers)
 var uses_life = false;                // a component calls life() (imports gwl.js)
 var uses_children = false;            // a component calls a child component (imports gwc.js)
+var uses_stores = false;              // the site has a store (stores/*.gshtml, serves gws.js)
 var uses_http = false;                 // a component imports gwh.js (http::get or http::post)
 var http_calls: Target[>..<];          // each string-literal url of an http call (post: POST, name: get or post)
 var targets: Target[>..<];
@@ -528,6 +530,29 @@ fn scan_components() {
     for t in found { component_names.push(t); }
 }
 
+// stores/Name.gshtml: a store's name follows the rule for a component's, and no component has it too.
+fn scan_stores() {
+    store_names.clear();
+    var names: u8[>..] = [];
+    if !list_dir("stores", names) { return; }
+    var found: u8[..64][>..<] = [];
+    for f in split(names, '\n') {
+        if f.len == 0 || f[0] == '.' || !ends_with(f, ".gshtml") { continue; }
+        let n = f[..f.len - 7];
+        var ok = n.len > 0 && n.len <= 64 && n[0] >= 'A' && n[0] <= 'Z';
+        for c in n { if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) { ok = false; } }
+        var p: u8[>..] = [];
+        format(p, "stores/", f);
+        if !ok { err(p, 0, "a store's name is [A-Z][A-Za-z0-9]*, as in stores/Cart.gshtml"); continue; }
+        if has_component(n) { err(p, 0, "a store and a component cannot have the same name"); continue; }
+        var t: u8[..64] = "";
+        t.append(n);
+        found.push(t);
+    }
+    sort(found) { a, b => compare(a, b) < 0 };
+    for t in found { store_names.push(t); }
+}
+
 fn component_index(name: const u8[:]) -> i64 {
     for n, i in component_names { if n == name { return i; } }
     return -1;
@@ -554,6 +579,7 @@ fn scan() {
     scan_app();
     scan_public();
     scan_components();
+    scan_stores();
     // A public file may not shadow a route at the same literal URL.
     for d in dirs {
         if !d.route && !d.page_html { continue; }
@@ -658,6 +684,11 @@ fn add_default_imports(imports: u8[>..]&) {
         if find(imports, imp) < 0 { imports.append(imp); imports.push(' '); }
     }
     for n in component_names {
+        var imp: u8[>..] = [];
+        format(imp, "import ", n, ";");
+        if find(imports, imp) < 0 { imports.append(imp); imports.push(' '); }
+    }
+    for n in store_names {
         var imp: u8[>..] = [];
         format(imp, "import ", n, ";");
         if find(imports, imp) < 0 { imports.append(imp); imports.push(' '); }
@@ -1740,13 +1771,15 @@ let RT_CHILD_PRETTY = embed_file("../client/gwc.js");
 let RT_CHILD_MIN = embed_file("../client/gwc.min.js");
 let RT_NAV_PRETTY = embed_file("../client/gwn.js");
 let RT_NAV_MIN = embed_file("../client/gwn.min.js");
+let RT_STORE_PRETTY = embed_file("../client/gws.js");
+let RT_STORE_MIN = embed_file("../client/gws.min.js");
 
-// which: 0 is gwi.js (the core), 1 is gwf.js (fragments), 2 is gwh.js (typed fetch), 3 is gwl.js (lifecycle), 4 is gwm.js (modifiers), 5 is gwc.js (child components), 6 is gwn.js (client navigation).
+// which: 0 is gwi.js (the core), 1 is gwf.js (fragments), 2 is gwh.js (typed fetch), 3 is gwl.js (lifecycle), 4 is gwm.js (modifiers), 5 is gwc.js (child components), 6 is gwn.js (client navigation), 7 is gws.js (stores).
 fn runtime_js(which: i64, min: bool, out: u8[>..]&) {
     let home = goose_web_home();
     if home.len > 0 {
         var p: u8[>..] = [];
-        let base = if which == 1 { "/client/gwf" } else if which == 2 { "/client/gwh" } else if which == 3 { "/client/gwl" } else if which == 4 { "/client/gwm" } else if which == 5 { "/client/gwc" } else if which == 6 { "/client/gwn" } else { "/client/gwi" };
+        let base = if which == 1 { "/client/gwf" } else if which == 2 { "/client/gwh" } else if which == 3 { "/client/gwl" } else if which == 4 { "/client/gwm" } else if which == 5 { "/client/gwc" } else if which == 6 { "/client/gwn" } else if which == 7 { "/client/gws" } else { "/client/gwi" };
         format(p, home, base, if min { ".min.js" } else { ".js" });
         if read(p, out) { return; }
     }
@@ -1757,6 +1790,7 @@ fn runtime_js(which: i64, min: bool, out: u8[>..]&) {
     else if which == 4 { out.append(if min { RT_MODS_MIN } else { RT_MODS_PRETTY }); }
     else if which == 5 { out.append(if min { RT_CHILD_MIN } else { RT_CHILD_PRETTY }); }
     else if which == 6 { out.append(if min { RT_NAV_MIN } else { RT_NAV_PRETTY }); }
+    else if which == 7 { out.append(if min { RT_STORE_MIN } else { RT_STORE_PRETTY }); }
     else { out.append(if min { RT_MIN } else { RT_PRETTY }); }
 }
 
@@ -1819,6 +1853,7 @@ fn gen_runtime(dev: bool) {
     if uses_mods { gen_runtime_file(4, "gwm.js", dev, gw_dir); }
     if uses_children { gen_runtime_file(5, "gwc.js", dev, gw_dir); }
     if uses_boost { gen_runtime_file(6, "gwn.js", dev, gw_dir); }
+    if uses_stores { gen_runtime_file(7, "gws.js", dev, gw_dir); }
 }
 
 // The indices of component_names, each component after the components its markup calls with @Name( (a cycle is cut at
@@ -1864,16 +1899,50 @@ fn registry_begin() {
     for n in component_names { component::registry_add(n); }
 }
 
+// Every store is compiled before any component: a component reads what its stores left in the registry.
+fn gen_stores(dev: bool, gw_dir: const u8[:]) {
+    for n in store_names {
+        var path: u8[>..] = [];
+        format(path, "stores/", n, ".gshtml");
+        var src: u8[>..] = [];
+        if !read(path, src) { continue; }
+        var g: u8[>..] = [];
+        var j: u8[>..] = [];
+        var e: u8[>..] = [];
+        var w: u8[>..] = [];
+        let compiled = component::compile_store(n, path, src, !dev, g, j, e, w);
+        uses_stores = true;
+        emit_component_warnings(w);
+        if !compiled {
+            print_compiler(e);
+            note_errors(e);
+            for c in e { if c == '\n' { component_errors += 1; } }
+            if e.len == 0 { component_errors += 1; }
+        }
+        var dst: u8[>..] = [];
+        format(dst, gen_root, "/", n, ".goose");
+        write(dst, g);
+        format(map_text, n, ".goose\t", path, "\n");
+        dst.clear();
+        format(dst, gw_dir, "/", n, ".js");
+        write(dst, j);
+        var url: u8[>..] = [];
+        format(url, "/_gw/", n, ".js");
+        push_gw_static(url, dst, j);
+    }
+}
+
 // gen goes on after translator errors, so the Goose compiler reports its errors too.
 fn gen_components(dev: bool) {
     component_lines.clear();
     component_reactive.clear();
     component_props.clear();
-    if component_names.len == 0 { return; }
+    if component_names.len == 0 && store_names.len == 0 { return; }
     var gw_dir: u8[>..] = [];
     format(gw_dir, gen_root, "/_gw");
     make_dir(gw_dir);
     registry_begin();
+    gen_stores(dev, gw_dir);
     for k in component_names.len { component_lines.push(0); component_reactive.push(0); }
     for oi in component_order() {
         let n = component_names[oi];
@@ -1946,6 +2015,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     uses_mods = false;
     uses_life = false;
     uses_children = false;
+    uses_stores = false;
     targets.clear();
     http_calls.clear();
     gen_components(dev);
@@ -2037,7 +2107,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     check_targets();
     check_http();
     if errors > 0 { return false; }
-    if component_names.len > 0 || uses_fragments || uses_boost { gen_runtime(dev); }
+    if component_names.len > 0 || store_names.len > 0 || uses_fragments || uses_boost { gen_runtime(dev); }
     var main_file: u8[>..] = [];
     format(main_file, root, "/main.goose");
     write(main_file, gen_main());
@@ -2176,10 +2246,22 @@ fn build(debug: bool, dev: bool) -> bool {
 
 // ---------------------------------------------------------------- test
 
+// In the compiler's messages, the parity folder's link to name.goose is the file in the test folder.
+fn to_test_dir(fixed: u8[>..]&, parity: const u8[:], n: const u8[:]) {
+    var from: u8[>..] = [];
+    format(from, parity, "/", n, ".goose");
+    var to: u8[>..] = [];
+    format(to, TEST_DIR, "/", n, ".goose");
+    var next: u8[>..] = [];
+    format_replaced(next, fixed, from, to);
+    fixed.clear();
+    fixed.append(next);
+}
+
 fn test_cmd() -> bool {
     if !gen(false, TEST_DIR) { return false; }
     if component_errors > 0 { say_error("gweb test: fix the component errors above"); return false; }
-    if component_names.len == 0 { write_stdout("gweb test: no components/*.gshtml here\n"); return true; }
+    if component_names.len == 0 && store_names.len == 0 { write_stdout("gweb test: no components/*.gshtml or stores/*.gshtml here\n"); return true; }
     var probe: u8[>..] = [];
     if c_run("command -v node", probe) != 0 { write_stderr("gweb test needs node\n"); return false; }
     var parity: u8[>..] = [];
@@ -2191,6 +2273,7 @@ fn test_cmd() -> bool {
     main.append("import web from \""); lit(main, pkg_source(0)); main.append("\";\n");
     main.append("import net from \""); lit(main, pkg_source(1)); main.append("\";\n");
     main.append("import net.http;\nimport web.template;\n");
+    for n in store_names { format(main, "import ", n, ";\n"); }
     for n in component_names { format(main, "import ", n, ";\n"); }
     main.append("fn main() {\n    var out: u8[>..] = [];\n");
     var mjs_components: u8[>..] = [];
@@ -2225,7 +2308,49 @@ fn test_cmd() -> bool {
         p.clear();
         format(p, dir, "/gwc.js");
         write(p, cp);
+        var sp: u8[>..] = [];
+        runtime_js(7, compact, sp);
+        p.clear();
+        format(p, dir, "/gws.js");
+        write(p, sp);
         registry_begin();
+        // The stores first: a component reads what its stores leave in the registry.
+        for n in store_names {
+            var path: u8[>..] = [];
+            format(path, "stores/", n, ".gshtml");
+            var src: u8[>..] = [];
+            if !read(path, src) { return false; }
+            var g: u8[>..] = [];
+            var j: u8[>..] = [];
+            var e: u8[>..] = [];
+            var w: u8[>..] = [];
+            component::compile_store(n, path, src, compact, g, j, e, w);
+            p.clear();
+            format(p, dir, "/", n, ".js");
+            write(p, j);
+            if mode == 1 { continue; }
+            if mjs_components.len > 0 { mjs_components.push(','); }
+            format(mjs_components, "\"", n, "\"");
+            let tests = component::test_names();
+            let test_takes = component::test_args();
+            let takes = split(test_takes, '\n');
+            for t, ti in concat(split("zero\n", '\n')[..1], split(tests, '\n')) {
+                if t.len == 0 { continue; }
+                cases += 1;
+                format(main, "    { var p = ", n, "::Props { .. }; var s = ", n, "::gw_init(p); ");
+                if t != "zero" {
+                    if takes[ti - 1] == "1" { format(main, n, "::", t, "(p, s); "); } else { format(main, n, "::", t, "(); "); }
+                    format(main, n, "::gw_flush(p, s); ");
+                }
+                // A store has no render: the output keeps the shape of a component's, with nothing after the JSON.
+                format(main, "out.append(\"== ", n, " ", t, "\\n\"); ", n, "::gw_json(out, p, s); out.append(\"\\n\\n== end\\n\"); }\n");
+            }
+            var link: u8[>..] = [];
+            format(link, parity, "/", n, ".goose");
+            var target: u8[>..] = [];
+            format(target, "../", n, ".goose");
+            c_symlink(target, link);
+        }
         for oi in component_order() {
             let n = component_names[oi];
             var path: u8[>..] = [];
@@ -2293,16 +2418,8 @@ fn test_cmd() -> bool {
     if c_run(cmd, out) != 0 {
         var fixed: u8[>..] = [];
         fixed.append(out);
-        for n in component_names {
-            var from: u8[>..] = [];
-            format(from, parity, "/", n, ".goose");
-            var to: u8[>..] = [];
-            format(to, TEST_DIR, "/", n, ".goose");
-            var next: u8[>..] = [];
-            format_replaced(next, fixed, from, to);
-            fixed.clear();
-            fixed.append(next);
-        }
+        for n in store_names { to_test_dir(fixed, parity, n); }
+        for n in component_names { to_test_dir(fixed, parity, n); }
         write_stderr(rewrite_errors(fixed, cwd));
         write_stderr("gweb test: the parity program did not build\n");
         return false;
@@ -2344,7 +2461,7 @@ export function component(name, def) { globalThis.__gw[name] = def; register(nam
 let RUN_MJS = """
 // Generated by gweb test: runs each case in JavaScript and compares it with goose.out.
 import fs from "node:fs";
-globalThis.document = { addEventListener() {} };
+globalThis.document = { addEventListener() {}, querySelector() { return null; } };
 const text = fs.readFileSync(new URL("./goose.out", import.meta.url), "utf8");
 const cases = [];
 for (const part of text.split("\n== end\n")) {
@@ -2384,7 +2501,7 @@ for (const mode of ["pretty", "compact"]) {
         s = def.i();
         if (c.test !== "zero") def.t[c.test](s, STUB);
         def.u(s, -1 >>> 1);
-        html = def.r(s);
+        html = def.r ? def.r(s) : "";
       } else {
         s = def.zero();
         if (c.test !== "zero") def.tests[c.test](s);
@@ -2515,7 +2632,7 @@ fn server_cmd(extra: u8[:][:], dev: bool) -> u8[>..] {
 fn stamp() -> i64 {
     var count = 0;
     var newest = 0;
-    for dir in ["app", "lib", "public", "components"] { newest = max(newest, c_tree_stamp(dir, count)); }
+    for dir in ["app", "lib", "public", "components", "stores"] { newest = max(newest, c_tree_stamp(dir, count)); }
     return newest * 31 + count;
 }
 
@@ -2541,7 +2658,7 @@ fn dev(extra: u8[:][:]) {
         pid = c_spawn(server_cmd(extra, true));
     } else {
         write_dev_errors(last_errors);
-        write_stderr("gweb dev: fix the errors above; watching app/, lib/, public/ and components/\n");
+        write_stderr("gweb dev: fix the errors above; watching app/, lib/, public/, components/ and stores/\n");
     }
     loop {
         sleep_ms(250);
@@ -2675,7 +2792,7 @@ usage: gweb [-C dir] <command>
                     gen, build, start and test also take --strict (warnings fail the run)
                     and --diagnostics json (stderr as JSON Lines)
   start [flags]     build, then run the server (flags go to it: --port N --workers N --log ...)
-  dev [flags]       build, run on port 60053 (unless --port), and rebuild on every change under app/, lib/, public/, components/
+  dev [flags]       build, run on port 60053 (unless --port), and rebuild on every change under app/, lib/, public/, components/, stores/
   routes            print the route table
   version           print the version and the package sources a build declares
   test              run each component's test_* functions as Goose and as JavaScript; they must match

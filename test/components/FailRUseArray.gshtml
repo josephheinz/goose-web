@@ -1,0 +1,8 @@
+<script goose>
+// with: RCart
+// expect: components/FailRUseArray.gshtml:6: error: RCart has no value lines to read here
+@use RCart;
+@state var n: i64 = 0;
+fn f() { n = RCart::lines.len; }
+</script>
+<p>x</p>

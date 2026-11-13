@@ -1,5 +1,5 @@
 <script goose>
-// expect: components/FailRUse.gshtml:3: error: @use is not built yet (Addendum 12 step 12)
-@use Store;
+// expect: components/FailRUse.gshtml:3: error: @use Nope: there is no store named Nope (stores/Nope.gshtml)
+@use Nope;
 </script>
 <p>x</p>

@@ -1,0 +1,5 @@
+<script goose>
+// expect: stores/FailSWatch.gshtml:4: error: a store cannot have @watch; it has no lifecycle
+@state var n: i64 = 0;
+@watch { n = 1; }
+</script>

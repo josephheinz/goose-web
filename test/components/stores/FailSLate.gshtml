@@ -1,0 +1,5 @@
+<script goose>
+// expect: stores/FailSLate.gshtml:4: error: @store goes first in the script
+@state var n: i64 = 0;
+@store(local: "k")
+</script>

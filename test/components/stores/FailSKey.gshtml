@@ -1,0 +1,5 @@
+<script goose>
+// expect: stores/FailSKey.gshtml:3: error: @store(local: "key") needs a key of 1 to 48 plain characters
+@store(local: "a b")
+@state var n: i64 = 0;
+</script>

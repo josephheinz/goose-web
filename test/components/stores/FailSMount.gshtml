@@ -1,0 +1,5 @@
+<script goose>
+// expect: stores/FailSMount.gshtml:4: error: a store cannot have @mount; it has no lifecycle
+@state var n: i64 = 0;
+@mount { n = 1; }
+</script>

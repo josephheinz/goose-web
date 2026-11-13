@@ -1,0 +1,7 @@
+<script goose>
+// Reads a store: the count and a computed of it, in text, an attribute and an {#if} block, and a local computed.
+@use RCart;
+@computed let twice: i64 = RCart::count * 2;
+fn test_badge() { }
+</script>
+<p class="{if RCart::big { "big" } else { "small" }}">items: {RCart::count}, total {RCart::total}, twice {twice}</p>{#if RCart::big}<b>big cart</b>{/if}

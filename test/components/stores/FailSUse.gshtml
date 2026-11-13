@@ -1,0 +1,5 @@
+<script goose>
+// expect: stores/FailSUse.gshtml:4: error: a store cannot have @use; stores do not use stores
+@state var n: i64 = 0;
+@use Other;
+</script>

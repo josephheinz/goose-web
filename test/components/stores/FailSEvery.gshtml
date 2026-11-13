@@ -1,0 +1,5 @@
+<script goose>
+// expect: stores/FailSEvery.gshtml:4: error: a store cannot have @every; it has no lifecycle
+@state var n: i64 = 0;
+@every(1000) { n = 1; }
+</script>
