@@ -25,7 +25,7 @@ jobs:
         working-directory: lab/gweb
     steps:
       - uses: actions/checkout@v4
-        with: { path: lab/gweb }
+        with: { path: lab/gweb, fetch-depth: 0 }   # test/migrate.sh reads the v0.7.0 tag
       - name: Sibling ref
         id: ref
         run: echo "ref=${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'main' }}" >> "$GITHUB_OUTPUT"

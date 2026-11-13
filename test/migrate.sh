@@ -3,7 +3,7 @@
 #
 #   GOOSE=/path/to/goose test/migrate.sh
 #
-# Takes test/ and docs/site/tutorial from the v0.7.0 tag (or MIGRATE_REF, or main) with git archive, runs the script on a copy
+# Takes test/ and docs/site/tutorial from the v0.7.0 tag (or MIGRATE_REF) with git archive, runs the script on a copy
 # and checks that:
 # 1. the old names are gone and the new ones are in: stream_write, stream_end, socket_send, the .gweb paths, --access-log;
 #    --log-format and --log-level are untouched; the reminders are printed; a second run changes nothing;
@@ -17,10 +17,10 @@ ROOT=$(dirname "$HERE")
 GWEB="$ROOT/gweb"
 if [ ! -x "$GWEB" ]; then echo "migrate.sh: $GWEB is missing; build it first: goose build -o gweb cli/gweb.goose" >&2; exit 2; fi
 REF=""
-for r in "${MIGRATE_REF:-}" v0.7.0 main; do
+for r in "${MIGRATE_REF:-}" v0.7.0; do
   [ -n "$r" ] && git -C "$ROOT" rev-parse --verify -q "$r^{commit}" >/dev/null 2>&1 && { REF=$r; break; }
 done
-if [ -z "$REF" ]; then echo "migrate.sh: no v0.7.0 tag or main branch here; skipped"; exit 0; fi
+if [ -z "$REF" ]; then echo "migrate.sh: no v0.7.0 tag here (a shallow clone? fetch tags); skipped"; exit 0; fi
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/gweb-migrate.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 pass=0
