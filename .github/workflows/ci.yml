@@ -1,0 +1,88 @@
+# Tests gweb with goose-net and goose-sqlite on every push and pull request. A v* tag also publishes a GitHub
+# release once both platforms pass. The three repos release together, so siblings are checked out at the same
+# tag (or at main for branches and pull requests).
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  GOOSE_VERSION: v2026.4   # the compiler each release is tested with (docs/site/stability.md)
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: lab/gweb
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: lab/gweb }
+      - name: Sibling ref
+        id: ref
+        run: echo "ref=${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'main' }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with: { repository: josephheinz/goose-net, ref: '${{ steps.ref.outputs.ref }}', path: lab/goose-net }
+      - uses: actions/checkout@v4
+        with: { repository: josephheinz/goose-sqlite, ref: '${{ steps.ref.outputs.ref }}', path: lab/goose-sqlite }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev zlib1g-dev
+      - name: Install goose
+        run: |
+          case "$RUNNER_OS" in
+            macOS) asset=goose-$GOOSE_VERSION-macos-arm64.tar.gz ;;
+            Linux) asset=goose-$GOOSE_VERSION-linux-x64.tar.gz ;;
+          esac
+          mkdir -p "$RUNNER_TEMP/goose"
+          curl -fsSL "https://github.com/aardappel/goose/releases/download/$GOOSE_VERSION/$asset" | tar -xz -C "$RUNNER_TEMP/goose"
+          bin=$(dirname "$(find "$RUNNER_TEMP/goose" -type f -name goose | head -n 1)")
+          echo "$bin" >> "$GITHUB_PATH"
+          "$bin/goose" --version || true
+      - name: Version matches tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: test "v$(tr -d '[:space:]' < VERSION)" = "${{ github.ref_name }}"
+      - name: Build gweb
+        run: goose build -o gweb cli/gweb.goose
+      - name: goose-net tests
+        working-directory: lab/goose-net
+        run: |
+          (cd test && goose build -o "$RUNNER_TEMP/test_net" test_net.goose) && "$RUNNER_TEMP/test_net"
+          sh test/spool.sh
+          sh test/c/run.sh
+          cc -O2 -o "$RUNNER_TEMP/hub_core_test" test/hub_core_test.c src/hub_core.c -lpthread && "$RUNNER_TEMP/hub_core_test"
+      - name: goose-sqlite tests
+        working-directory: lab/goose-sqlite
+        run: |
+          for t in test_sqlite test_query; do
+            (cd test && goose build -o "$RUNNER_TEMP/$t" $t.goose) && "$RUNNER_TEMP/$t"
+          done
+      - name: Release check
+        run: GOOSE=$(command -v goose) sh test/release_check.sh
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sh tools/changelog-section.sh "$GITHUB_REF_NAME" > notes.md
+          [ -s notes.md ] || { echo "CHANGELOG.md has no section for $GITHUB_REF_NAME" >&2; exit 1; }
+          printf '\nTested with goose %s on macOS and Linux.\n' "$GOOSE_VERSION" >> notes.md
+          gh release create "$GITHUB_REF_NAME" --title "gweb $GITHUB_REF_NAME" --notes-file notes.md --verify-tag
