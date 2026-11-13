@@ -468,3 +468,35 @@ Each has the default I build with.
 11. **The component root stays a `<div>`.** Inside `<ul>` or `<table>` a child component needs a wrapper cell.
 12. **One array `@state` per component**, as v0.2's one array in `State`. Default: unchanged.
 13. **Fragment pages load two modules** (`gwf.js` and `gwi.js`). Default: accepted, with a modulepreload link.
+
+## Build log
+
+All 16 steps landed on `arch/reactivity`. Goose v2026.4 arrived after step 4b; steps 1 to 4b were then compiled and tested, and every later step was built and tested by its builder. Final run: `components.sh` 184 passed (`gweb test` 126 parity cases, pretty and compact), `templates.sh` 42, `runtime.sh` 25 (morph 21, reactive 11, reactive_dom 29, store_dom 4, nav 8, transition 9, sse 8, all ceilings and banners), `fragments.sh` 102, `catchall.sh` 50 of 50, `sse_test.goose` 8 of 8.
+
+| Step | Commit | Notes and deviations |
+|---|---|---|
+| 1 warnings | e6a85ce | gweb's own failure lines are JSON objects with an empty file in json mode. Goose compiler warnings on a good build are still not shown. |
+| 2 split | 5ace9ea | `gwf.js` 987 bytes. |
+| 3 contract | 115e6ea | Rounds counted 1 to 8. A sync failure restores in place (`Object.assign`), so a pending async handler keeps the same state object. |
+| 4a front | 88618d3 | Extra errors: an initializer reading a computed; a struct prop with a default. |
+| 4b Goose | dbd0d6c, 4ad7bcf | `Edit.text` is fixed size. Fix after the first compile: a temporary cannot bind to `const Props&`, so the call is `{ let gw_p = ...; Name::component(out, gw_p); }`. |
+| 5 JS, parts | ff5b5d0 | The legacy adapter left the core; the legacy emitter writes `u` and `h`. Legacy Goose output byte-identical. Top-level `{#let}` values recompute on every update. |
+| 6 fetch | 190ef22 | `@watch` cannot await (design allowed it). Routes must name a value before `gw_json`. Rollback restores a handler's whole write set, so two handlers writing one name can lose the other's write. |
+| 7 lifecycle | 6681570 | `@mount` and `@every` may await; `@unmount` cannot. `run` gained a 7th argument `m0`. |
+| 8 events | 3e77bf3 | Modifiers did not fit the core (4,405 bytes inline): they live in a new optional `gwm.js` (466 bytes, ceiling 512). |
+| T fix | b20597e | An empty text part last in its element threw in `T`. |
+| 9 children | 99fda75 | Child props from markup are `i64`, `bool` and text only. Extra helper `M` for keyed children that move before they are touched. |
+| 10 child events | a0c2fae | `gwc.js` ceiling raised from 768 to 1,024 (919 bytes). `@unmount` may emit. |
+| 11 navigation | d678b94 | `gwn.js` 1,498 bytes (estimate was 900). Morph through `swap(document.body, html)`. Head not merged except the title. |
+| 12 stores | 6c5d161 | New optional `gws.js` (994 bytes, ceiling 1,024). Components see scalar store values only, copied into their own state; they call only store functions that write and return nothing. Stores keep an empty `Props`. A handler that throws after a store call does not roll the store back. |
+| 13 markup | c8bd56c | `cli/html.goose`. Reactive `unkeyed-for` uses the R/W pass. `legacy-state` is not emitted (waits for the shop migration). |
+| 14 transitions | 4d73103 | Leave renames `gw-key` to `~N`, so no core change. Any later morph of the parent ends a running leave at once. Legacy components get no `gwt.js` import. |
+| 15 push | 8ad7d7f | Format: `event: fragment` with `NAME\nHTML`, `event: store` with `Store\nJSON`. `web::sse_event`, `sse_fragment`, `sse_store`. A `gw-sse` site also loads `gws.js`. The subscribe route and publish example wait for the integration branch (delivery's `web::subscribe`, `web::publish`). |
+| 16 docs | ad8df3d | ARCHITECTURE, README, CHANGELOG. |
+
+Final sizes (minified, with banner): `gwi` 4,068 of 4,096; `gwf` 987; `gwh` 482; `gwl` 629; `gwm` 466; `gwc` 919; `gwn` 1,498; `gws` 994; `gwt` 764; `gwe` 575. Per component, compact: RCounter 694, RParts 2,863, RFetch 2,990.
+
+Known issues left open:
+- Several `on:` attributes on one element share one `data-args` (v0.2 behaviour).
+- `bind:value` on `<textarea>` renders a `value` attribute, which a textarea ignores.
+- The core has 28 bytes of headroom. Any further core feature needs a trim first.
