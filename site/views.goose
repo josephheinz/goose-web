@@ -223,27 +223,13 @@ fn vp_text<T>(req: const http::Request&, prefix: const u8[:], field: const u8[:]
 fn vp_int(req: const http::Request&, prefix: const u8[:], field: const u8[:], dst: i64&, errs: FieldErrors&, required: bool) {
     var id: u8[>..] = [];
     vname(id, prefix, field);
-    form_int(req, id, dst, errs, required);
+    form_i64(req, id, dst, errs, required);
 }
 
 fn vp_bool(req: const http::Request&, prefix: const u8[:], field: const u8[:], dst: bool&) {
     var id: u8[>..] = [];
     vname(id, prefix, field);
     form_bool(req, id, dst);
-}
-
-// The index of the posted variant name; -1 when absent and optional (keep the default); -2 after an error.
-fn form_enum(req: const http::Request&, field: const u8[:], names: const u8[:][:], errs: FieldErrors&, required: bool) -> i64 {
-    var v: u8[>..] = [];
-    let has = form(req, field, v);
-    let t = trim(v);
-    if !has || t.len == 0 {
-        if required { add_error(errs, field, "Required."); return -2; }
-        return -1;
-    }
-    for n, i in names { if n == t { return i; } }
-    add_error(errs, field, "Choose one of the options.");
-    return -2;
 }
 
 fn vp_enum(req: const http::Request&, prefix: const u8[:], field: const u8[:], names: const u8[:][:], errs: FieldErrors&, required: bool) -> i64 {
@@ -258,7 +244,7 @@ fn vp_count(req: const http::Request&, prefix: const u8[:], field: const u8[:], 
     vname(id, prefix, field);
     id.append(".n");
     var n: i64 = 0;
-    if !form_int(req, id, n, errs, false) { return 0; }
+    if !form_i64(req, id, n, errs, false) { return 0; }
     if n < 0 { n = 0; }
     if n > cap { add_error(errs, id, "Too many items."); return cap; }
     return n;

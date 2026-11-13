@@ -1284,7 +1284,7 @@ fn form_field(src: const u8[:], line: i64, text: const u8[:], body: u8[>..]&) {
     let required = if eq >= 0 { "false" } else { "true" };
     if !is_ident(name) { err(src, line, "form fields are u8[..N], i64, bool or gweb::Upload"); return; }
     if is_text_type(ty) { format(body, "    gweb::form_text(req, \"", name, "\", f.", name, ", errs, ", required, ");\n"); }
-    else if ty == "i64" { format(body, "    gweb::form_int(req, \"", name, "\", f.", name, ", errs, ", required, ");\n"); }
+    else if ty == "i64" { format(body, "    gweb::form_i64(req, \"", name, "\", f.", name, ", errs, ", required, ");\n"); }
     else if ty == "bool" { format(body, "    gweb::form_bool(req, \"", name, "\", f.", name, ");\n"); }
     else if ty == "gweb::Upload" { format(body, "    gweb::form_upload(ctx, \"", name, "\", f.", name, ", errs, ", required, ");\n"); }
     else { err(src, line, "form fields are u8[..N], i64, bool or gweb::Upload"); }

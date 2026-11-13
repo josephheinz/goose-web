@@ -13,10 +13,12 @@ import site.template;
 // ---------------------------------------------------------------- errors
 
 struct FieldError { field: u8[..64], message: u8[..200] }
-struct FieldErrors { n: i64, items: FieldError[16], dropped: bool }   // the first error per field is kept
+const MAX_FIELD_ERRORS = 64;
+// The first error per field is kept. The last slot is held for the form-level "too many errors" message.
+struct FieldErrors { n: i64, items: FieldError[64], dropped: bool }
 
 fn no_errors() -> FieldErrors {
-    FieldErrors { n: 0, items: [FieldError { field: "", message: "" }; 16], dropped: false }
+    FieldErrors { n: 0, items: [FieldError { field: "", message: "" }; 64], dropped: false }
 }
 
 fn has_errors(errs: const FieldErrors&) -> bool { return errs.n > 0; }
@@ -36,12 +38,25 @@ fn has_error(errs: const FieldErrors&, field: const u8[:]) -> bool {
     return false;
 }
 
-// False, with nothing added, when the field already has an error or 16 are held (then dropped is set).
+// False, with nothing added, when the field already has an error or the list is full. With 63 field errors held the
+// next one sets dropped and adds a form-level error (field "") in the last slot, so a form shows that some are missing.
 // A field name is cut at 64 bytes and a message at 200.
 fn add_error(errs: FieldErrors&, field: const u8[:], message: const u8[:]) -> bool {
     let f = field[..min(field.len, 64)];
     if has_error(errs, f) { return false; }
-    if errs.n >= 16 { errs.dropped = true; return false; }
+    if errs.n >= MAX_FIELD_ERRORS - 1 {
+        if !errs.dropped {
+            errs.dropped = true;
+            if !has_error(errs, "") {
+                let i = errs.n;
+                errs.items[i].field.clear();
+                errs.items[i].message.clear();
+                errs.items[i].message.append("Too many errors to show here. Fix these and submit again.");
+                errs.n += 1;
+            }
+        }
+        return false;
+    }
     let i = errs.n;
     errs.items[i].field.clear();
     errs.items[i].field.append(f);
@@ -183,8 +198,8 @@ fn form_text<T>(req: const http::Request&, field: const u8[:], out: T&, errs: Fi
     return true;
 }
 
-// parse_int(trim(value)); "Enter a whole number." when it does not parse. Optional absent or blank keeps out.
-fn form_int(req: const http::Request&, field: const u8[:], out: i64&, errs: FieldErrors&, required: bool) -> bool {
+// Fills an i64 field: parse_int(trim(value)); "Enter a whole number." when it does not parse. Optional absent or blank keeps out.
+fn form_i64(req: const http::Request&, field: const u8[:], out: i64&, errs: FieldErrors&, required: bool) -> bool {
     var v: u8[>..] = [];
     let has = form(req, field, v);
     let t = trim(v);
@@ -204,4 +219,18 @@ fn form_bool(req: const http::Request&, field: const u8[:], out: bool&) -> bool 
     let has = form(req, field, v);
     out = has && v != "" && v != "off" && v != "false" && v != "0";
     return true;
+}
+
+// The index of the posted variant name; -1 when absent and optional (keep the default); -2 after an error.
+fn form_enum(req: const http::Request&, field: const u8[:], names: const u8[:][:], errs: FieldErrors&, required: bool) -> i64 {
+    var v: u8[>..] = [];
+    let has = form(req, field, v);
+    let t = trim(v);
+    if !has || t.len == 0 {
+        if required { add_error(errs, field, "Required."); return -2; }
+        return -1;
+    }
+    for n, i in names { if n == t { return i; } }
+    add_error(errs, field, "Choose one of the options.");
+    return -2;
 }

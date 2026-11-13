@@ -184,7 +184,7 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     # The generated code reads like D1 and D9.
     GEN="$WORK/ok/.gweb"
     check "$(grep -qF '// gweb: form decoders (generated)' "$GEN/p"*"_signup.goose" 2>/dev/null && echo ok)" "the signup copy ends with the generated decoders"
-    check "$(grep -qF 'gweb::form_int(req, "age", f.age, errs, true);' "$GEN"/*signup.goose && grep -qF 'gweb::form_text(req, "note", f.note, errs, false);' "$GEN"/*signup.goose && echo ok)" "decoder statements: required and optional text, int"
+    check "$(grep -qF 'gweb::form_i64(req, "age", f.age, errs, true);' "$GEN"/*signup.goose && grep -qF 'gweb::form_text(req, "note", f.note, errs, false);' "$GEN"/*signup.goose && echo ok)" "decoder statements: required and optional text, int"
     check "$(grep -qF 'gweb::form_upload(ctx, "photo", f.photo, errs, true);' "$GEN"/*upload.goose && echo ok)" "decoder statement for gweb::Upload"
     check "$(grep -qF '::MAX_UPLOAD > 0 && gweb::content_length(req) >' "$GEN/main.goose" && grep -qF 'if gweb::is_multipart(req)' "$GEN/main.goose" && echo ok)" "main.goose has the MAX_UPLOAD check and the multipart prelude"
     check "$(grep -qF 'gweb::prepare_uploads(cfg);' "$GEN/main.goose" && echo ok)" "main() prepares the upload dir once"

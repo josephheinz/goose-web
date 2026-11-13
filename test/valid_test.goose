@@ -65,23 +65,23 @@ fn main() {
     check(gweb::form_text(r1, "long", exact, errs, true), "exactly capacity ok");
     check_eq(exact, "abcdefgh", "exactly capacity stored");
 
-    // form_int
+    // form_i64
     var raw_r2: u8[>..] = [];
     let r2 = post(raw_r2, "a=+42+&b=4x&c=&d=-7&e=%2042");
     var e2 = gweb::no_errors();
     var n: i64 = 0;
-    check(gweb::form_int(r2, "a", n, e2, true) && n == 42, "int with spaces");
+    check(gweb::form_i64(r2, "a", n, e2, true) && n == 42, "int with spaces");
     n = 5;
-    check(!gweb::form_int(r2, "b", n, e2, true), "int 4x fails");
+    check(!gweb::form_i64(r2, "b", n, e2, true), "int 4x fails");
     check_eq(gweb::error_for(e2, "b"), "Enter a whole number.", "int message");
     check(n == 5, "bad int leaves out");
-    check(!gweb::form_int(r2, "c", n, e2, true), "empty required int fails");
+    check(!gweb::form_i64(r2, "c", n, e2, true), "empty required int fails");
     check_eq(gweb::error_for(e2, "c"), "Required.", "empty required int message");
-    check(gweb::form_int(r2, "c", n, e2, false) && n == 5, "empty optional int keeps");
-    check(gweb::form_int(r2, "zz", n, e2, false) && n == 5, "absent optional int keeps");
-    check(!gweb::form_int(r2, "zz", n, e2, true), "absent required int fails");
-    check(gweb::form_int(r2, "d", n, e2, true) && n == -7, "negative int");
-    check(gweb::form_int(r2, "e", n, e2, true) && n == 42, "encoded space trimmed");
+    check(gweb::form_i64(r2, "c", n, e2, false) && n == 5, "empty optional int keeps");
+    check(gweb::form_i64(r2, "zz", n, e2, false) && n == 5, "absent optional int keeps");
+    check(!gweb::form_i64(r2, "zz", n, e2, true), "absent required int fails");
+    check(gweb::form_i64(r2, "d", n, e2, true) && n == -7, "negative int");
+    check(gweb::form_i64(r2, "e", n, e2, true) && n == 42, "encoded space trimmed");
 
     // form_bool
     var raw_r3: u8[>..] = [];
@@ -109,16 +109,32 @@ fn main() {
     check_eq(gweb::error_for(e, "y"), "", "other field none");
     var full = gweb::no_errors();
     var fname: u8[..8] = "";
-    for i in 16 {
+    for i in 63 {
         fname.clear();
         format(fname, "f", i);
-        check(gweb::add_error(full, fname, "m"), "fill to 16");
+        check(gweb::add_error(full, fname, "m"), "fill to 63");
     }
-    check(!full.dropped, "not dropped at 16");
-    check(!gweb::add_error(full, "f99", "m"), "17th refused");
-    check(full.dropped && full.n == 16, "17th sets dropped");
-    check_eq(gweb::error_for(full, "f99"), "", "17th not stored");
+    check(!full.dropped && full.n == 63, "not dropped at 63");
+    check(!gweb::add_error(full, "f99", "m"), "64th field error refused");
+    check(full.dropped && full.n == 64, "64th sets dropped and adds the form-level slot");
+    check_eq(gweb::error_for(full, "f99"), "", "64th not stored");
+    check(find(gweb::error_for(full, ""), "Too many errors") == 0, "dropped shows as a form-level error");
+    check(!gweb::add_error(full, "f100", "m") && full.n == 64, "no second notice");
     check(!gweb::add_error(full, "f0", "again"), "duplicate on a full list refused");
+    var full_json = http::new_response();
+    gweb::errors_json(full_json, full);
+    check(find(full_json.body, "\"\":\"Too many errors") > 0, "errors_json carries the form-level notice");
+    // an app's own form-level error is kept, and no second one is added
+    var own = gweb::no_errors();
+    gweb::add_error(own, "", "mine");
+    for i in 62 {
+        fname.clear();
+        format(fname, "g", i);
+        gweb::add_error(own, fname, "m");
+    }
+    check(own.n == 63 && !own.dropped, "63 with an app form-level error");
+    check(!gweb::add_error(own, "g99", "m") && own.dropped && own.n == 63, "dropped, and the app's own message stays");
+    check_eq(gweb::error_for(own, ""), "mine", "own form-level message kept");
 
     // check_length
     var c = gweb::no_errors();
