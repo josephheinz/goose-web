@@ -3115,7 +3115,7 @@ fn gen_export(m: u8[>..]&) {
 }
 
 // One thread reads every hub event and forwards it to the handlers app/socket.goose defines; without one, messages are dropped.
-// The handlers get a fresh Ctx per event: id and topic say which connection, and gweb::send, publish and state::ask work as in a route.
+// The handlers get a fresh Ctx per event: id and topic say which connection, and gweb::socket_send, publish and state::ask work as in a route.
 fn gen_hub_thread(m: u8[>..]&) {
     m.append("thread_fn hub_thread(cfg: gweb::Config, owner_fd: i32) {\n");
     m.append("    let h = net::Hub { handle: cfg.hub };\n    var msg: u8[>..] = [];\n    var topic: u8[>..] = [];\n");

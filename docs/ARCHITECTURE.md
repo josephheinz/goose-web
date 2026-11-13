@@ -172,7 +172,7 @@ flowchart TB
   handshake) set `ctx.detach`. After the handler returns, `run_worker` sends the
   head, takes the socket out of the worker's loop (`Loop.detach`) and gives it to
   one `net::Hub`, which runs every long-lived connection in one poll loop on its own
-  thread. Workers and the owner call `gweb::publish` or `gweb::send` from any thread.
+  thread. Workers and the owner call `gweb::publish` or `gweb::socket_send` from any thread.
   Connection events (`Open`, `Text`, `Binary`, `Close`) reach `app/socket.goose`
   on the hub thread, which can use `state::ask`. The hub exists only when the app
   uses it.

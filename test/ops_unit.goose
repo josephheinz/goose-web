@@ -35,7 +35,7 @@ fn ends(s: const u8[:], tail: const u8[:]) -> bool { s.len >= tail.len && s[s.le
 
 fn rendered(e: const gweb::LogEvent&) -> u8[>..] {
     var out: u8[>..] = [];
-    gweb::render(e, out);
+    gweb::log_render(e, out);
     return out;
 }
 
@@ -96,22 +96,22 @@ fn test_log_text() {
     gweb::log_configure(gweb::Level.Debug, false);
     var ctx = gweb::new_ctx(0, -1);
     ctx.request_id.append("req-1");
-    var e = gweb::log(ctx, gweb::Level.Info, "order placed");
+    var e = gweb::log_event(ctx, gweb::Level.Info, "order placed");
     let id: i64 = 42;
     let ratio: f64 = 2.5;
-    gweb::field(e, "order_id", id);
-    gweb::field(e, "note", "two words");
-    gweb::field(e, "eq", "a=b");
-    gweb::field(e, "quote", "say \"hi\"");
-    gweb::field(e, "plain", "x\\y");
-    gweb::field(e, "ok", true);
-    gweb::field(e, "empty", "");
-    gweb::field(e, "ratio", ratio);
+    gweb::log_field(e, "order_id", id);
+    gweb::log_field(e, "note", "two words");
+    gweb::log_field(e, "eq", "a=b");
+    gweb::log_field(e, "quote", "say \"hi\"");
+    gweb::log_field(e, "plain", "x\\y");
+    gweb::log_field(e, "ok", true);
+    gweb::log_field(e, "empty", "");
+    gweb::log_field(e, "ratio", ratio);
     let line = rendered(e);
     check(starts_with(line, "info order placed request_id=req-1 order_id=42 note=\"two words\" eq=\"a=b\" quote=\"say \\\"hi\\\"\" plain=x\\y ok=true empty=\"\" ratio="), "text line shape");
     check(!e.truncated, "text line not truncated");
 
-    let e2 = gweb::log(ctx, gweb::Level.Warn, "say \"hi\"");
+    let e2 = gweb::log_event(ctx, gweb::Level.Warn, "say \"hi\"");
     check_eq(rendered(e2), "warn say \"hi\" request_id=req-1", "text message is not quoted");
 
     var raw: u8[>..] = [];
@@ -119,19 +119,19 @@ fn test_log_text() {
     raw.push('\n');
     raw.append("b");
     let blank = gweb::new_ctx(0, -1);
-    let e3 = gweb::log(blank, gweb::Level.Error, raw);
+    let e3 = gweb::log_event(blank, gweb::Level.Error, raw);
     check_eq(rendered(e3), "error a b", "a control byte in a text message becomes a space");
 
     var traced = gweb::new_ctx(0, -1);
     traced.trace_id.append(T32);
     traced.span_id.append(S16);
-    let e4 = gweb::log(traced, gweb::Level.Debug, "m");
+    let e4 = gweb::log_event(traced, gweb::Level.Debug, "m");
     check_eq(rendered(e4), "debug m trace_id=0123456789abcdef0123456789abcdef span_id=0123456789abcdef", "trace ids from ctx");
 
     var job = gweb::new_ctx(-1, -1);
     job.job_id = 7;
     job.attempt = 2;
-    let e5 = gweb::log(job, gweb::Level.Warn, "job attempt failed");
+    let e5 = gweb::log_event(job, gweb::Level.Warn, "job attempt failed");
     check_eq(rendered(e5), "warn job attempt failed job_id=7 attempt=2", "job id and attempt from ctx");
 }
 
@@ -139,36 +139,36 @@ fn test_log_json() {
     gweb::log_configure(gweb::Level.Debug, true);
     var ctx = gweb::new_ctx(0, -1);
     ctx.request_id.append("req-1");
-    var e = gweb::log(ctx, gweb::Level.Info, "order \"placed\"");
+    var e = gweb::log_event(ctx, gweb::Level.Info, "order \"placed\"");
     let id: i64 = 42;
     let zero: f64 = 0.0;
     let nan = zero / zero;
-    gweb::field(e, "order_id", id);
-    gweb::field(e, "note", "two words");
-    gweb::field(e, "quote", "say \"hi\" \\ done");
-    gweb::field(e, "ok", false);
-    gweb::field(e, "nan", nan);
-    gweb::field(e, "empty", "");
+    gweb::log_field(e, "order_id", id);
+    gweb::log_field(e, "note", "two words");
+    gweb::log_field(e, "quote", "say \"hi\" \\ done");
+    gweb::log_field(e, "ok", false);
+    gweb::log_field(e, "nan", nan);
+    gweb::log_field(e, "empty", "");
     let line = rendered(e);
     let rest = after_ts(line);
     check_eq(rest, "\",\"level\":\"info\",\"msg\":\"order \\\"placed\\\"\",\"request_id\":\"req-1\",\"order_id\":42,\"note\":\"two words\",\"quote\":\"say \\\"hi\\\" \\\\ done\",\"ok\":false,\"nan\":null,\"empty\":\"\"}", "json line shape");
 
     let ratio: f64 = 2.5;
-    var e1 = gweb::log(ctx, gweb::Level.Info, "r");
-    gweb::field(e1, "ratio", ratio);
+    var e1 = gweb::log_event(ctx, gweb::Level.Info, "r");
+    gweb::log_field(e1, "ratio", ratio);
     check(find(rendered(e1), "\"ratio\":") >= 0, "json float field");
 
     var raw: u8[>..] = [];
     raw.push(2);
     raw.append("x");
     let blank = gweb::new_ctx(0, -1);
-    let e2 = gweb::log(blank, gweb::Level.Error, raw);
+    let e2 = gweb::log_event(blank, gweb::Level.Error, raw);
     check_eq(after_ts(rendered(e2)), "\",\"level\":\"error\",\"msg\":\"\\u0002x\"}", "control byte in a json message");
 
     var traced = gweb::new_ctx(0, -1);
     traced.trace_id.append(T32);
     traced.span_id.append(S16);
-    let e3 = gweb::log(traced, gweb::Level.Info, "m");
+    let e3 = gweb::log_event(traced, gweb::Level.Info, "m");
     check_eq(after_ts(rendered(e3)), "\",\"level\":\"info\",\"msg\":\"m\",\"trace_id\":\"0123456789abcdef0123456789abcdef\",\"span_id\":\"0123456789abcdef\"}", "json trace ids");
 }
 
@@ -178,11 +178,11 @@ fn test_truncation() {
     for i in 200 { big.push('x'); }
     for as_json in [false, true] {
         gweb::log_configure(gweb::Level.Info, as_json);
-        var e = gweb::log(blank, gweb::Level.Info, "many");
+        var e = gweb::log_event(blank, gweb::Level.Info, "many");
         for k in 15 {
             var key: u8[>..] = [];
             format(key, "k", k);
-            gweb::field(e, key, big);
+            gweb::log_field(e, key, big);
         }
         check(e.truncated, "fields past the line are dropped and flagged");
         let line = rendered(e);
@@ -195,7 +195,7 @@ fn test_truncation() {
     for i in 3000 { long.push('a'); }
     for as_json in [false, true] {
         gweb::log_configure(gweb::Level.Info, as_json);
-        let e = gweb::log(blank, gweb::Level.Info, long);
+        let e = gweb::log_event(blank, gweb::Level.Info, long);
         let line = rendered(e);
         check(e.truncated && line.len <= 2048, "a long message is cut");
         check(ends(line, if as_json { ",\"truncated\":true}" } else { " truncated=true" }), "a cut message is marked");

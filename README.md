@@ -483,8 +483,8 @@ Full guide: [docs/DEPLOY.md](docs/DEPLOY.md). Design: [DESIGN-ADDENDUM-16-OPERAT
 - **Health.** `/__gweb/health` (liveness) and `/__gweb/ready` (503 once a stop begins). `server --probe` exits 0 or 1 for a Docker `HEALTHCHECK`.
 - **Graceful stop.** SIGTERM or SIGINT stops accepting, finishes requests for up to `--drain-ms` (10 s), runs `state::shutdown` if defined, and exits 0. `--drain-delay-ms` keeps accepting first, so a load balancer can stop routing. A second signal exits at once.
 - **Restarts.** SIGUSR2 starts the new binary on the same socket and drains the old one (systemd `reload`). A systemd socket unit or a rolling update also loses no request. Migrations must keep the previous release working.
-- **Logs.** stdout. `--log-format json` for JSON lines, `--log-level`, `--log` for the access log (with `X-Request-Id`). In code: `gweb::info(ctx, "msg")`, or `gweb::log`, `gweb::field`, `gweb::emit`.
-- **Metrics.** `--metrics` serves Prometheus text at `/__gweb/metrics`; block it at the proxy. `gweb::count(name, n)` and `gweb::gauge(name, v)` add your own.
+- **Logs.** stdout. `--log-format json` for JSON lines, `--log-level`, `--log` for the access log (with `X-Request-Id`). In code: `gweb::log_info(ctx, "msg")`, or `gweb::log_event`, `gweb::log_field`, `gweb::log_emit`.
+- **Metrics.** `--metrics` serves Prometheus text at `/__gweb/metrics`; block it at the proxy. `gweb::metric_count(name, n)` and `gweb::metric_gauge(name, v)` add your own.
 - **Tracing.** Set `OTEL_EXPORTER_OTLP_ENDPOINT` (plain `http://`, a local collector). W3C `traceparent` in, OTLP/HTTP JSON out; `gweb::span(ctx, "name")` adds spans.
 - **Jobs.** An in-memory queue and a scheduler, in `app/jobs.goose`:
 
@@ -988,8 +988,8 @@ fn GET(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
     res.content_type.clear();
     res.content_type.append("text/csv");
     var s = gweb::stream_begin(req, ctx, res);   // sends the head, cookies included
-    for row in rows { gweb::write(s, row); }     // false when the client went away
-    gweb::end(ctx, s);                           // without it the connection closes
+    for row in rows { gweb::stream_write(s, row); }     // false when the client went away
+    gweb::stream_end(ctx, s);                           // without it the connection closes
 }
 ```
 
@@ -1067,7 +1067,7 @@ fn GET(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
 // app/socket.goose: all three optional; messages are dropped without fn message
 fn open(ctx: gweb::Ctx&, id: u64, topic: const u8[:]) { }
 fn message(ctx: gweb::Ctx&, id: u64, topic: const u8[:], data: const u8[:], binary: bool) {
-    gweb::publish(ctx, topic, data, binary);                // or gweb::send(ctx, id, data)
+    gweb::publish(ctx, topic, data, binary);                // or gweb::socket_send(ctx, id, data)
 }
 fn close(ctx: gweb::Ctx&, id: u64, topic: const u8[:]) { }
 ```
@@ -1076,7 +1076,7 @@ fn close(ctx: gweb::Ctx&, id: u64, topic: const u8[:]) { }
   request, 426 for a wrong WebSocket version, 403 for another origin.
 - A browser's `Origin` must match `Host`, or the optional `allow_origin`. This stops other sites
   from using a visitor's cookies. A reverse proxy must keep `Host`.
-- Other helpers: `gweb::send(ctx, id, data)`, `gweb::close_socket(ctx, id)`, `gweb::subscribers(ctx, topic)`.
+- Other helpers: `gweb::socket_send(ctx, id, data)`, `gweb::close_socket(ctx, id)`, `gweb::subscribers(ctx, topic)`.
   The handlers in `socket.goose` can call `state::ask`.
 - Limits: 10,000 connections, 64 KB per WebSocket message, 1 MB queued per slow client (then closed).
   No `permessage-deflate`.

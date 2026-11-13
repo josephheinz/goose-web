@@ -30,7 +30,7 @@ fn text_value(out: u8[>..]&, s: const u8[:]) {
 
 // A new event: "level msg" in text format, {"ts","level","msg"} in json, then request_id, trace_id and span_id
 // (and job_id and attempt in a job) from ctx when set. A message too long for the line is cut and the line gets truncated.
-fn log(ctx: const Ctx&, level: Level, msg: const u8[:]) -> LogEvent {
+fn log_event(ctx: const Ctx&, level: Level, msg: const u8[:]) -> LogEvent {
     var e = LogEvent { line: "", level: level, truncated: false, json: c_log_json() != 0 };
     let budget = e.line.cap - LOG_RESERVE - 64;
     var m: u8[>..] = [];
@@ -50,7 +50,7 @@ fn log(ctx: const Ctx&, level: Level, msg: const u8[:]) -> LogEvent {
     }
     if ctx.request_id.len > 0 { field_text(e, "request_id", ctx.request_id); }
     if ctx.trace_id.len > 0 { field_text(e, "trace_id", ctx.trace_id); field_text(e, "span_id", ctx.span_id); }
-    if ctx.job_id != 0 { field(e, "job_id", ctx.job_id); field(e, "attempt", ctx.attempt); }
+    if ctx.job_id != 0 { log_field(e, "job_id", ctx.job_id); log_field(e, "attempt", ctx.attempt); }
     return e;
 }
 
@@ -79,50 +79,50 @@ fn field_text(e: LogEvent&, key: const u8[:], v: const u8[:]) {
     push_field(e, key, frag);
 }
 
-fn field(e: LogEvent&, key: const u8[:], v: const u8[:]) { field_text(e, key, v); }
+fn log_field(e: LogEvent&, key: const u8[:], v: const u8[:]) { field_text(e, key, v); }
 
-fn field(e: LogEvent&, key: const u8[:], v: i64) {
+fn log_field(e: LogEvent&, key: const u8[:], v: i64) {
     var frag: u8[>..] = [];
     format(frag, v);
     push_field(e, key, frag);
 }
 
 // NaN and infinity are null in json, since json has no notation for them.
-fn field(e: LogEvent&, key: const u8[:], v: f64) {
+fn log_field(e: LogEvent&, key: const u8[:], v: f64) {
     var frag: u8[>..] = [];
     if e.json && (v != v || v - v != 0.0) { frag.append("null"); } else { format(frag, v); }
     push_field(e, key, frag);
 }
 
-fn field(e: LogEvent&, key: const u8[:], v: bool) {
+fn log_field(e: LogEvent&, key: const u8[:], v: bool) {
     var frag: u8[>..] = [];
     frag.append(if v { "true" } else { "false" });
     push_field(e, key, frag);
 }
 
 // Appends the finished line (no newline): the fields, then truncated=true if any was dropped, then "}" in json.
-fn render(e: const LogEvent&, out: u8[>..]&) {
+fn log_render(e: const LogEvent&, out: u8[>..]&) {
     out.append(e.line);
     if e.truncated { out.append(if e.json { ",\"truncated\":true" } else { " truncated=true" }); }
     if e.json { out.append("}"); }
 }
 
 // Writes the event if its level is at or above the configured one.
-fn emit(e: const LogEvent&) {
+fn log_emit(e: const LogEvent&) {
     var line: u8[>..] = [];
-    render(e, line);
+    log_render(e, line);
     log_write(e.level, line);
 }
 
-fn debug(ctx: const Ctx&, msg: const u8[:]) { let e = log(ctx, Level.Debug, msg); emit(e); }
-fn info(ctx: const Ctx&, msg: const u8[:]) { let e = log(ctx, Level.Info, msg); emit(e); }
-fn warn(ctx: const Ctx&, msg: const u8[:]) { let e = log(ctx, Level.Warn, msg); emit(e); }
-fn error(ctx: const Ctx&, msg: const u8[:]) { let e = log(ctx, Level.Error, msg); emit(e); }
+fn log_debug(ctx: const Ctx&, msg: const u8[:]) { let e = log_event(ctx, Level.Debug, msg); log_emit(e); }
+fn log_info(ctx: const Ctx&, msg: const u8[:]) { let e = log_event(ctx, Level.Info, msg); log_emit(e); }
+fn log_warn(ctx: const Ctx&, msg: const u8[:]) { let e = log_event(ctx, Level.Warn, msg); log_emit(e); }
+fn log_error(ctx: const Ctx&, msg: const u8[:]) { let e = log_event(ctx, Level.Error, msg); log_emit(e); }
 
 // An app counter, shown as gweb_<name>... in /__gweb/metrics when --metrics is on. Names are [a-z_][a-z0-9_]*.
-fn count(name: const u8[:], n: i64) { c_metric_count(name, n); }
+fn metric_count(name: const u8[:], n: i64) { c_metric_count(name, n); }
 
-fn gauge(name: const u8[:], v: f64) { c_metric_gauge(name, v); }
+fn metric_gauge(name: const u8[:], v: f64) { c_metric_gauge(name, v); }
 
 // An open child span. span makes it the ctx's current span, so logs and traceparent inside it name it;
 // span_end restores the parent and, for a sampled request, records it. on is false when tracing is off.

@@ -23,7 +23,7 @@ fn stream_begin(req: const http::Request&, ctx: Ctx&, res: http::Response&) -> S
 }
 
 // One chunk. A HEAD request sends nothing and still gets true.
-fn write(s: Stream&, data: const u8[:]) -> bool {
+fn stream_write(s: Stream&, data: const u8[:]) -> bool {
     if !s.ok { return false; }
     if s.head_only { return true; }
     if http::send_chunk(s.conn, data, s.chunked) { return true; }
@@ -33,7 +33,7 @@ fn write(s: Stream&, data: const u8[:]) -> bool {
 }
 
 // Ends the body. Call it once; without it run_worker closes the connection, since the body was never terminated.
-fn end(ctx: Ctx&, s: Stream&) -> bool {
+fn stream_end(ctx: Ctx&, s: Stream&) -> bool {
     if !s.ok { return false; }
     s.ok = false;
     ctx.stream_ended = s.head_only || http::end_chunked(s.conn, s.chunked);

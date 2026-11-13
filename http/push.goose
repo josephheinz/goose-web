@@ -116,7 +116,7 @@ fn publish(ctx: const Ctx&, topic: const u8[:], data: const u8[:], binary: bool 
 }
 
 // To one connection, by the id socket::open and socket::message receive.
-fn send(ctx: const Ctx&, id: u64, data: const u8[:], binary: bool = false) -> bool {
+fn socket_send(ctx: const Ctx&, id: u64, data: const u8[:], binary: bool = false) -> bool {
     if ctx.hub == 0 { return false; }
     return net::send(hub_of(ctx), id, data, binary);
 }

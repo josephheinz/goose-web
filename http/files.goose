@@ -174,7 +174,7 @@ fn send_file(req: const http::Request&, ctx: Ctx&, res: http::Response&, root: c
         let n = c_file_pread(fd, off, FILE_WINDOW, chunk);
         if n <= 0 { break; }
         off += n;
-        write(s, chunk);
+        stream_write(s, chunk);
     }
     c_file_close(fd);
     if off != size {
@@ -183,6 +183,6 @@ fn send_file(req: const http::Request&, ctx: Ctx&, res: http::Response&, root: c
         ctx.stream_ended = false;
         return true;
     }
-    end(ctx, s);
+    stream_end(ctx, s);
     return true;
 }

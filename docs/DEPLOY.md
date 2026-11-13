@@ -120,12 +120,12 @@ or your platform collect stdout; the app writes no log files.
 Access line, JSON: `ts`, `level`, `msg: "request"`, `method`, `target`, `route`, `status`, `dur_us`, `bytes`,
 `worker`, `request_id`, and `trace_id` and `span_id` when traced.
 
-From your code: `gweb::info(ctx, "msg")`, `gweb::warn`, `gweb::error`, `gweb::debug`; add fields with
-`var e = gweb::log(ctx, gweb::Level.Info, "order placed"); gweb::field(e, "order_id", id); gweb::emit(e);`.
+From your code: `gweb::log_info(ctx, "msg")`, `gweb::log_warn`, `gweb::log_error`, `gweb::log_debug`; add fields with
+`var e = gweb::log_event(ctx, gweb::Level.Info, "order placed"); gweb::log_field(e, "order_id", id); gweb::log_emit(e);`.
 
 `--metrics` (or `GWEB_METRICS=1`) serves Prometheus text at `/__gweb/metrics`: request counts by route, method
 and status class, a latency histogram per route, open connections, job gauges and counters, and
-`gweb_build_info`. Count your own things with `gweb::count("signups_total", 1)` and `gweb::gauge("queue_depth", n)`
+`gweb_build_info`. Count your own things with `gweb::metric_count("signups_total", 1)` and `gweb::metric_gauge("queue_depth", n)`
 (names match `[a-z_][a-z0-9_]*`; 256 at most).
 
 ```yaml
