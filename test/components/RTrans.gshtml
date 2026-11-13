@@ -1,0 +1,10 @@
+<script goose>
+// A keyed list with gw-enter and gw-leave (gwt.js).
+struct Row { id: i64, name: u8[..24] }
+@state var rows: Row[>..<] = [];
+@state var n: i64 = 0;
+fn add() { rows.push(Row { id: n, name: "r", }); n += 1; }
+fn drop(i: i64) { rows.remove_at(i); }
+</script>
+<button on:click="add">add</button>
+<ul>{#for r, i in rows}<li gw-key="{r.id}" gw-enter="in" gw-leave="out"><button on:click="drop(i)">{r.name}{r.id}</button></li>{/for}</ul>

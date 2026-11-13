@@ -303,6 +303,7 @@ var decs: Ty[>..<];            // the reply decoders of the JavaScript module (r
 var dec_bits = 0;              // the scalar checks the decoders use: 1 int, 2 bool, 4 string, 8 object, 16 array
 var http_urls_buf: u8[>..];    // `METHOD\tLINE\turl\n` for each string-literal url, for gweb's route check
 var mods_use = 0;              // 1: the module imports gwm.js (on: modifiers)
+var trans_use = 0;             // 1: the markup has gw-enter or gw-leave (the module imports gwt.js)
 var life_use = 0;              // 1: the module imports life from gwl.js
 var http_use = 0;              // 1: http::get is used, 2: http::post
 var await_ctx: u8[..96];       // the place an await may not stand in (markup, a computed), or empty
@@ -6063,6 +6064,7 @@ fn http_used() -> i64 { return http_use; }
 // 1 when the module calls life() (and so imports gwl.js).
 fn life_used() -> i64 { return life_use; }
 fn mods_used() -> i64 { return mods_use; }
+fn trans_used() -> i64 { return trans_use; }
 
 // For each test of test_names, in its order: 1 when it is called test(gw_p, gw_s), 0 when with no arguments.
 fn test_args() -> u8[>..] {
@@ -6143,6 +6145,7 @@ fn reset() {
     http_use = 0;
     life_use = 0;
     mods_use = 0;
+    trans_use = 0;
     await_ctx.clear();
     rw_noasync.clear();
     rw_async = false;
@@ -6171,6 +6174,7 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
     isl.clear();
     isl.append(name);
     text.append(src);
+    if find(src, "gw-enter") >= 0 || find(src, "gw-leave") >= 0 { trans_use = 1; }
     var s = 0;
     for i in text.len + 1 {
         if i == text.len || text[i] == '\n' {
@@ -6330,6 +6334,7 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
         }
         if life_use != 0 { js_out.append("import{life as $l}from\"./gwl.js\";"); }
         if mods_use != 0 { js_out.append("import\"./gwm.js\";"); }
+        if trans_use != 0 { js_out.append("import\"./gwt.js\";"); }
         if store_mode { js_out.append("import{store as $s}from\"./gws.js\";"); }
         for u in ruses { format(js_out, "import $", u.name, " from\"./", u.name, ".js\";"); }
         for k in kids { format(js_out, "import\"./", k, ".js\";"); }
@@ -6359,6 +6364,7 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
         }
         if life_use != 0 { js_out.append("import { life } from \"./gwl.js\";\n"); }
         if mods_use != 0 { js_out.append("import \"./gwm.js\";\n"); }
+        if trans_use != 0 { js_out.append("import \"./gwt.js\";\n"); }
         if store_mode { js_out.append("import { store as gw_store } from \"./gws.js\";\n"); }
         for u in ruses { format(js_out, "import gw_", u.name, " from \"./", u.name, ".js\";\n"); }
         for k in kids { format(js_out, "import \"./", k, ".js\";\n"); }

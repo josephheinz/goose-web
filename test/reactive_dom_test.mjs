@@ -13,7 +13,7 @@ console.error = () => {};
 const dir = process.env.GW_DIR;
 const G = await import(pathToFileURL(dir + "/gwi.js").href);
 const { defs, state, hooks } = G;
-for (const n of ["RCounter", "RParts", "RComputed", "RWatch", "RStruct", "RFetch", "RClock", "RClockAsync", "REvents", "RNestChild", "RNest", "RNestEventChild", "RNestEvent"]) await import(pathToFileURL(`${dir}/${n}.js`).href);
+for (const n of ["RCounter", "RParts", "RComputed", "RWatch", "RStruct", "RFetch", "RClock", "RClockAsync", "REvents", "RNestChild", "RNest", "RNestEventChild", "RNestEvent", "RTrans"]) await import(pathToFileURL(`${dir}/${n}.js`).href);
 
 let errors = [];
 window.addEventListener("gw:error", (ev) => errors.push(ev.detail));
@@ -676,6 +676,25 @@ test("gwc.js: a different component at the same place is replaced, not patched",
   eq(hooks.c(o, b), true, "handled");
   eq(o.isConnected, false, "old root gone");
   eq(b.isConnected, true, "new root in place");
+});
+
+test("gwt.js: a keyed list with gw-enter and gw-leave (RTrans)", () => {
+  const root = mount("RTrans", {});
+  const [st, raf] = [globalThis.setTimeout, globalThis.requestAnimationFrame], timers = [];
+  Object.assign(globalThis, { setTimeout: (f) => timers.push(f), requestAnimationFrame: (f) => timers.push(f), getComputedStyle: () => ({ animationDuration: "1s", transitionDuration: "0s" }) });
+  try {
+    click(btn(root, "add")); click(btn(root, "add"));
+    const lis = root.querySelectorAll("li");
+    eq(lis.length, 2, "two rows");
+    eq(lis[1].className, "in", "enter class on the new row");
+    lis[1].dispatchEvent(new window.Event("animationend", { bubbles: true }));
+    eq(lis[1].className, "", "enter class gone at animationend");
+    click(btn(root, "r0"));
+    eq(root.querySelectorAll("li").length, 2, "removed row kept");
+    eq(lis[0].className.includes("out") && lis[0].hasAttribute("gw-leaving"), true, "leaving");
+    lis[0].dispatchEvent(new window.Event("transitionend", { bubbles: true }));
+    eq(root.querySelectorAll("li").length, 1, "gone after transitionend");
+  } finally { Object.assign(globalThis, { setTimeout: st, requestAnimationFrame: raf }); delete globalThis.getComputedStyle; }
 });
 
 let pass = 0, fail = 0;

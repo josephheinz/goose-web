@@ -119,6 +119,9 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     check "$(! body_has whole 'gwn.js' && ! body_has plain 'gwn.js' && echo ok)" "a site without gw-boost: no gwn.js tag"
     req nonav GET /_gw/gwn.js
     check "$([ "$(status nonav)" = 404 ] && echo ok)" "a site without gw-boost does not serve /_gw/gwn.js"
+check "$(! body_has whole 'gwt.js' && ! body_has plain 'gwt.js' && echo ok)" "a site without gw-enter or gw-leave: no gwt.js tag"
+req notrans GET /_gw/gwt.js
+check "$([ "$(status notrans)" = 404 ] && echo ok)" "a site without gw-enter or gw-leave does not serve /_gw/gwt.js"
 
     req tk0 GET /
     check "$([ "$(grep -c '^set-cookie: gw_csrf=[0-9a-f]\{32\}; path=/; httponly; samesite=lax$' "$WORK/tk0.h")" = 1 ] && [ "$(grep -c '^set-cookie:' "$WORK/tk0.h")" = 1 ] && has_header tk0 'cache-control: no-store' && body_has tk0 'name="_csrf" value="' && echo ok)" "GET / without a cookie: one gw_csrf cookie, no-store, a _csrf field"
@@ -184,6 +187,38 @@ if out=$("$GWEB" -C "$WORK/boost" build 2>&1); then
   URL="http://127.0.0.1:$PORT"
 else
   bad "gweb build of the gw-boost site"; echo "$out"
+fi
+
+# 1c. gwt.js (DESIGN-ADDENDUM-12, item 11): the tag and the file only where gw-enter or gw-leave is used.
+cp -R "$HERE/fragments/trans" "$WORK/trans"
+if out=$("$GWEB" -C "$WORK/trans" build 2>&1); then
+  TPORT=$((PORT + 2))
+  "$WORK/trans/.gooseweb/server" --port "$TPORT" >/dev/null 2>&1 &
+  PID=$!
+  URL="http://127.0.0.1:$TPORT"
+  up=""
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.5
+    if curl -s -o /dev/null "$URL/"; then up=yes; break; fi
+  done
+  if [ -z "$up" ]; then
+    bad "the gw-enter server did not answer on port $TPORT"
+  else
+    req thome GET /
+    check "$([ "$(body_count thome 'src="/_gw/gwt.js"')" = 1 ] && ! body_has thome 'gwf.js' && ! body_has thome 'gwn.js' && echo ok)" "gw-enter: / has the gwt.js tag (once)"
+    req tleave GET /leave
+    check "$(body_has tleave 'src="/_gw/gwt.js"' && echo ok)" "gw-leave: /leave has the gwt.js tag"
+    req tplain GET /plain
+    check "$(! body_has tplain 'gwt.js' && echo ok)" "a page without gw-enter or gw-leave has no gwt.js tag"
+    req tjs GET /_gw/gwt.js
+    check "$([ "$(status tjs)" = 200 ] && has_header tjs 'content-type: text/javascript' && body_has tjs 'gw-leaving' && echo ok)" "gw-enter: /_gw/gwt.js is served as javascript"
+  fi
+  kill "$PID" 2>/dev/null
+  wait "$PID" 2>/dev/null
+  PID=""
+  URL="http://127.0.0.1:$PORT"
+else
+  bad "gweb build of the gw-enter site"; echo "$out"
 fi
 
 # 2. Expected failures. The page is <p>x</p>, the case on line 2, <p>y</p>.

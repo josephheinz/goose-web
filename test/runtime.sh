@@ -6,7 +6,7 @@
 # 1. Each client/*.min.js carries the FNV-1a hash of its source in its banner
 #    (client/build.sh writes it), so a stale minified file fails.
 # 2. Each existing .min.js is under its byte ceiling.
-# 3. test/morph.sh, test/reactive.sh and test/nav_test.mjs (client navigation) pass.
+# 3. test/morph.sh, test/reactive.sh and test/nav_test.mjs (client navigation) and test/transition_test.mjs pass.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(dirname "$HERE")
@@ -15,7 +15,7 @@ fail=0
 ok() { pass=$((pass + 1)); }
 bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 
-# name ceiling; later steps add gwt 768, gwe 768.
+# name ceiling; a later step adds gwe 768.
 CEILINGS="gwi 4096
 gwh 512
 gwf 1536
@@ -23,7 +23,8 @@ gwl 768
 gwm 512
 gwc 1024
 gwn 1536
-gws 1024"
+gws 1024
+gwt 768"
 
 for src in "$ROOT"/client/gw*.js; do
   case "$src" in *.min.js) continue ;; esac
@@ -52,6 +53,7 @@ if sh "$HERE/morph.sh"; then ok; else bad "test/morph.sh"; fi
 if sh "$HERE/reactive.sh"; then ok; else bad "test/reactive.sh"; fi
 . "$HERE/jsdom_dir.sh"
 if JSDOM_DIR=$DIR node "$HERE/nav_test.mjs"; then ok; else bad "test/nav_test.mjs"; fi
+if JSDOM_DIR=$DIR node "$HERE/transition_test.mjs"; then ok; else bad "test/transition_test.mjs"; fi
 
 echo "runtime: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
