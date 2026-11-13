@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.7.0 (unreleased)
+## v0.7.0
 
 Made ready for a CMS package (Addendum 20). The integration fixture is `test/cmsready/`.
 
