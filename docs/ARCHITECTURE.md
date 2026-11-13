@@ -139,7 +139,7 @@ flowchart TB
   template, and the layout wraps the result. `finish()` applies the
   outcome (status, redirect), and `run_worker` adds any queued cookies.
 - **Uploads.** A `multipart/form-data` body over 64 KiB is spooled to a file by the goose-net loop
-  (`--max-upload`, `--upload-dir`). `gweb::multipart_begin` turns the body into an urlencoded body of the
+  (`--max-upload`, `--upload-dir`). `gweb::_multipart_begin` turns the body into an urlencoded body of the
   text fields plus up to 8 temp files in `ctx.uploads`, so `gweb::form` and the CSRF check work unchanged.
   `run_worker` deletes the spool and unsaved files after the reply.
 - **Errors.** `gweb::fail` sets `Outcome.Error`; `finish` answers with the nearest `error.html` (JSON for a

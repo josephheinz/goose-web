@@ -77,7 +77,7 @@ fn test_meta(t: gweb::Tester&) {
     gweb::expect(t, tc.slots.len == 2, "TwoColumn has two zones");
     eq(t, tc.slots[0].name, "left", "zone left");
     eq(t, tc.slots[0].allow, "Hero Text", "its allow list");
-    gweb::expect(t, gweb::slot_allows(tc.slots[0], "Hero") && !gweb::slot_allows(tc.slots[0], "Other"), "slot_allows");
+    gweb::expect(t, gweb::_slot_allows(tc.slots[0], "Hero") && !gweb::_slot_allows(tc.slots[0], "Other"), "slot_allows");
     eq(t, tc.slots[1].allow, "Text", "zone right");
     gweb::expect(t, tc.fields.len == 2 && tc.fields[0].kind == gweb::FieldKind.Enum && tc.fields[0].ty == "Gap", "TwoColumn: gap enum");
 
@@ -92,7 +92,7 @@ fn test_meta(t: gweb::Tester&) {
 fn test_render_tree(t: gweb::Tester&) {
     var raw: u8[>..] = [];
     let req = get_req(raw);
-    var ctx = gweb::new_ctx(0, -1);
+    var ctx = gweb::_new_ctx(0, -1);
     var doc = pg::Doc { type_name: "", type_props: "", nodes: [], missing: 0 };
     doc.type_name.append("Landing");
     doc.type_props.append("{\"theme\":\"Dark\",\"intro\":\"Hi <b>\"}");
@@ -113,7 +113,7 @@ fn test_render_tree(t: gweb::Tester&) {
 fn test_render_unknown_and_bad_json(t: gweb::Tester&) {
     var raw: u8[>..] = [];
     let req = get_req(raw);
-    var ctx = gweb::new_ctx(0, -1);
+    var ctx = gweb::_new_ctx(0, -1);
     var doc = pg::Doc { type_name: "", type_props: "", nodes: [], missing: 0 };
     var out: u8[>..] = [];
     gweb::expect(t, !views::widgets_render(out, req, ctx, "Nope", "{}", doc, 0, pg::fill), "an unknown name renders nothing and returns false");

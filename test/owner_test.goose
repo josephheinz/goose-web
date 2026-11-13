@@ -31,12 +31,12 @@ thread_fn worker(i: i64, fd: i32, c: gweb::Channels) {
     for k in 1000 {
         var title: u8[..64] = "";
         format(title, "w", i, "-", k);
-        let r, sent = gweb::owner_call_fd<Msg, Reply>(fd, Msg.Add { title: title });
+        let r, sent = gweb::_owner_call_fd<Msg, Reply>(fd, Msg.Add { title: title });
         if sent && r.ok { ok += 1; last = r.n; }
     }
-    let l, lok = gweb::owner_call_fd<Msg, Reply>(fd, Msg.List);
+    let l, lok = gweb::_owner_call_fd<Msg, Reply>(fd, Msg.List);
     qput(Done { worker: i, ok: ok, last: if lok { l.todos.len } else { -1 } });
-    gweb::owner_leave(c);
+    gweb::_owner_leave(c);
 }
 
 thread_fn reporter(n: i64) {
@@ -49,12 +49,12 @@ thread_fn reporter(n: i64) {
 
 fn main() {
     let n = 4;
-    let c = gweb::owner_channels(n);
+    let c = gweb::_owner_channels(n);
     
-    for i in n { thread_spawn(worker, i, gweb::worker_end(c, i), c); }
-    gweb::owner_leave(gweb::Channels { handle: 0, n: 0 });   // a no-op for a handle that was never made
+    for i in n { thread_spawn(worker, i, gweb::_worker_end(c, i), c); }
+    gweb::_owner_leave(gweb::Channels { handle: 0, n: 0 });   // a no-op for a handle that was never made
     let rid = thread_spawn(reporter, n);
-    gweb::owner_loop<Msg, Reply>(c, handle);   // returns once all four workers have left
+    gweb::_owner_loop<Msg, Reply>(c, handle);   // returns once all four workers have left
     print("owner loop returned");
     thread_wait(rid);
 }

@@ -84,7 +84,7 @@ fn main() {
     let nb, has_nb = http::cookie(bare, "a");
     check(!has_nb, "no Cookie header");
 
-    var ctx = gweb::new_ctx(0, -1);
+    var ctx = gweb::_new_ctx(0, -1);
     check(gweb::set_cookie(ctx, "theme", "dark"), "defaults");
     check_eq(ctx.set_cookies, "Set-Cookie: theme=dark; Path=/; HttpOnly; SameSite=Lax\r\n", "default line");
     ctx.set_cookies.clear();
@@ -135,15 +135,15 @@ fn main() {
     http::set_header(res, "X-A", "1");
     gweb::set_cookie(ctx, "one", "1");
     gweb::set_cookie(ctx, "two", "2");
-    check(gweb::apply_cookies(ctx, res), "apply");
+    check(gweb::_apply_cookies(ctx, res), "apply");
     check_eq(res.headers, "X-A: 1\r\nSet-Cookie: one=1; Path=/; HttpOnly; SameSite=Lax\r\nSet-Cookie: two=2; Path=/; HttpOnly; SameSite=Lax\r\n", "applied lines");
     check(ctx.set_cookies.len == 0, "pending cleared");
     // apply with a redirect outcome keeps both.
     var res2 = http::new_response();
     gweb::set_cookie(ctx, "one", "1");
     gweb::redirect(ctx, "/next", 303);
-    gweb::apply_redirect(ctx, res2);
-    check(gweb::apply_cookies(ctx, res2), "apply after redirect");
+    gweb::_apply_redirect(ctx, res2);
+    check(gweb::_apply_cookies(ctx, res2), "apply after redirect");
     check_eq(res2.headers, "Location: /next\r\nSet-Cookie: one=1; Path=/; HttpOnly; SameSite=Lax\r\n", "redirect and cookie");
     // apply that does not fit: 500, no headers.
     var res3 = http::new_response();
@@ -153,11 +153,11 @@ fn main() {
     check(!http::add_header(res3, "X-More", filler), "add_header refuses overflow");
     check(!http::add_header(res3, "X", "a\r\nb"), "add_header refuses CRLF");
     gweb::set_cookie(ctx, "big", big[..1024]);
-    check(!gweb::apply_cookies(ctx, res3), "apply refuses overflow");
+    check(!gweb::_apply_cookies(ctx, res3), "apply refuses overflow");
     check(res3.status == http::Status.InternalServerError && res3.headers.len == 0, "overflow becomes a bare 500");
 
     // lifetime shapes
-    var ctx2 = gweb::new_ctx(0, -1);
+    var ctx2 = gweb::_new_ctx(0, -1);
     var res4 = http::new_response();
     gweb::html(res4, http::Status.Ok);
     let props = load(req, ctx2);
@@ -166,7 +166,7 @@ fn main() {
     check_eq(ctx2.set_cookies, "Set-Cookie: visits=42; Path=/; Max-Age=60; HttpOnly; SameSite=Lax\r\n", "loader cookie");
     handler(req, ctx2, res4);
     check_eq(res4.body, "dark", "handler view survives res shrinking");
-    gweb::apply_cookies(ctx2, res4);
+    gweb::_apply_cookies(ctx2, res4);
 
     print(checks - failures, " of ", checks, " checks pass");
     if failures > 0 { exit(1); }

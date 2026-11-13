@@ -39,12 +39,12 @@ fn dispatch(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) ->
         let v, has = http::header(req, "x-test");
         http::text(res, http::Status.Ok, if has { v } else { "none" });
     } else if p == "/guard" {
-        if !gweb::csrf_ok(req, res) { return -1; }
+        if !gweb::_csrf_ok(req, res) { return -1; }
         http::text(res, http::Status.Ok, "guarded");
     } else if p == "/static" {
         return 0;
     } else {
-        gweb::plain_not_found(res);
+        gweb::_plain_not_found(res);
     }
     return -1;
 }
@@ -52,7 +52,7 @@ fn dispatch(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) ->
 fn static_bytes(i: i64) -> const u8[:] { "STATIC" }
 
 fn send(t: gweb::Tester&, method: const u8[:], target: const u8[:], body: const u8[:]) -> http::Response {
-    return gweb::test_send(t, method, target, body, "text/plain", dispatch, static_bytes);
+    return gweb::_test_send(t, method, target, body, "text/plain", dispatch, static_bytes);
 }
 
 fn main() {

@@ -18,7 +18,7 @@ let SITEMAP_MAX_PATH = 2048;
 root struct Sitemap { base: u8[>..], body: u8[>..], count: i64 }
 
 // Fills a Sitemap the caller owns (a root struct cannot be returned): var s = Sitemap { base: [], body: [], count: 0 };
-fn sitemap_init(req: const http::Request&, s: Sitemap&) {
+fn _sitemap_init(req: const http::Request&, s: Sitemap&) {
     s.base.clear();
     s.body.clear();
     s.count = 0;
@@ -37,13 +37,13 @@ fn sitemap_base(s: Sitemap&, url: const u8[:]) {
     s.base.append(copy_of[..n]);
 }
 
-fn digit(c: u8) -> bool { return c >= '0' && c <= '9'; }
+fn _digit(c: u8) -> bool { return c >= '0' && c <= '9'; }
 
-fn lastmod_ok(s: const u8[:]) -> bool {
+fn _lastmod_ok(s: const u8[:]) -> bool {
     if s.len != 10 { return false; }
     for c, i in s {
         if i == 4 || i == 7 { if c != '-' { return false; } }
-        else if !digit(c) { return false; }
+        else if !_digit(c) { return false; }
     }
     let month = (s[5] - '0') * 10 + (s[6] - '0');
     let day = (s[8] - '0') * 10 + (s[9] - '0');
@@ -51,7 +51,7 @@ fn lastmod_ok(s: const u8[:]) -> bool {
 }
 
 // Callers pass the path already percent-encoded: a sitemap's <loc> must be a valid URL, so spaces and raw non-ASCII are refused.
-fn sitemap_path_ok(path: const u8[:]) -> bool {
+fn _sitemap_path_ok(path: const u8[:]) -> bool {
     if path.len == 0 || path.len > SITEMAP_MAX_PATH || path[0] != '/' { return false; }
     for c in path { if c <= 32 || c >= 127 { return false; } }
     return true;
@@ -59,8 +59,8 @@ fn sitemap_path_ok(path: const u8[:]) -> bool {
 
 // False, with s unchanged, when the path or lastmod is malformed or the sitemap is full.
 fn sitemap_add(s: Sitemap&, path: const u8[:], lastmod: const u8[:] = "") -> bool {
-    if !sitemap_path_ok(path) { return false; }
-    if lastmod.len > 0 && !lastmod_ok(lastmod) { return false; }
+    if !_sitemap_path_ok(path) { return false; }
+    if lastmod.len > 0 && !_lastmod_ok(lastmod) { return false; }
     if s.count >= SITEMAP_MAX_URLS { return false; }
     // Worst case: every path byte escapes to six.
     if s.body.len + s.base.len + path.len * 6 + 128 > SITEMAP_MAX_BYTES { return false; }
@@ -73,7 +73,7 @@ fn sitemap_add(s: Sitemap&, path: const u8[:], lastmod: const u8[:] = "") -> boo
     return true;
 }
 
-fn sitemap_reply(res: http::Response&, s: const Sitemap&) {
+fn _sitemap_reply(res: http::Response&, s: const Sitemap&) {
     res.status = http::Status.Ok;
     res.content_type.clear();
     res.content_type.append("application/xml; charset=utf-8");
@@ -93,14 +93,14 @@ fn sitemap_reply(res: http::Response&, s: const Sitemap&) {
 }
 
 // The headers of /robots.txt; an app's fn robots(req, ctx, out) in app/sitemap.goose then writes the body.
-fn robots_begin(res: http::Response&) {
+fn _robots_begin(res: http::Response&) {
     res.status = http::Status.Ok;
     res.content_type.clear();
     res.content_type.append("text/plain; charset=utf-8");
     http::set_header(res, "Cache-Control", "public, max-age=3600");
 }
 
-fn robots_reply(req: const http::Request&, res: http::Response&) {
+fn _robots_reply(req: const http::Request&, res: http::Response&) {
     res.status = http::Status.Ok;
     res.content_type.clear();
     res.content_type.append("text/plain; charset=utf-8");

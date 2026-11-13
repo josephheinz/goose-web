@@ -22,14 +22,14 @@ struct MdMarker { kind: i64, ch: u8, width: i64, num: i64 }   // kind: 0 none, 1
 
 // ---------------------------------------------------------------- small helpers
 
-fn md_space(c: u8) -> bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 12 || c == 11; }
-fn md_punct(c: u8) -> bool {
+fn _md_space(c: u8) -> bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 12 || c == 11; }
+fn _md_punct(c: u8) -> bool {
     return (c >= 33 && c <= 47) || (c >= 58 && c <= 64) || (c >= 91 && c <= 96) || (c >= 123 && c <= 126);
 }
-fn md_alnum(c: u8) -> bool { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c >= 128; }
+fn _md_alnum(c: u8) -> bool { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c >= 128; }
 
 // Columns and bytes of the leading spaces and tabs; a tab is 4 columns.
-fn md_lead(s: const u8[:]) -> i64, i64 {
+fn _md_lead(s: const u8[:]) -> i64, i64 {
     var cols = 0;
     var n = 0;
     while n < s.len && (s[n] == ' ' || s[n] == '\t') { cols += if s[n] == '\t' { 4 } else { 1 }; n += 1; }
@@ -37,27 +37,27 @@ fn md_lead(s: const u8[:]) -> i64, i64 {
 }
 
 // The bytes that remove up to cols columns of leading white space.
-fn md_skip_cols(s: const u8[:], cols: i64) -> i64 {
+fn _md_skip_cols(s: const u8[:], cols: i64) -> i64 {
     var c = 0;
     var n = 0;
     while n < s.len && c < cols && (s[n] == ' ' || s[n] == '\t') { c += if s[n] == '\t' { 4 } else { 1 }; n += 1; }
     return n;
 }
 
-fn md_blank(s: const u8[:]) -> bool {
-    for c in s { if !md_space(c) { return false; } }
+fn _md_blank(s: const u8[:]) -> bool {
+    for c in s { if !_md_space(c) { return false; } }
     return true;
 }
 
 // The text cut at max bytes on a UTF-8 boundary.
-fn md_cut(s: const u8[:], max: i64) -> const u8[:] {
+fn _md_cut(s: const u8[:], max: i64) -> const u8[:] {
     if s.len <= max { return s; }
     var n = max;
     while n > 0 && (s[n] & 0xC0) == 0x80 { n -= 1; }
     return s[..n];
 }
 
-fn md_marker(r: const u8[:]) -> MdMarker {
+fn _md_marker(r: const u8[:]) -> MdMarker {
     let none = MdMarker { kind: 0, ch: 0, width: 0, num: 0 };
     if r.len == 0 { return none; }
     let c = r[0];
@@ -75,7 +75,7 @@ fn md_marker(r: const u8[:]) -> MdMarker {
 }
 
 // ---, *** or ___ (three or more of one, white space allowed between).
-fn md_hr(r: const u8[:]) -> bool {
+fn _md_hr(r: const u8[:]) -> bool {
     if r.len < 3 { return false; }
     let c = r[0];
     if c != '-' && c != '*' && c != '_' { return false; }
@@ -87,7 +87,7 @@ fn md_hr(r: const u8[:]) -> bool {
 }
 
 // The level of an ATX heading line start (# then a space or the end), else 0.
-fn md_atx(r: const u8[:]) -> i64 {
+fn _md_atx(r: const u8[:]) -> i64 {
     var n = 0;
     while n < r.len && r[n] == '#' { n += 1; }
     if n == 0 || n > 6 { return 0; }
@@ -96,7 +96,7 @@ fn md_atx(r: const u8[:]) -> i64 {
 }
 
 // The length of an opening fence (``` or ~~~, three or more) and its character, else 0. A backtick fence's info has no backtick.
-fn md_fence(r: const u8[:]) -> i64, u8 {
+fn _md_fence(r: const u8[:]) -> i64, u8 {
     if r.len < 3 || (r[0] != '`' && r[0] != '~') { return 0, 0; }
     var n = 0;
     while n < r.len && r[n] == r[0] { n += 1; }
@@ -106,7 +106,7 @@ fn md_fence(r: const u8[:]) -> i64, u8 {
 }
 
 // 0: not allowed, 1: relative, 2: absolute (http:, https:, mailto: or //).
-fn md_url_kind(u: const u8[:]) -> i64 {
+fn _md_url_kind(u: const u8[:]) -> i64 {
     if u.len == 0 || u.len > MD_MAX_URL { return 0; }
     for c in u { if c <= 32 || c == 127 || c == '\\' { return 0; } }
     if u[0] == '#' { return 1; }
@@ -141,13 +141,13 @@ struct Tok { kind: i64, a: i64, b: i64, c: i64, d: i64, u: i64, v: i64, abs: boo
              ch: u8, can_open: bool, can_close: bool, used_open: i64, used_close: i64,
              opens: u8[..8], closes: u8[..8], left: i64 }   // opens/closes: 'e' or 's' in match order
 
-fn tok(kind: i64, a: i64, b: i64) -> Tok {
+fn _tok(kind: i64, a: i64, b: i64) -> Tok {
     Tok { kind: kind, a: a, b: b, c: 0, d: 0, u: 0, v: 0, abs: false, ch: 0, can_open: false, can_close: false,
           used_open: 0, used_close: 0, opens: "", closes: "", left: 0 }
 }
 
 // Parses (dest "title") after a closing ]; at is the index of '('. Returns the end (after ')') or -1.
-fn md_dest(t: const u8[:], at: i64, us: i64&, ue: i64&, ts: i64&, te: i64&) -> i64 {
+fn _md_dest(t: const u8[:], at: i64, us: i64&, ue: i64&, ts: i64&, te: i64&) -> i64 {
     var i = at + 1;
     let limit = min(t.len, at + 1 + 2 * MD_MAX_URL + 8);
     while i < limit && (t[i] == ' ' || t[i] == '\n') { i += 1; }
@@ -190,7 +190,7 @@ fn md_dest(t: const u8[:], at: i64, us: i64&, ue: i64&, ts: i64&, te: i64&) -> i
 }
 
 // Renders inline Markdown. Not recursive: one scan makes tokens, a second pairs the emphasis, a third writes.
-fn md_inline(out: u8[>..]&, t: const u8[:]) {
+fn _md_inline(out: u8[>..]&, t: const u8[:]) {
     var toks: Tok[>..] = [];
     // Matching ] of every [ (-1 when none), found once so a run of [ costs linear time.
     var close_of: i64[>..] = [];
@@ -218,8 +218,8 @@ fn md_inline(out: u8[>..]&, t: const u8[:]) {
     while i < t.len {
         let c = t[i];
         if i == link_end {
-            if i > ts { toks.push(tok(T_TEXT, ts, i)); }
-            toks.push(tok(T_ENDLINK, 0, 0));
+            if i > ts { toks.push(_tok(T_TEXT, ts, i)); }
+            toks.push(_tok(T_ENDLINK, 0, 0));
             link_end = -1;
             i = link_resume;
             ts = i;
@@ -229,14 +229,14 @@ fn md_inline(out: u8[>..]&, t: const u8[:]) {
             let n = t[i + 1];
             if n == '\n' {
                 var e = i;
-                if e > ts { toks.push(tok(T_TEXT, ts, e)); }
-                toks.push(tok(T_BR, 0, 0));
+                if e > ts { toks.push(_tok(T_TEXT, ts, e)); }
+                toks.push(_tok(T_BR, 0, 0));
                 i += 2; ts = i;
                 continue;
             }
-            if md_punct(n) {
-                if i > ts { toks.push(tok(T_TEXT, ts, i)); }
-                var l = tok(T_LIT, n, 0);
+            if _md_punct(n) {
+                if i > ts { toks.push(_tok(T_TEXT, ts, i)); }
+                var l = _tok(T_LIT, n, 0);
                 toks.push(l);
                 i += 2; ts = i;
                 continue;
@@ -248,8 +248,8 @@ fn md_inline(out: u8[>..]&, t: const u8[:]) {
             var e = i;
             while e > ts && t[e - 1] == ' ' { e -= 1; }
             let hard = i - e >= 2;
-            if e > ts { toks.push(tok(T_TEXT, ts, e)); }
-            toks.push(tok(if hard { T_BR } else { T_SOFT }, 0, 0));
+            if e > ts { toks.push(_tok(T_TEXT, ts, e)); }
+            toks.push(_tok(if hard { T_BR } else { T_SOFT }, 0, 0));
             i += 1;
             while i < t.len && t[i] == ' ' { i += 1; }
             ts = i;
@@ -271,11 +271,11 @@ fn md_inline(out: u8[>..]&, t: const u8[:]) {
                 if found < 0 { no_close[n] = i; }
             }
             if found >= 0 {
-                if i > ts { toks.push(tok(T_TEXT, ts, i)); }
+                if i > ts { toks.push(_tok(T_TEXT, ts, i)); }
                 var a = i + n;
                 var b = found;
-                if b - a >= 2 && t[a] == ' ' && t[b - 1] == ' ' && !md_blank(t[a..b]) { a += 1; b -= 1; }
-                toks.push(tok(T_CODE, a, b));
+                if b - a >= 2 && t[a] == ' ' && t[b - 1] == ' ' && !_md_blank(t[a..b]) { a += 1; b -= 1; }
+                toks.push(_tok(T_CODE, a, b));
                 i = found + n;
                 ts = i;
             } else { i += n; }
@@ -288,22 +288,22 @@ fn md_inline(out: u8[>..]&, t: const u8[:]) {
             var ok = false;
             if cl > 0 && cl + 1 < t.len && t[cl + 1] == '(' && (img || link_end < 0) {
                 var us = 0; var ue = 0; var ts2 = 0; var te2 = 0;
-                let end = md_dest(t, cl + 1, us, ue, ts2, te2);
+                let end = _md_dest(t, cl + 1, us, ue, ts2, te2);
                 if end > 0 {
-                    let kind = md_url_kind(t[us..ue]);
+                    let kind = _md_url_kind(t[us..ue]);
                     if kind > 0 {
                         ok = true;
-                        if i > ts { toks.push(tok(T_TEXT, ts, i)); }
+                        if i > ts { toks.push(_tok(T_TEXT, ts, i)); }
                         if img {
-                            var k = tok(T_IMG, open + 1, cl);
+                            var k = _tok(T_IMG, open + 1, cl);
                             k.u = us; k.v = ue; k.c = ts2; k.d = te2; k.abs = kind == 2;
                             toks.push(k);
                             i = end; ts = i;
                         } else {
-                            var k = tok(T_LINK, 0, 0);
+                            var k = _tok(T_LINK, 0, 0);
                             k.u = us; k.v = ue; k.c = ts2; k.d = te2; k.abs = kind == 2;
                             toks.push(k);
-                            toks.push(tok(T_BARRIER, 0, 0));
+                            toks.push(_tok(T_BARRIER, 0, 0));
                             link_end = cl; link_resume = end;
                             i = open + 1; ts = i;
                         }
@@ -317,9 +317,9 @@ fn md_inline(out: u8[>..]&, t: const u8[:]) {
             // <http://x>, <https://x> or <mailto:x>
             var e = i + 1;
             while e < t.len && e < i + MD_MAX_URL && t[e] != '>' && t[e] > 32 && t[e] != '<' { e += 1; }
-            if e < t.len && t[e] == '>' && md_url_kind(t[i + 1..e]) == 2 && find(t[i + 1..e], ":") > 0 {
-                if i > ts { toks.push(tok(T_TEXT, ts, i)); }
-                toks.push(tok(T_AUTO, i + 1, e));
+            if e < t.len && t[e] == '>' && _md_url_kind(t[i + 1..e]) == 2 && find(t[i + 1..e], ":") > 0 {
+                if i > ts { toks.push(_tok(T_TEXT, ts, i)); }
+                toks.push(_tok(T_AUTO, i + 1, e));
                 i = e + 1; ts = i;
                 continue;
             }
@@ -331,13 +331,13 @@ fn md_inline(out: u8[>..]&, t: const u8[:]) {
             while i + n < t.len && t[i + n] == c { n += 1; }
             let before = if i == 0 { ' ' } else { t[i - 1] };
             let after = if i + n >= t.len { ' ' } else { t[i + n] };
-            let left = !md_space(after) && (!md_punct(after) || md_space(before) || md_punct(before));
-            let right = !md_space(before) && (!md_punct(before) || md_space(after) || md_punct(after));
-            var k = tok(T_DELIM, i, i + n);
+            let left = !_md_space(after) && (!_md_punct(after) || _md_space(before) || _md_punct(before));
+            let right = !_md_space(before) && (!_md_punct(before) || _md_space(after) || _md_punct(after));
+            var k = _tok(T_DELIM, i, i + n);
             k.ch = c;
             if c == '*' { k.can_open = left; k.can_close = right; }
-            else { k.can_open = left && (!right || md_punct(before)); k.can_close = right && (!left || md_punct(after)); }
-            if i > ts { toks.push(tok(T_TEXT, ts, i)); }
+            else { k.can_open = left && (!right || _md_punct(before)); k.can_close = right && (!left || _md_punct(after)); }
+            if i > ts { toks.push(_tok(T_TEXT, ts, i)); }
             k.left = n;
             toks.push(k);
             i += n; ts = i;
@@ -345,7 +345,7 @@ fn md_inline(out: u8[>..]&, t: const u8[:]) {
         }
         i += 1;
     }
-    if t.len > ts { toks.push(tok(T_TEXT, ts, t.len)); }
+    if t.len > ts { toks.push(_tok(T_TEXT, ts, t.len)); }
     if link_end >= 0 { /* the link text never closed: cannot happen, close_of guarantees it */ }
 
     // Pair the emphasis. stack holds token indexes of openers; a barrier is a T_BARRIER token.
@@ -427,7 +427,7 @@ fn md_inline(out: u8[>..]&, t: const u8[:]) {
 // ---------------------------------------------------------------- blocks
 
 fn markdown(out: u8[>..]&, src0: const u8[:]) {
-    let src = md_cut(src0, MD_MAX_INPUT);
+    let src = _md_cut(src0, MD_MAX_INPUT);
     var para: u8[>..] = [];
     var para_open = false;
     var boxes: MdBox[8] = [MdBox { .. }; 8];
@@ -447,15 +447,15 @@ fn markdown(out: u8[>..]&, src0: const u8[:]) {
         if !para_open { return; }
         para_open = false;
         var e = para.len;
-        while e > 0 && md_space(para[e - 1]) { e -= 1; }
+        while e > 0 && _md_space(para[e - 1]) { e -= 1; }
         if depth > 0 && !boxes[depth - 1].quote && boxes[depth - 1].bare {
-            md_inline(out, para[..e]);
+            _md_inline(out, para[..e]);
             boxes[depth - 1].bare = false;
             boxes[depth - 1].nl = true;
         } else {
             begin_block();
             out.append("<p>");
-            md_inline(out, para[..e]);
+            _md_inline(out, para[..e]);
             out.append("</p>\n");
         }
         para.clear();
@@ -476,10 +476,10 @@ fn markdown(out: u8[>..]&, src0: const u8[:]) {
     fn open_item(m: MdMarker, base: i64, rest: const u8[:], sibling: bool) -> i64 {
         // rest starts at the marker; returns the bytes the marker and its spaces take.
         let after = rest[m.width..];
-        let sp, sn = md_lead(after);
+        let sp, sn = _md_lead(after);
         var gap = sp;
         var used = m.width + sn;
-        if after.len == 0 || md_blank(after) { gap = 1; used = rest.len; }
+        if after.len == 0 || _md_blank(after) { gap = 1; used = rest.len; }
         else if sp >= 5 { gap = 1; used = m.width + 1; }
         else if sp == 0 { gap = 1; }
         if sibling {
@@ -498,16 +498,16 @@ fn markdown(out: u8[>..]&, src0: const u8[:]) {
     }
     // A line start the paragraph must not swallow.
     fn starts_block(r0: const u8[:]) -> bool {
-        let cols, n = md_lead(r0);
+        let cols, n = _md_lead(r0);
         if cols >= 4 { return false; }
         let r = r0[n..];
         if r.len == 0 { return false; }
-        if r[0] == '>' || md_hr(r) || md_atx(r) > 0 { return true; }
-        let f, fc = md_fence(r);
+        if r[0] == '>' || _md_hr(r) || _md_atx(r) > 0 { return true; }
+        let f, fc = _md_fence(r);
         if f > 0 { return true; }
-        let m = md_marker(r);
-        if m.kind == 1 && !md_blank(r[1..]) { return true; }
-        if m.kind == 2 && m.num == 1 && !md_blank(r[m.width..]) { return true; }
+        let m = _md_marker(r);
+        if m.kind == 1 && !_md_blank(r[1..]) { return true; }
+        if m.kind == 2 && m.num == 1 && !_md_blank(r[m.width..]) { return true; }
         return false;
     }
 
@@ -525,7 +525,7 @@ fn markdown(out: u8[>..]&, src0: const u8[:]) {
         while matched < depth {
             let b = boxes[matched];
             if b.quote {
-                let cols, n = md_lead(l[i..]);
+                let cols, n = _md_lead(l[i..]);
                 if cols < 4 && i + n < l.len && l[i + n] == '>' {
                     i += n + 1;
                     if i < l.len && l[i] == ' ' { i += 1; }
@@ -533,10 +533,10 @@ fn markdown(out: u8[>..]&, src0: const u8[:]) {
                 } else { break; }
             } else {
                 let rest = l[i..];
-                if md_blank(rest) { matched += 1; }
+                if _md_blank(rest) { matched += 1; }
                 else {
-                    let cols, n = md_lead(rest);
-                    if cols >= b.indent { i += md_skip_cols(rest, b.indent); matched += 1; } else { break; }
+                    let cols, n = _md_lead(rest);
+                    if cols >= b.indent { i += _md_skip_cols(rest, b.indent); matched += 1; } else { break; }
                 }
             }
         }
@@ -546,17 +546,17 @@ fn markdown(out: u8[>..]&, src0: const u8[:]) {
         if fence_open {
             if matched < depth { close_fence(); close_to(matched); }
             else {
-                let cols, n = md_lead(rest);
+                let cols, n = _md_lead(rest);
                 var closes = false;
                 if cols < 4 {
                     let r = rest[n..];
                     var k = 0;
                     while k < r.len && r[k] == fence_ch { k += 1; }
-                    if k >= fence_len && md_blank(r[k..]) { closes = true; }
+                    if k >= fence_len && _md_blank(r[k..]) { closes = true; }
                 }
                 if closes { close_fence(); }
                 else {
-                    let skip = md_skip_cols(rest, fence_indent);
+                    let skip = _md_skip_cols(rest, fence_indent);
                     escape(out, rest[skip..]);
                     out.push('\n');
                 }
@@ -565,15 +565,15 @@ fn markdown(out: u8[>..]&, src0: const u8[:]) {
         }
 
         // 3. Blank lines end the paragraph; containers that did not match end too.
-        if md_blank(rest) {
+        if _md_blank(rest) {
             close_para();
             close_to(matched);
             continue;
         }
-        let cols0, n0 = md_lead(rest);
+        let cols0, n0 = _md_lead(rest);
         if matched < depth {
-            let sib = if cols0 < 4 && !boxes[matched].quote { md_marker(rest[n0..]) } else { MdMarker { kind: 0, ch: 0, width: 0, num: 0 } };
-            let is_sib = sib.kind == (if boxes[matched].ordered { 2 } else { 1 }) && sib.ch == boxes[matched].ch && !md_hr(rest[n0..]);
+            let sib = if cols0 < 4 && !boxes[matched].quote { _md_marker(rest[n0..]) } else { MdMarker { kind: 0, ch: 0, width: 0, num: 0 } };
+            let is_sib = sib.kind == (if boxes[matched].ordered { 2 } else { 1 }) && sib.ch == boxes[matched].ch && !_md_hr(rest[n0..]);
             if para_open && !is_sib && !starts_block(rest) { para.push('\n'); para.append(rest[n0..]); continue; }
             // A sibling item continues its list.
             if is_sib {
@@ -588,7 +588,7 @@ fn markdown(out: u8[>..]&, src0: const u8[:]) {
                     var nested = true;
                     while nested {
                         nested = false;
-                        let c2, n2 = md_lead(rest);
+                        let c2, n2 = _md_lead(rest);
                         if c2 < 4 && depth < MD_MAX_DEPTH {
                             let r2 = rest[n2..];
                             if r2.len > 0 && r2[0] == '>' {
@@ -599,8 +599,8 @@ fn markdown(out: u8[>..]&, src0: const u8[:]) {
                                 rest = r2[1..];
                                 if rest.len > 0 && rest[0] == ' ' { rest = rest[1..]; }
                                 nested = true;
-                            } else if !md_hr(r2) {
-                                let m2 = md_marker(r2);
+                            } else if !_md_hr(r2) {
+                                let m2 = _md_marker(r2);
                                 if m2.kind > 0 {
                                     let u2 = open_item(m2, c2, r2, false);
                                     rest = r2[u2..];
@@ -612,7 +612,7 @@ fn markdown(out: u8[>..]&, src0: const u8[:]) {
                     }
                     // leaf below handles rest
                     matched = depth;
-                    if md_blank(rest) { continue; }
+                    if _md_blank(rest) { continue; }
                 }
             }
             if matched < depth { close_para(); close_to(matched); }
@@ -622,7 +622,7 @@ fn markdown(out: u8[>..]&, src0: const u8[:]) {
         var again = true;
         while again {
             again = false;
-            let cols, n = md_lead(rest);
+            let cols, n = _md_lead(rest);
             if cols >= 4 || depth >= MD_MAX_DEPTH { break; }
             let r = rest[n..];
             if r.len == 0 { break; }
@@ -636,26 +636,26 @@ fn markdown(out: u8[>..]&, src0: const u8[:]) {
                 again = true;
                 continue;
             }
-            if md_hr(r) { break; }
-            let m = md_marker(r);
+            if _md_hr(r) { break; }
+            let m = _md_marker(r);
             if m.kind == 0 { break; }
             if para_open {
                 // Only a non-empty bullet or an ordered item numbered 1 interrupts a paragraph.
-                if md_blank(r[m.width..]) || (m.kind == 2 && m.num != 1) { break; }
+                if _md_blank(r[m.width..]) || (m.kind == 2 && m.num != 1) { break; }
             }
             close_para();
             let used = open_item(m, cols, r, false);
             rest = r[used..];
-            again = !md_blank(rest);
+            again = !_md_blank(rest);
         }
 
         // 5. The leaf.
-        if md_blank(rest) { continue; }
-        let cols, n = md_lead(rest);
+        if _md_blank(rest) { continue; }
+        let cols, n = _md_lead(rest);
         let r = rest[n..];
         if cols < 4 {
-            if md_hr(r) { close_para(); begin_block(); out.append("<hr>\n"); continue; }
-            let lv = md_atx(r);
+            if _md_hr(r) { close_para(); begin_block(); out.append("<hr>\n"); continue; }
+            let lv = _md_atx(r);
             if lv > 0 {
                 close_para(); begin_block();
                 var h = r[lv..];
@@ -664,11 +664,11 @@ fn markdown(out: u8[>..]&, src0: const u8[:]) {
                 while e > 0 && h[e - 1] == '#' { e -= 1; }
                 if e == 0 || h[e - 1] == ' ' || h[e - 1] == '\t' { h = trim(h[..e]); }
                 format(out, "<h", lv, ">");
-                md_inline(out, h);
+                _md_inline(out, h);
                 format(out, "</h", lv, ">\n");
                 continue;
             }
-            let f, fc = md_fence(r);
+            let f, fc = _md_fence(r);
             if f > 0 {
                 close_para(); begin_block();
                 fence_open = true; fence_ch = fc; fence_len = f; fence_indent = cols;
@@ -677,7 +677,7 @@ fn markdown(out: u8[>..]&, src0: const u8[:]) {
                 let sp = find(info, " ");
                 if sp >= 0 { w = info[..sp]; }
                 var good = w.len > 0 && w.len <= 32;
-                for c in w { if !(md_alnum(c) && c < 128) && c != '_' && c != '+' && c != '.' && c != '#' && c != '-' { good = false; } }
+                for c in w { if !(_md_alnum(c) && c < 128) && c != '_' && c != '+' && c != '.' && c != '#' && c != '-' { good = false; } }
                 if good { out.append("<pre><code class=\"language-"); out.append(w); out.append("\">"); }
                 else { out.append("<pre><code>"); }
                 continue;
@@ -730,7 +730,7 @@ fn markdown_text(out: u8[>..]&, src: const u8[:], max: i64) {
             text.push(ent); space = false; i += len;
             continue;
         }
-        if md_space(c) { if !space { text.push(' '); space = true; } i += 1; continue; }
+        if _md_space(c) { if !space { text.push(' '); space = true; } i += 1; continue; }
         text.push(c); space = false; i += 1;
     }
     while text.len > 0 && text[text.len - 1] == ' ' { text.pop(); }

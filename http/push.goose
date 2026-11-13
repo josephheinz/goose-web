@@ -11,13 +11,13 @@ import gweb;
 
 let BASE64_BYTES = byte_set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/");
 
-fn hub_of(ctx: const Ctx&) -> net::Hub { net::Hub { handle: ctx.hub } }
+fn _hub_of(ctx: const Ctx&) -> net::Hub { net::Hub { handle: ctx.hub } }
 
-fn no_hub(res: http::Response&) {
+fn _no_hub(res: http::Response&) {
     http::json_error(res, http::Status.ServiceUnavailable, "no hub");
 }
 
-fn set_topic(ctx: Ctx&, topic: const u8[:]) {
+fn _set_topic(ctx: Ctx&, topic: const u8[:]) {
     ctx.topic.clear();
     ctx.topic.append(topic);
 }
@@ -26,20 +26,20 @@ fn set_topic(ctx: Ctx&, topic: const u8[:]) {
 // run_worker sends the head, then the hub owns the connection. heartbeat goes out as a chunk every ping interval.
 // False after writing a reply: 503 without a hub, 400 for HEAD, an HTTP/1.0 request or a topic or heartbeat over 64 bytes.
 fn subscribe(req: const http::Request&, ctx: Ctx&, res: http::Response&, topic: const u8[:], heartbeat: const u8[:] = "") -> bool {
-    if ctx.hub == 0 { no_hub(res); return false; }
+    if ctx.hub == 0 { _no_hub(res); return false; }
     if req.method == http::Method.Head { http::json_error(res, http::Status.BadRequest, "cannot subscribe with HEAD"); return false; }
     if !http::supports_chunked(req) { http::json_error(res, http::Status.BadRequest, "subscribe needs HTTP/1.1"); return false; }
     if topic.len > 64 || heartbeat.len > 64 { http::json_error(res, http::Status.BadRequest, "topic or heartbeat too long"); return false; }
     http::set_header(res, "Cache-Control", "no-store");
     http::set_header(res, "X-Accel-Buffering", "no");   // nginx must not buffer the stream
-    set_topic(ctx, topic);
+    _set_topic(ctx, topic);
     ctx.heartbeat.clear();
     ctx.heartbeat.append(heartbeat);
     ctx.detach = Detach.Stream;
     return true;
 }
 
-fn has_token(value: const u8[:], token: const u8[:]) -> bool {
+fn _has_token(value: const u8[:], token: const u8[:]) -> bool {
     var start = 0;
     for i in value.len + 1 {
         if i == value.len || value[i] == ',' {
@@ -51,7 +51,7 @@ fn has_token(value: const u8[:], token: const u8[:]) -> bool {
 }
 
 // A 16-byte key is 22 base64 digits and "==", and the last digit has only its top 2 bits set.
-fn key_valid(key: const u8[:]) -> bool {
+fn _key_valid(key: const u8[:]) -> bool {
     if key.len != 24 || key[22] != '=' || key[23] != '=' { return false; }
     for i in 22 { if !BASE64_BYTES.members[key[i]] { return false; } }
     let last = key[21];
@@ -59,7 +59,7 @@ fn key_valid(key: const u8[:]) -> bool {
 }
 
 // The host[:port] of an Origin value; "" when it is not an http(s) origin.
-fn origin_authority(origin: const u8[:]) -> const u8[:] {
+fn _origin_authority(origin: const u8[:]) -> const u8[:] {
     var rest = origin;
     if http::eq_nocase(origin[..min(origin.len, 7)], "http://") { rest = origin[7..]; }
     else if http::eq_nocase(origin[..min(origin.len, 8)], "https://") { rest = origin[8..]; }
@@ -74,7 +74,7 @@ fn origin_authority(origin: const u8[:]) -> const u8[:] {
 // False after writing a reply: 503 without a hub, 426 (Sec-WebSocket-Version: 13) for a request that is not a version-13
 // upgrade, 400 for a malformed handshake, 403 for another origin.
 fn websocket(req: const http::Request&, ctx: Ctx&, res: http::Response&, topic: const u8[:], allow_origin: const u8[:] = "") -> bool {
-    if ctx.hub == 0 { no_hub(res); return false; }
+    if ctx.hub == 0 { _no_hub(res); return false; }
     if topic.len > 64 { http::json_error(res, http::Status.BadRequest, "topic too long"); return false; }
     let upgrade, has_upgrade = http::header(req, "Upgrade");
     let version, has_version = http::header(req, "Sec-WebSocket-Version");
@@ -85,14 +85,14 @@ fn websocket(req: const http::Request&, ctx: Ctx&, res: http::Response&, topic: 
     }
     let connection, has_connection = http::header(req, "Connection");
     let key, has_key = http::header(req, "Sec-WebSocket-Key");
-    if req.method != http::Method.Get || !has_connection || !has_token(connection, "upgrade") || !has_key || !key_valid(trim(key)) {
+    if req.method != http::Method.Get || !has_connection || !_has_token(connection, "upgrade") || !has_key || !_key_valid(trim(key)) {
         http::json_error(res, http::Status.BadRequest, "bad WebSocket handshake");
         return false;
     }
     let origin, has_origin = http::header(req, "Origin");
     if has_origin {
         let host, has_host = http::header(req, "Host");
-        let from = origin_authority(trim(origin));
+        let from = _origin_authority(trim(origin));
         let own = has_host && from.len > 0 && http::eq_nocase(from, trim(host));
         let allowed = allow_origin.len > 0 && (http::eq_nocase(from, allow_origin) || http::eq_nocase(trim(origin), allow_origin));
         if !own && !allowed {
@@ -104,7 +104,7 @@ fn websocket(req: const http::Request&, ctx: Ctx&, res: http::Response&, topic: 
     res.status = http::Status.SwitchingProtocols;
     http::set_header(res, "Upgrade", "websocket");
     http::add_header(res, "Sec-WebSocket-Accept", http::websocket_accept(trim(key)));
-    set_topic(ctx, topic);
+    _set_topic(ctx, topic);
     ctx.detach = Detach.WebSocket;
     return true;
 }
@@ -112,21 +112,21 @@ fn websocket(req: const http::Request&, ctx: Ctx&, res: http::Response&, topic: 
 // To every connection on topic. False when there is no hub or the hub's queue is full.
 fn publish(ctx: const Ctx&, topic: const u8[:], data: const u8[:], binary: bool = false) -> bool {
     if ctx.hub == 0 { return false; }
-    return net::publish(hub_of(ctx), topic, data, binary);
+    return net::publish(_hub_of(ctx), topic, data, binary);
 }
 
 // To one connection, by the id socket::open and socket::message receive.
 fn socket_send(ctx: const Ctx&, id: u64, data: const u8[:], binary: bool = false) -> bool {
     if ctx.hub == 0 { return false; }
-    return net::send(hub_of(ctx), id, data, binary);
+    return net::send(_hub_of(ctx), id, data, binary);
 }
 
 fn close_socket(ctx: const Ctx&, id: u64) {
-    if ctx.hub != 0 { net::close(hub_of(ctx), id); }
+    if ctx.hub != 0 { net::close(_hub_of(ctx), id); }
 }
 
 // 0 without a hub; "" counts every connection.
 fn subscribers(ctx: const Ctx&, topic: const u8[:]) -> i64 {
     if ctx.hub == 0 { return 0; }
-    return net::count(hub_of(ctx), topic);
+    return net::count(_hub_of(ctx), topic);
 }

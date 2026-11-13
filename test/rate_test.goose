@@ -24,7 +24,7 @@ fn ip_of(headers: const u8[:], trust: bool, fd: i32) -> u8[>..] {
     var raw: u8[>..] = [];
     format(raw, "GET / HTTP/1.1\r\nHost: a\r\n", headers, "\r\n");
     let req, parsed = http::parse_request(raw);
-    var ctx = gweb::new_ctx(0, -1);
+    var ctx = gweb::_new_ctx(0, -1);
     ctx.auth.trust_proxy = trust;
     ctx.conn_fd = fd;
     var out: u8[>..] = [];
@@ -34,7 +34,7 @@ fn ip_of(headers: const u8[:], trust: bool, fd: i32) -> u8[>..] {
 
 fn port_of(addr: const u8[:]) -> u8[>..] {
     var out: u8[>..] = [];
-    gweb::strip_port(addr, out);
+    gweb::_strip_port(addr, out);
     return out;
 }
 
@@ -52,22 +52,22 @@ fn main() {
     check_eq(port_of(""), "", "empty stays empty");
 
     var res = http::new_response();
-    gweb::rate_refuse(res, 1);
+    gweb::_rate_refuse(res, 1);
     check(http::code(res.status) == 429, "status 429");
     check_eq(res.headers, "Retry-After: 1\r\n", "1 ms rounds up to 1 second");
     check_eq(res.body, "too many requests; try again in 1 seconds\n", "body");
     var res2 = http::new_response();
-    gweb::rate_refuse(res2, 2001);
+    gweb::_rate_refuse(res2, 2001);
     check_eq(res2.headers, "Retry-After: 3\r\n", "2001 ms rounds up to 3 seconds");
     check_eq(res2.body, "too many requests; try again in 3 seconds\n", "body for 3 seconds");
 
     c_rate_reset();
-    check(gweb::rate_take_at("login\x00a", 0, 1000, 2) == 0, "first take");
-    check(gweb::rate_take_at("login\x00a", 0, 1000, 2) == 0, "second take");
-    check(gweb::rate_take_at("login\x00a", 0, 1000, 2) == 500, "third refused with the wait");
-    check(gweb::rate_take_at("login\x00b", 0, 1000, 2) == 0, "other key independent");
+    check(gweb::_rate_take_at("login\x00a", 0, 1000, 2) == 0, "first take");
+    check(gweb::_rate_take_at("login\x00a", 0, 1000, 2) == 0, "second take");
+    check(gweb::_rate_take_at("login\x00a", 0, 1000, 2) == 500, "third refused with the wait");
+    check(gweb::_rate_take_at("login\x00b", 0, 1000, 2) == 0, "other key independent");
     c_rate_reset();
-    check(gweb::rate_take_at("login\x00a", 0, 1000, 2) == 0, "reset clears the table");
+    check(gweb::_rate_take_at("login\x00a", 0, 1000, 2) == 0, "reset clears the table");
 
     print(checks - failures, " of ", checks, " checks pass");
     if failures > 0 { exit(1); }

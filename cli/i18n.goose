@@ -364,7 +364,7 @@ fn emit_body(out: u8[>..]&, p: i64, k: i64) {
     var any = false;
     for c in 5 { if resolve(p, k, c) != other { any = true; } }
     if !any { emit_text(out, k, other); return; }
-    format(out, "let gw_p = gweb::plural_index(TAGS[", p, "], count); ");
+    format(out, "let gw_p = gweb::_plural_index(TAGS[", p, "], count); ");
     var first = true;
     for c in 5 {
         let r = resolve(p, k, c);

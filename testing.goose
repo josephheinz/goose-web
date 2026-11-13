@@ -17,7 +17,7 @@ struct Tester { failures: i64 = 0, checks: i64 = 0, name: u8[..128] = "",
                 cookies: u8[..4096] = "", host: u8[..128] = "test" }
 
 // The value of a jar cookie; "" when absent.
-fn jar_get(t: const Tester&, name: const u8[:]) -> const u8[:], bool {
+fn _jar_get(t: const Tester&, name: const u8[:]) -> const u8[:], bool {
     var i = 0;
     while i <= t.cookies.len {
         var j = i;
@@ -30,7 +30,7 @@ fn jar_get(t: const Tester&, name: const u8[:]) -> const u8[:], bool {
 }
 
 // Drops name from the jar, then adds name=value when keep is set.
-fn jar_put(t: Tester&, name: const u8[:], value: const u8[:], keep: bool) {
+fn _jar_put(t: Tester&, name: const u8[:], value: const u8[:], keep: bool) {
     var out: u8[>..] = [];
     var i = 0;
     while i <= t.cookies.len {
@@ -54,14 +54,14 @@ fn jar_put(t: Tester&, name: const u8[:], value: const u8[:], keep: bool) {
 }
 
 // True when attrs holds Max-Age=0 and not Max-Age=0<digit>.
-fn max_age_zero(attrs: const u8[:]) -> bool {
+fn _max_age_zero(attrs: const u8[:]) -> bool {
     let i = find(attrs, "Max-Age=0");
     if i < 0 { return false; }
     let end = i + 9;
     return end >= attrs.len || attrs[end] < '0' || attrs[end] > '9';
 }
 
-fn jar_update(t: Tester&, headers: const u8[:]) {
+fn _jar_update(t: Tester&, headers: const u8[:]) {
     var i = 0;
     while i < headers.len {
         var j = i;
@@ -74,21 +74,21 @@ fn jar_update(t: Tester&, headers: const u8[:]) {
         let first = if has_attrs { pair } else { rest };
         let name, value, has = split_once(first, '=');
         if !has || name.len == 0 { continue; }
-        jar_put(t, name, value, !(has_attrs && max_age_zero(attrs)));
+        _jar_put(t, name, value, !(has_attrs && _max_age_zero(attrs)));
     }
 }
 
 // Runs one request through the app's dispatcher (D) and static files (S), with no socket.
-fn test_send<D, S>(t: Tester&, method: const u8[:], target: const u8[:], body: const u8[:], content_type: const u8[:]) -> http::Response {
+fn _test_send<D, S>(t: Tester&, method: const u8[:], target: const u8[:], body: const u8[:], content_type: const u8[:]) -> http::Response {
     if t.auto_csrf && method != "GET" {
-        let have, has = jar_get(t, "gw_csrf");
-        if !has { jar_put(t, "gw_csrf", TEST_CSRF, true); }
+        let have, has = _jar_get(t, "gw_csrf");
+        if !has { _jar_put(t, "gw_csrf", TEST_CSRF, true); }
     }
     var raw: u8[>..] = [];
     format(raw, method, " ", target, " HTTP/1.1\r\nHost: ", t.host, "\r\n");
     if t.cookies.len > 0 { format(raw, "Cookie: ", t.cookies, "\r\n"); }
     if t.auto_csrf && method != "GET" {
-        let tok, has = jar_get(t, "gw_csrf");
+        let tok, has = _jar_get(t, "gw_csrf");
         if has { format(raw, "X-CSRF-Token: ", tok, "\r\n"); }
     }
     if body.len > 0 { format(raw, "Content-Type: ", content_type, "\r\nContent-Length: ", body.len, "\r\n"); }
@@ -111,15 +111,15 @@ fn test_send<D, S>(t: Tester&, method: const u8[:], target: const u8[:], body: c
             return res;
         },
     }
-    var cfg = default_config();
+    var cfg = _default_config();
     cfg.workers = 1;
     var key_err: u8[>..] = [];
-    if !dev_secret(cfg.auth.keys, key_err) { expect(t, false, key_err); }   // sessions work in tests, as in gweb dev
-    var ctx = new_ctx(0, -1);
-    let static_index, dev = respond(req, ctx, -1, cfg, res, D);
+    if !_dev_secret(cfg.auth.keys, key_err) { expect(t, false, key_err); }   // sessions work in tests, as in gweb dev
+    var ctx = _new_ctx(0, -1);
+    let static_index, dev = _respond(req, ctx, -1, cfg, res, D);
     if static_index >= 0 { res.body.append(S(static_index)); }
     if req.method == http::Method.Head { res.body.clear(); }
-    jar_update(t, res.headers);
+    _jar_update(t, res.headers);
     return res;
 }
 

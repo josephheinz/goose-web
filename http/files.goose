@@ -78,14 +78,14 @@ fn file_path_ok(rel: const u8[:]) -> bool {
 }
 
 // The last segment of a path.
-fn file_base(rel: const u8[:]) -> const u8[:] {
+fn _file_base(rel: const u8[:]) -> const u8[:] {
     let s = rfind(rel, "/");
     if s < 0 { return rel; }
     return rel[s + 1..];
 }
 
 // Content-Disposition for a download or inline file: an ASCII name for old clients, and filename* (percent-encoded UTF-8) when it differs.
-fn file_disposition(out: u8[>..]&, kind: const u8[:], name: const u8[:]) {
+fn _file_disposition(out: u8[>..]&, kind: const u8[:], name: const u8[:]) {
     out.append(kind);
     out.append("; filename=\"");
     var plain = true;
@@ -105,7 +105,7 @@ fn file_disposition(out: u8[>..]&, kind: const u8[:], name: const u8[:]) {
     }
 }
 
-fn file_miss(res: http::Response&) -> bool {
+fn _file_miss(res: http::Response&) -> bool {
     res.status = http::Status.NotFound;
     res.content_type.clear();
     res.content_type.append("text/plain; charset=utf-8");
@@ -121,16 +121,16 @@ fn file_miss(res: http::Response&) -> bool {
 // outside root (a symlink out of it); the caller may replace that reply. A file above opts.stream_over is sent in windows through
 // a stream, and a HEAD for it has a chunked head without a Content-Length.
 fn send_file(req: const http::Request&, ctx: Ctx&, res: http::Response&, root: const u8[:], rel: const u8[:], opts: const FileOptions&) -> bool {
-    if !file_path_ok(rel) { return file_miss(res); }
+    if !file_path_ok(rel) { return _file_miss(res); }
     var size: i64 = 0;
     var mtime: i64 = 0;
     let fd = c_file_open_in(root, rel, size, mtime);
-    if fd < 0 { return file_miss(res); }
+    if fd < 0 { return _file_miss(res); }
     var etag: u8[..64] = "\"";
     format(etag, size, "-", mtime, "\"");
     var ctype: u8[..120] = "";
     if opts.content_type.len > 0 { ctype.append(opts.content_type); } else { ctype.append(mime_type(rel)); }
-    let name = file_base(rel);
+    let name = _file_base(rel);
     http::set_header(res, "ETag", etag);
     http::set_header(res, "Cache-Control", if opts.immutable { "public, max-age=31536000, immutable" } else { "public, max-age=0, must-revalidate" });
     if starts_with(ctype, "text/html") || starts_with(ctype, "image/svg") {
@@ -138,7 +138,7 @@ fn send_file(req: const http::Request&, ctx: Ctx&, res: http::Response&, root: c
     }
     if opts.download || opts.filename.len > 0 {
         var cd: u8[>..] = [];
-        file_disposition(cd, if opts.download { "attachment" } else { "inline" }, if opts.filename.len > 0 { opts.filename } else { name });
+        _file_disposition(cd, if opts.download { "attachment" } else { "inline" }, if opts.filename.len > 0 { opts.filename } else { name });
         http::set_header(res, "Content-Disposition", cd);
     }
     let inm, has = http::header(req, "if-none-match");
@@ -162,7 +162,7 @@ fn send_file(req: const http::Request&, ctx: Ctx&, res: http::Response&, root: c
             off += n;
         }
         c_file_close(fd);
-        if off != size { return file_miss(res); }
+        if off != size { return _file_miss(res); }
         return true;
     }
     var s = stream_begin(req, ctx, res);

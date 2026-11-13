@@ -15,7 +15,7 @@ fn check_i(got: i64, want: i64, what: const u8[:]) {
 }
 
 fn plural(lang: const u8[:], n: i64, want: i64) {
-    let got = gweb::plural_index(lang, n);
+    let got = gweb::_plural_index(lang, n);
     checks += 1;
     if got != want { failures += 1; print("FAIL plural ", lang, " ", n, ": got ", got, " want ", want); }
 }
@@ -25,7 +25,7 @@ fn pick(extra: const u8[:], tags: const u8[:][:]) -> i64 {
     var raw: u8[>..] = [];
     format(raw, "GET / HTTP/1.1\r\nHost: a\r\n", extra, "\r\n");
     let req, parsed = http::parse_request(raw);
-    return gweb::pick_locale(req, tags);
+    return gweb::_pick_locale(req, tags);
 }
 
 fn main() {

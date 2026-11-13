@@ -231,7 +231,7 @@ fn main() {
     check_eq(res2.body, "{\"errors\":{}}", "errors_json empty");
 
     // Ctx.status
-    var ctx = gweb::new_ctx(0, -1);
+    var ctx = gweb::_new_ctx(0, -1);
     check(ctx.status == 0, "status defaults to 0");
     gweb::set_status(ctx, 409);
     check(ctx.status == 409, "set_status");

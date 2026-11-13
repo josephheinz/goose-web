@@ -48,7 +48,7 @@ fn run(method: const u8[:], headers: const u8[:][:], body: const u8[:], res: htt
     format(raw, "Content-Length: ", body.len, "\r\n\r\n", body);
     let req, parsed = http::parse_request(raw);
     if parsed != http::Read.Ready { failures += 1; print("FAIL request did not parse: ", raw); }
-    return gweb::csrf_ok(req, res);
+    return gweb::_csrf_ok(req, res);
 }
 
 fn verdict(method: const u8[:], headers: const u8[:][:], body: const u8[:]) -> bool {
@@ -58,28 +58,28 @@ fn verdict(method: const u8[:], headers: const u8[:][:], body: const u8[:]) -> b
 
 fn main() {
     // csrf_valid
-    check(gweb::csrf_valid(T), "valid 32");
-    check(!gweb::csrf_valid(T[..31]), "31 digits");
-    check(!gweb::csrf_valid("0123456789abcdef0123456789abcdef0"), "33 digits");
-    check(!gweb::csrf_valid("0123456789ABCDEF0123456789abcdef"), "uppercase");
-    check(!gweb::csrf_valid("0123456789abcdeg0123456789abcdef"), "g is not hex");
-    check(!gweb::csrf_valid(""), "empty");
+    check(gweb::_csrf_valid(T), "valid 32");
+    check(!gweb::_csrf_valid(T[..31]), "31 digits");
+    check(!gweb::_csrf_valid("0123456789abcdef0123456789abcdef0"), "33 digits");
+    check(!gweb::_csrf_valid("0123456789ABCDEF0123456789abcdef"), "uppercase");
+    check(!gweb::_csrf_valid("0123456789abcdeg0123456789abcdef"), "g is not hex");
+    check(!gweb::_csrf_valid(""), "empty");
 
     // csrf_cookie_name
     let plain, p1 = http::parse_request("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
-    check_eq(gweb::csrf_cookie_name(plain), "gw_csrf", "name without proxy header");
+    check_eq(gweb::_csrf_cookie_name(plain), "gw_csrf", "name without proxy header");
     let https, p2 = http::parse_request("GET / HTTP/1.1\r\nHost: a\r\nX-Forwarded-Proto: https\r\n\r\n");
-    check_eq(gweb::csrf_cookie_name(https), "__Host-gw_csrf", "name under https");
+    check_eq(gweb::_csrf_cookie_name(https), "__Host-gw_csrf", "name under https");
     let spaced, p3 = http::parse_request("GET / HTTP/1.1\r\nHost: a\r\nX-Forwarded-Proto:  https \r\n\r\n");
-    check_eq(gweb::csrf_cookie_name(spaced), "__Host-gw_csrf", "https with spaces");
+    check_eq(gweb::_csrf_cookie_name(spaced), "__Host-gw_csrf", "https with spaces");
     let http1, p4 = http::parse_request("GET / HTTP/1.1\r\nHost: a\r\nX-Forwarded-Proto: http\r\n\r\n");
-    check_eq(gweb::csrf_cookie_name(http1), "gw_csrf", "name under http");
+    check_eq(gweb::_csrf_cookie_name(http1), "gw_csrf", "name under http");
 
     // csrf_begin without a cookie
-    var ctx = gweb::new_ctx(0, -1);
+    var ctx = gweb::_new_ctx(0, -1);
     var res = http::new_response();
     check(gweb::csrf_begin(plain, ctx, res), "begin without cookie");
-    check(gweb::csrf_valid(ctx.csrf), "minted token is 32 hex");
+    check(gweb::_csrf_valid(ctx.csrf), "minted token is 32 hex");
     let first = ctx.csrf;
     var want_line: u8[..160] = "";
     format(want_line, "Set-Cookie: gw_csrf=", ctx.csrf, "; Path=/; HttpOnly; SameSite=Lax\r\n");
@@ -91,7 +91,7 @@ fn main() {
     check(count(ctx.set_cookies, "Set-Cookie") == 1 && count(res.headers, "Cache-Control") == 1, "still one Set-Cookie and one Cache-Control");
 
     // fresh tokens
-    var ctx_b = gweb::new_ctx(0, -1);
+    var ctx_b = gweb::_new_ctx(0, -1);
     var res_b = http::new_response();
     gweb::csrf_begin(plain, ctx_b, res_b);
     check(ctx_b.csrf != first, "two fresh tokens differ");
@@ -99,7 +99,7 @@ fn main() {
 
     // a valid cookie
     let have, p5 = http::parse_request("GET / HTTP/1.1\r\nHost: a\r\nCookie: theme=dark; gw_csrf=0123456789abcdef0123456789abcdef\r\n\r\n");
-    var ctx_c = gweb::new_ctx(0, -1);
+    var ctx_c = gweb::_new_ctx(0, -1);
     var res_c = http::new_response();
     gweb::csrf_begin(have, ctx_c, res_c);
     check_eq(ctx_c.csrf, T, "cookie reused");
@@ -108,27 +108,27 @@ fn main() {
 
     // an invalid cookie
     let upper, p6 = http::parse_request("GET / HTTP/1.1\r\nHost: a\r\nCookie: gw_csrf=0123456789ABCDEF0123456789ABCDEF\r\n\r\n");
-    var ctx_d = gweb::new_ctx(0, -1);
+    var ctx_d = gweb::_new_ctx(0, -1);
     var res_d = http::new_response();
     gweb::csrf_begin(upper, ctx_d, res_d);
-    check(gweb::csrf_valid(ctx_d.csrf) && ctx_d.csrf != "0123456789ABCDEF0123456789ABCDEF" && starts_with(ctx_d.set_cookies, "Set-Cookie: gw_csrf="), "uppercase cookie replaced");
+    check(gweb::_csrf_valid(ctx_d.csrf) && ctx_d.csrf != "0123456789ABCDEF0123456789ABCDEF" && starts_with(ctx_d.set_cookies, "Set-Cookie: gw_csrf="), "uppercase cookie replaced");
 
     // https
     let hs, p7 = http::parse_request("GET / HTTP/1.1\r\nHost: a\r\nX-Forwarded-Proto: https\r\n\r\n");
-    var ctx_e = gweb::new_ctx(0, -1);
+    var ctx_e = gweb::_new_ctx(0, -1);
     var res_e = http::new_response();
     gweb::csrf_begin(hs, ctx_e, res_e);
     var want_host: u8[..160] = "";
     format(want_host, "Set-Cookie: __Host-gw_csrf=", ctx_e.csrf, "; Path=/; Secure; HttpOnly; SameSite=Lax\r\n");
     check_eq(ctx_e.set_cookies, want_host, "__Host- cookie line");
     let hs2, p8 = http::parse_request("GET / HTTP/1.1\r\nHost: a\r\nX-Forwarded-Proto: https\r\nCookie: gw_csrf=0123456789abcdef0123456789abcdef\r\n\r\n");
-    var ctx_f = gweb::new_ctx(0, -1);
+    var ctx_f = gweb::_new_ctx(0, -1);
     var res_f = http::new_response();
     gweb::csrf_begin(hs2, ctx_f, res_f);
     check(ctx_f.csrf != T && starts_with(ctx_f.set_cookies, "Set-Cookie: __Host-gw_csrf="), "plain cookie ignored under https");
 
     // a cookie buffer too full for the 86-byte token line
-    var ctx_g = gweb::new_ctx(0, -1);
+    var ctx_g = gweb::_new_ctx(0, -1);
     var res_g = http::new_response();
     var fill: u8[>..] = [];
     for i in 1000 { fill.push('p'); }
@@ -139,10 +139,10 @@ fn main() {
 
     // fragment_reply after csrf_begin
     let frag, p9 = http::parse_request("GET / HTTP/1.1\r\nHost: a\r\nGW-Fragment: list\r\n\r\n");
-    var ctx_h = gweb::new_ctx(0, -1);
+    var ctx_h = gweb::_new_ctx(0, -1);
     var res_h = http::new_response();
     gweb::csrf_begin(plain, ctx_h, res_h);
-    gweb::fragment_reply(frag, ctx_h, res_h);
+    gweb::_fragment_reply(frag, ctx_h, res_h);
     check(count(res_h.headers, "Cache-Control") == 1, "fragment_reply adds no second Cache-Control");
 
     // csrf_field and csrf_token
@@ -151,7 +151,7 @@ fn main() {
     check_eq(out, "<input type=\"hidden\" name=\"_csrf\" value=\"0123456789abcdef0123456789abcdef\">", "field bytes");
     check_eq(gweb::csrf_token(ctx_c), ctx_c.csrf, "csrf_token is ctx.csrf");
     var out2: u8[>..] = [];
-    let blank = gweb::new_ctx(0, -1);
+    let blank = gweb::_new_ctx(0, -1);
     gweb::csrf_field(out2, blank);
     check_eq(out2, "<input type=\"hidden\" name=\"_csrf\" value=\"\">", "field before begin");
 

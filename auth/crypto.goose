@@ -23,7 +23,7 @@ fn pbkdf2_sha256(out: u8[:], pw: const u8[:], salt: const u8[:], iter: i64) -> b
     return c_pbkdf2_sha256(out, pw, salt, iter) != 0;
 }
 
-fn b64_value(c: u8) -> i64 {
+fn _b64_value(c: u8) -> i64 {
     if c >= 'A' && c <= 'Z' { return c - 'A'; }
     if c >= 'a' && c <= 'z' { return (c - 'a') as i64 + 26; }
     if c >= '0' && c <= '9' { return (c - '0') as i64 + 52; }
@@ -35,18 +35,18 @@ fn b64_value(c: u8) -> i64 {
 // Unpadded base64url; false for a byte outside the alphabet or a length of 1 mod 4. Stray trailing bits are ignored.
 fn b64url_decode(out: u8[>..]&, s: const u8[:]) -> bool {
     if s.len % 4 == 1 { return false; }
-    for c in s { if b64_value(c) < 0 { return false; } }
+    for c in s { if _b64_value(c) < 0 { return false; } }
     var i = 0;
     while i < s.len {
         let left = s.len - i;
-        let a = b64_value(s[i]);
-        let b = b64_value(s[i + 1]);
+        let a = _b64_value(s[i]);
+        let b = _b64_value(s[i + 1]);
         out.push(((a << 2) | (b >> 4)) as u8);
         if left > 2 {
-            let c = b64_value(s[i + 2]);
+            let c = _b64_value(s[i + 2]);
             out.push((((b & 15) << 4) | (c >> 2)) as u8);
             if left > 3 {
-                let d = b64_value(s[i + 3]);
+                let d = _b64_value(s[i + 3]);
                 out.push((((c & 3) << 6) | d) as u8);
             }
         }

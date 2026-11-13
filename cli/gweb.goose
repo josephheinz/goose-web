@@ -2070,7 +2070,7 @@ fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:
     } else if name == "meta" {
         if kind != K_LAYOUT && !(kind == K_VIEW && view_group == "layouts") { err(path, ln, "@meta() is for layout.html and views/layouts only"); }
         if args.len > 0 { err(path, ln, "@meta() takes no arguments"); }
-        out.append("gweb::render_meta(out, req, ctx); ");
+        out.append("gweb::_render_meta(out, req, ctx); ");
     } else if name[0] >= 'A' && name[0] <= 'Z' && find(name, "::") < 0 {
         if in_frag {
             var m: u8[>..] = [];
@@ -2539,10 +2539,10 @@ fn middleware_after(m: u8[>..]&, d: const Dir&, rq: const u8[:]) {
 fn gen_upload_prelude(m: u8[>..]&, ns: const u8[:], max_upload: bool) {
     if max_upload {
         // The dispatcher calls finish after this function returns, and finish answers the Error outcome.
-        format(m, "    if ", ns, "::MAX_UPLOAD > 0 && gweb::content_length(req) > ", ns, "::MAX_UPLOAD { gweb::fail(ctx, 413, \"The upload is too large.\"); return; }\n");
+        format(m, "    if ", ns, "::MAX_UPLOAD > 0 && gweb::_content_length(req) > ", ns, "::MAX_UPLOAD { gweb::fail(ctx, 413, \"The upload is too large.\"); return; }\n");
     }
     m.append("    var mp: u8[>..] = [];\n    var r = req;\n");
-    m.append("    if gweb::is_multipart(req) { if !gweb::multipart_begin(req, ctx, res, mp) { return; } r.body = mp; }\n");
+    m.append("    if gweb::_is_multipart(req) { if !gweb::_multipart_begin(req, ctx, res, mp) { return; } r.body = mp; }\n");
 }
 
 fn gen_route_fn(m: u8[>..]&, d: const Dir&, i: i64) {
@@ -2553,17 +2553,17 @@ fn gen_route_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     let rq = if body { "r" } else { "req" };
     format(m, "fn route_", i, SIG, " {   // app/", d.rel, if d.rel.len > 0 { "/" } else { "" }, "route.goose\n");
     if body { gen_upload_prelude(m, d.route_ns, d.max_upload); }
-    if d.csrf_const { format(m, "    if ", d.route_ns, "::CSRF && !gweb::csrf_ok(", rq, ", res) { return; }\n"); }
-    else if d.methods & 0x3c != 0 { format(m, "    if !gweb::csrf_ok(", rq, ", res) { return; }\n"); }
+    if d.csrf_const { format(m, "    if ", d.route_ns, "::CSRF && !gweb::_csrf_ok(", rq, ", res) { return; }\n"); }
+    else if d.methods & 0x3c != 0 { format(m, "    if !gweb::_csrf_ok(", rq, ", res) { return; }\n"); }
     middleware_before(m, d, rq);
     m.append("    match req.method {\n");
     for k in 7 {
         let has = (d.methods >> k) & 1 == 1;
         if has { format(m, "        ", VARIANTS[k], " => ", d.route_ns, "::", METHODS[k], "(", rq, ", ctx, res),\n"); }
         else if k == 1 && d.methods & 1 == 1 { format(m, "        Head => ", d.route_ns, "::GET(", rq, ", ctx, res),\n"); }
-        else if k == 6 { format(m, "        Options => gweb::options(res, \"", allow, "\"),\n"); }
+        else if k == 6 { format(m, "        Options => gweb::_options(res, \"", allow, "\"),\n"); }
     }
-    format(m, "        _ => gweb::method_not_allowed(res, \"", allow, "\"),\n");
+    format(m, "        _ => gweb::_method_not_allowed(res, \"", allow, "\"),\n");
     m.append("    }\n");
     middleware_after(m, d, rq);
     m.append("}\n");
@@ -2598,7 +2598,7 @@ fn gen_page_reply(m: u8[>..]&, d: const Dir&, props: bool, indent: const u8[:], 
     format(m, indent, "if ctx.outcome == gweb::Outcome.Continue {\n", indent, "    ");
     if d.frags.len == 0 { gen_render_stmt(m, d, props, "", rq); }
     else {
-        format(m, "if part > 0 { gweb::fragment_reply(", rq, ", ctx, res); ");
+        format(m, "if part > 0 { gweb::_fragment_reply(", rq, ", ctx, res); ");
         format(m, d.page_ns, "::render(res.body, ", rq, ", ctx", if props { ", props" } else { "" }, ", part); }\n");
         format(m, indent, "    else { ");
         gen_render_stmt(m, d, props, "0", rq);
@@ -2620,23 +2620,23 @@ fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     format(m, "fn page_", i, SIG, " {   // app/", d.rel, if d.rel.len > 0 { "/" } else { "" }, "page.html\n");
     m.append("    match req.method {\n");
     format(m, "        Get, Head", if d.has_post { ", Post" } else { "" }, " => {},\n");
-    format(m, "        Options => { gweb::options(res, \"", allow, "\"); return; },\n");
-    format(m, "        _ => { gweb::method_not_allowed(res, \"", allow, "\"); return; },\n");
+    format(m, "        Options => { gweb::_options(res, \"", allow, "\"); return; },\n");
+    format(m, "        _ => { gweb::_method_not_allowed(res, \"", allow, "\"); return; },\n");
     m.append("    }\n");
     if d.has_post {
         gen_upload_prelude(m, d.page_ns, d.max_upload);
-        m.append("    if !gweb::csrf_ok(r, res) { return; }\n");
+        m.append("    if !gweb::_csrf_ok(r, res) { return; }\n");
     }
     middleware_before(m, d, rq);
     if d.revalidate > 0 {
-        m.append("    if gweb::cache_serve(req, ctx, res) {\n");
+        m.append("    if gweb::_cache_serve(req, ctx, res) {\n");
         middleware_after(m, d, rq);
         m.append("        return;\n    }\n");
     }
     m.append("    gweb::html(res, http::Status.Ok);\n");
     if starts_token(d) { format(m, "    if !gweb::csrf_begin(", rq, ", ctx, res) { return; }\n"); }
     if d.frags.len > 0 {
-        format(m, "    let part = gweb::fragment_index(", rq, ", [");
+        format(m, "    let part = gweb::_fragment_index(", rq, ", [");
         for n, k in split(d.frags, ' ') { if k > 0 { m.append(", "); } format(m, "\"", n, "\""); }
         m.append("]);\n");
     }
@@ -2652,7 +2652,7 @@ fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
         if d.has_load { format(m, "    let props = ", d.page_ns, "::load(req, ctx", if d.has_load_res { ", res" } else { "" }, ");\n"); }
         gen_page_reply(m, d, d.has_load, "    ", rq);
     }
-    if d.revalidate > 0 { format(m, "    gweb::cache_store(req, ctx, res, ", d.revalidate, ");\n"); }
+    if d.revalidate > 0 { format(m, "    gweb::_cache_store(req, ctx, res, ", d.revalidate, ");\n"); }
     middleware_after(m, d, rq);
     m.append("}\n");
 }
@@ -2776,7 +2776,7 @@ fn gen_dispatch(m: u8[>..]&) {
         m.append("    }\n");
     }
     if has_locales {
-        m.append("    ctx.locale = gweb::pick_locale(req, t::TAGS);\n");
+        m.append("    ctx.locale = gweb::_pick_locale(req, t::TAGS);\n");
         if locale_count >= 2 { m.append("    http::set_header(res, \"Vary\", \"Accept-Language, Cookie\");\n"); }
     }
     if has_sitemap {
@@ -2786,7 +2786,7 @@ fn gen_dispatch(m: u8[>..]&) {
     m.append("    var seg: const u8[:][16] = [\"\"; 16];\n");
     m.append("    var starts: i64[16] = [0; 16];\n");
     m.append("    var ends: i64[16] = [0; 16];\n");
-    m.append("    let n = gweb::split(req.path, seg, starts, ends);\n");
+    m.append("    let n = gweb::_split(req.path, seg, starts, ends);\n");
     m.append("    match n {\n");
     for count in 18 {
         var order: i64[>..] = [];
@@ -2804,7 +2804,7 @@ fn gen_dispatch(m: u8[>..]&) {
                     if kind > 0 && j >= k { break; }
                     if s[0] == '[' {
                         if params.len > 0 { params.append(" && "); }
-                        format(params, "gweb::set_param(ctx, \"", s[1..s.len - 1], "\", seg[", j, "])");
+                        format(params, "gweb::_set_param(ctx, \"", s[1..s.len - 1], "\", seg[", j, "])");
                     } else {
                         if cond.len > 0 { cond.append(" && "); }
                         cond.append("seg["); format(cond, j); cond.append("] == \""); lit(cond, s); cond.push('"');
@@ -2815,12 +2815,12 @@ fn gen_dispatch(m: u8[>..]&) {
                 if params.len > 0 { params.append(" && "); }
                 let name = catch_name(last_seg(d.rel));
                 // A path ending in / leaves an empty last segment, which no catch-all accepts.
-                if count > k { format(params, "starts[", k, "] < req.path.len && gweb::set_rest(ctx, \"", name, "\", req.path[starts[", k, "]..])"); }
-                else { format(params, "gweb::set_rest(ctx, \"", name, "\", \"\")"); }
+                if count > k { format(params, "starts[", k, "] < req.path.len && gweb::_set_rest(ctx, \"", name, "\", req.path[starts[", k, "]..])"); }
+                else { format(params, "gweb::_set_rest(ctx, \"", name, "\", \"\")"); }
             }
             let call_kind = if d.route { "route_" } else { "page_" };
             var call: u8[>..] = [];
-            format(call, "ctx.route = ", i, "; ctx.route_label = ", route_index(i), "; gweb::inflight_route(ctx.worker, ", i, "); ", call_kind, i, "(req, ctx, res);");
+            format(call, "ctx.route = ", i, "; ctx.route_label = ", route_index(i), "; gweb::_inflight_route(ctx.worker, ", i, "); ", call_kind, i, "(req, ctx, res);");
             var body: u8[>..] = [];
             if params.len > 0 { format(body, "if ", params, " { ", call, " } else { gweb::not_found(ctx); } finish(req, ctx, res); return -1;"); }
             else { format(body, call, " finish(req, ctx, res); return -1;"); }
@@ -2877,7 +2877,7 @@ fn gen_static(m: u8[>..]&) {
                     if hashed { u = s.hashed; }
                     if u.len != l { continue; }
                     m.append("            if p == \""); lit(m, u);
-                    format(m, "\" { return gweb::send_static(req, res, ", i, ", ", s.gz, ", \"", s.ctype, "\", \""); lit(m, s.etag);
+                    format(m, "\" { return gweb::_send_static(req, res, ", i, ", ", s.gz, ", \"", s.ctype, "\", \""); lit(m, s.etag);
                     format(m, "\", ", if hashed { "true" } else { "false" }, "), true; }\n");
                 }
             }
@@ -2917,14 +2917,14 @@ fn gen_sitemap(m: u8[>..]&) {
         if name == "robots_txt" && has_static("/robots.txt") { continue; }
         format(m, "fn ", name, SIG, " {\n");
         m.append("    match req.method {\n        Get, Head => {},\n");
-        m.append("        Options => { gweb::options(res, \"GET, HEAD, OPTIONS\"); return; },\n");
-        m.append("        _ => { gweb::method_not_allowed(res, \"GET, HEAD, OPTIONS\"); return; },\n    }\n");
+        m.append("        Options => { gweb::_options(res, \"GET, HEAD, OPTIONS\"); return; },\n");
+        m.append("        _ => { gweb::_method_not_allowed(res, \"GET, HEAD, OPTIONS\"); return; },\n    }\n");
         if name == "robots_txt" {
-            if has_robots { m.append("    gweb::robots_begin(res);\n    smap::robots(req, ctx, res.body);\n}\n"); }
-            else { m.append("    gweb::robots_reply(req, res);\n}\n"); }
+            if has_robots { m.append("    gweb::_robots_begin(res);\n    smap::robots(req, ctx, res.body);\n}\n"); }
+            else { m.append("    gweb::_robots_reply(req, res);\n}\n"); }
             continue;
         }
-        m.append("    var s = gweb::Sitemap { base: [], body: [], count: 0 };\n    gweb::sitemap_init(req, s);\n");
+        m.append("    var s = gweb::Sitemap { base: [], body: [], count: 0 };\n    gweb::_sitemap_init(req, s);\n");
         for d in dirs {
             if !d.page_html || !d.in_sitemap || find(d.rel, "[") >= 0 { continue; }
             var u: u8[>..] = [];
@@ -2932,7 +2932,7 @@ fn gen_sitemap(m: u8[>..]&) {
             m.append("    gweb::sitemap_add(s, \""); lit(m, u); m.append("\");\n");
         }
         if has_entries { m.append("    smap::entries(req, ctx, s);\n"); }
-        m.append("    gweb::sitemap_reply(res, s);\n}\n");
+        m.append("    gweb::_sitemap_reply(res, s);\n}\n");
     }
     m.append("\n");
 }
@@ -2952,11 +2952,11 @@ fn gen_finish(m: u8[>..]&) {
         else { m.append("nf::render(res.body, req, ctx);"); }
         m.append(if root_csrf { " }\n" } else { "\n" });
     } else {
-        m.append("            res.body.clear();\n            gweb::plain_not_found(res);\n");
+        m.append("            res.body.clear();\n            gweb::_plain_not_found(res);\n");
     }
-    m.append("        },\n        Redirect => gweb::apply_redirect(ctx, res),\n");
+    m.append("        },\n        Redirect => gweb::_apply_redirect(ctx, res),\n");
     // Phase 1: a crash while this renders makes the supervisor start at attempt 2 (D12).
-    m.append("        Error => { gweb::inflight_phase(ctx.worker, 1); error_reply(ctx.route, 1, req, ctx, res, \"\"); },\n    }\n}\n");
+    m.append("        Error => { gweb::_inflight_phase(ctx.worker, 1); error_reply(ctx.route, 1, req, ctx, res, \"\"); },\n    }\n}\n");
 }
 
 // The dir index of the error.html a page or route in rel uses (D10): the nearest at or above its folder; -1 for none.
@@ -2985,9 +2985,9 @@ fn gen_error_reply(m: u8[>..]&) {
     m.append("    let crashed = !(ctx.outcome == gweb::Outcome.Error);\n");
     m.append("    var status: i64 = 500;\n    var message: u8[..512] = \"Internal Server Error\";\n");
     m.append("    if !crashed { status = ctx.error_status; message.clear(); message.append(ctx.error_message); }\n");
-    m.append("    var info = gweb::new_error(status, message, crashed);\n");
-    m.append("    if why.len > 0 { gweb::log_error(info, req, why); } else { gweb::log_error(info, req, message); }\n");
-    m.append("    if gweb::dev_mode() { gweb::dev_detail(info, req, why); }\n");
+    m.append("    var info = gweb::_new_error(status, message, crashed);\n");
+    m.append("    if why.len > 0 { gweb::_report_error(info, req, why); } else { gweb::_report_error(info, req, message); }\n");
+    m.append("    if gweb::_dev_mode() { gweb::_dev_detail(info, req, why); }\n");
     m.append("    res.headers.clear();\n");
     var api: u8[>..] = [];
     for d, i in dirs {
@@ -2995,8 +2995,8 @@ fn gen_error_reply(m: u8[>..]&) {
         if api.len > 0 { api.append(" || "); }
         format(api, "route == ", i);
     }
-    if api.len > 0 { format(m, "    if ", api, " { gweb::error_json(res, info); return; }\n"); }
-    m.append("    ctx.title.clear();\n    gweb::error_start(res, info);\n");
+    if api.len > 0 { format(m, "    if ", api, " { gweb::_error_json(res, info); return; }\n"); }
+    m.append("    ctx.title.clear();\n    gweb::_error_start(res, info);\n");
     m.append("    match error_at(route) {\n");
     for e, k in dirs {
         if !e.error_html { continue; }
@@ -3018,8 +3018,8 @@ fn gen_error_reply(m: u8[>..]&) {
         else { format(m, e.error_ns, "::render(res.body, req, ctx, info);"); }
         m.append(if csrf { " }\n        },\n" } else { "\n        },\n" });
     }
-    m.append("        _ => gweb::builtin_page(res.body, info),\n    }\n");
-    m.append("    if gweb::dev_mode() { gweb::dev_error_script(res.body, info); }\n}\n");
+    m.append("        _ => gweb::_builtin_page(res.body, info),\n    }\n");
+    m.append("    if gweb::_dev_mode() { gweb::_dev_error_script(res.body, info); }\n}\n");
 }
 
 // The generated main's export mode: each page is rendered in process through dispatch with a synthetic request.
@@ -3040,7 +3040,7 @@ fn export_get(path: const u8[:], owner_fd: i32, st: Export&, out: u8[>..]&) -> b
     var ready = false;
     match parsed { Ready => { ready = true; }, _ => {}, }
     if !ready { export_error(path, ": not a valid request path", "", st); return false; }
-    var ctx = gweb::new_ctx(0, owner_fd);
+    var ctx = gweb::_new_ctx(0, owner_fd);
     var res = http::new_response();
     let hit = dispatch(req, ctx, res);
     if res.status != http::Status.Ok {
@@ -3120,7 +3120,7 @@ fn gen_hub_thread(m: u8[>..]&) {
     m.append("thread_fn hub_thread(cfg: gweb::Config, owner_fd: i32) {\n");
     m.append("    let h = net::Hub { handle: cfg.hub };\n    var msg: u8[>..] = [];\n    var topic: u8[>..] = [];\n");
     m.append("    loop {\n        msg.clear();\n        topic.clear();\n        let id, ev = h.next(msg, topic);\n");
-    m.append("        var ctx = gweb::new_ctx(cfg.workers, owner_fd, cfg.hub);\n        match ev {\n");
+    m.append("        var ctx = gweb::_new_ctx(cfg.workers, owner_fd, cfg.hub);\n        match ev {\n");
     if socket_open { m.append("            Open => { socket::open(ctx, id, topic); },\n"); }
     if socket_message {
         m.append("            Text => { socket::message(ctx, id, topic, msg, false); },\n");
@@ -3139,7 +3139,7 @@ thread_fn hub_supervisor(cfg: gweb::Config, owner_fd: i32) {
 
 thread_fn hub_leave(chans: gweb::Channels) {
     while !net::wait_stop(1000) {}
-    gweb::owner_leave(chans);
+    gweb::_owner_leave(chans);
 }
 
 """);
@@ -3197,7 +3197,7 @@ fn jobs::enqueue(ctx: const gweb::Ctx&, job: jobs::Job, delay_ms: i64 = 0) -> bo
     one.push(job);
     var bytes: u8[>..] = [];
     to_bytes(one, bytes);
-    return gweb::job_push(bytes, delay_ms);
+    return gweb::_job_push(bytes, delay_ms);
 }
 
 fn jobs::every(s: gweb::Schedules&, name: const u8[:], ms: i64, job: jobs::Job) -> bool {
@@ -3205,7 +3205,7 @@ fn jobs::every(s: gweb::Schedules&, name: const u8[:], ms: i64, job: jobs::Job) 
     one.push(job);
     var bytes: u8[>..] = [];
     to_bytes(one, bytes);
-    return gweb::schedule_every(s, name, ms, bytes);
+    return gweb::_schedule_every(s, name, ms, bytes);
 }
 
 fn jobs::cron(s: gweb::Schedules&, name: const u8[:], spec: const u8[:], job: jobs::Job) -> bool {
@@ -3213,7 +3213,7 @@ fn jobs::cron(s: gweb::Schedules&, name: const u8[:], spec: const u8[:], job: jo
     one.push(job);
     var bytes: u8[>..] = [];
     to_bytes(one, bytes);
-    return gweb::schedule_cron(s, name, spec, bytes);
+    return gweb::_schedule_cron(s, name, spec, bytes);
 }
 """);
     m.append("\n");
@@ -3229,26 +3229,26 @@ thread_fn job_runner(slot: i64, owner_fd: i32, cfg: gweb::Config) {
     while !net::stopping() {
         bytes.clear();
         sched.clear();
-        let id, attempt, got = gweb::job_take(slot, 250, bytes, sched);
+        let id, attempt, got = gweb::_job_take(slot, 250, bytes, sched);
         if !got { continue; }
         var name: u8[>..] = [];
         if sched.len > 0 { format(name, "job ", sched); } else { name.append("job"); }
-        var ctx = gweb::job_ctx(slot, owner_fd, id, attempt, name, cfg.hub);
+        var ctx = gweb::_job_ctx(slot, owner_fd, id, attempt, name, cfg.hub);
         let batch, decoded = from_bytes<jobs::Job[>..]>(bytes);
         var ok = false;
         if decoded { for j in batch { ok = jobs::run(j, ctx); } }
-        gweb::job_done(slot, ok, ctx);
+        gweb::_job_done(slot, ok, ctx);
     }
 }
 
 thread_fn job_supervisor(slot: i64, owner_fd: i32, cfg: gweb::Config, chans: gweb::Channels) {
     var why: u8[>..] = [];
     while !thread_wait(thread_spawn_contained(job_runner, slot, owner_fd, cfg), why) {
-        gweb::job_abandon(slot, why);
+        gweb::_job_abandon(slot, why);
         if net::stopping() { break; }
         why.clear();
     }
-    gweb::owner_leave(chans);
+    gweb::_owner_leave(chans);
 }
 """);
     m.append("\n");
@@ -3258,16 +3258,16 @@ thread_fn job_supervisor(slot: i64, owner_fd: i32, cfg: gweb::Config, chans: gwe
 // workers, handoff, ready, then the waits and the shutdown steps. A start-up failure of a schedule exits before any
 // thread runs.
 fn gen_main_fn(m: u8[>..]&) {
-    m.append("\nfn main() {\n    var cfg = gweb::config_from_args();\n");
+    m.append("\nfn main() {\n    var cfg = gweb::_config_from_args();\n");
     if uses_keys { m.append("    if cfg.auth.keys.n == 0 { print(\"gweb: set GWEB_SECRET (32 to 64 bytes; openssl rand -hex 32)\"); exit(2); }\n"); }
     if has_config { m.append("    if !config::check() { exit(2); }\n"); }
     // Export renders in process: no socket and no workers, but pages that ask the state owner still need it.
     if has_state {
         m.append("    if cfg.export_dir.len > 0 {\n");
         if has_state_init { m.append("        state::init();\n"); }
-        m.append("        let chans = gweb::owner_channels(1);\n");
-        m.append("        thread_spawn(export_thread, gweb::worker_end(chans, 0), cfg);\n");
-        format(m, "        gweb::owner_loop<", msg_ty(), ", state::Reply>(chans, state::handle);\n        return;\n    }\n");
+        m.append("        let chans = gweb::_owner_channels(1);\n");
+        m.append("        thread_spawn(export_thread, gweb::_worker_end(chans, 0), cfg);\n");
+        format(m, "        gweb::_owner_loop<", msg_ty(), ", state::Reply>(chans, state::handle);\n        return;\n    }\n");
     } else {
         m.append("    if cfg.export_dir.len > 0 { exit(if run_export(cfg.export_dir, -1) { 0 } else { 1 }); }\n");
     }
@@ -3275,8 +3275,8 @@ fn gen_main_fn(m: u8[>..]&) {
     m.append("""
     let server, inherited = net::listen_inherited(cfg.port, cfg.host, 1024);
     guard server.ok() else { print("gweb: cannot listen on port ", cfg.port, ": ", net::last_error()); exit(1); }
-    gweb::ops_init(cfg, ROUTES);
-    gweb::inflight_init(cfg.workers, cfg.dev_id != 0);
+    gweb::_ops_init(cfg, ROUTES);
+    gweb::_inflight_init(cfg.workers, cfg.dev_id != 0);
 """);
     if has_state && has_state_init { m.append("    state::init();\n"); }
     // Owner channels: one per worker, then one per job runner, then the hub thread's.
@@ -3286,27 +3286,27 @@ fn gen_main_fn(m: u8[>..]&) {
     var hub_slot: u8[>..] = [];
     hub_slot.append(users);
     if uses_hub { users.append(" + 1"); }
-    if has_state { format(m, "    let chans = gweb::owner_channels(", users, ");\n"); }
+    if has_state { format(m, "    let chans = gweb::_owner_channels(", users, ");\n"); }
     else { m.append("    let chans = gweb::Channels { handle: 0, n: 0 };\n"); }
-    m.append("    gweb::prepare_uploads(cfg);\n");
+    m.append("    gweb::_prepare_uploads(cfg);\n");
     if uses_hub {
         m.append("    let hb = net::hub();\n    cfg.hub = hb.handle;\n");
         // The hub is not waited for: it ends with the process. Its owner channel leaves once the stop begins.
         if has_state {
-            format(m, "    thread_spawn(hub_supervisor, cfg, gweb::worker_end(chans, ", hub_slot, "));\n");
+            format(m, "    thread_spawn(hub_supervisor, cfg, gweb::_worker_end(chans, ", hub_slot, "));\n");
             m.append("    thread_spawn(hub_leave, chans);\n");
         } else { m.append("    thread_spawn(hub_supervisor, cfg, -1);\n"); }
     }
     if has_jobs {
-        m.append("    gweb::jobs_init(cfg);\n    var sched = gweb::new_schedules(cfg);\n");
+        m.append("    gweb::_jobs_init(cfg);\n    var sched = gweb::_new_schedules(cfg);\n");
         if has_jobs_schedule { m.append("    jobs::schedule(sched);\n"); }
         m.append("    if sched.bad > 0 { exit(1); }\n");
     }
     m.append("    var ids: i64[>..] = [];\n");
-    let wfd = if has_state { "gweb::worker_end(chans, i)" } else { "-1" };
+    let wfd = if has_state { "gweb::_worker_end(chans, i)" } else { "-1" };
     format(m, "    for i in cfg.workers { ids.push(thread_spawn(supervisor, i, server, ", wfd, ", cfg, chans)); }\n");
     if has_jobs {
-        let jfd = if has_state { "gweb::worker_end(chans, cfg.workers + i)" } else { "-1" };
+        let jfd = if has_state { "gweb::_worker_end(chans, cfg.workers + i)" } else { "-1" };
         format(m, "    for i in cfg.job_runners { ids.push(thread_spawn(job_supervisor, i, ", jfd, ", cfg, chans)); }\n");
     }
     m.append("""
@@ -3316,23 +3316,23 @@ fn gen_main_fn(m: u8[>..]&) {
     net::ready();
     var up: u8[>..] = [];
     format(up, "gweb: http://localhost:", cfg.port, " (", cfg.workers, " workers)");
-    gweb::log_message(gweb::Level.Info, up);
+    gweb::_log_message(gweb::Level.Info, up);
 """);
-    if has_state { format(m, "    gweb::owner_loop<", msg_ty(), ", state::Reply>(chans, state::handle);\n"); }
+    if has_state { format(m, "    gweb::_owner_loop<", msg_ty(), ", state::Reply>(chans, state::handle);\n"); }
     m.append("    for id in ids { thread_wait(id); }\n");
     if has_jobs {
         m.append("""
-    gweb::jobs_stop();
-    let dropped = gweb::jobs_queued();
+    gweb::_jobs_stop();
+    let dropped = gweb::_jobs_queued();
     if dropped > 0 {
         var msg: u8[>..] = [];
         format(msg, "gweb: stopped with ", dropped, " queued jobs dropped");
-        gweb::log_message(gweb::Level.Warn, msg);
+        gweb::_log_message(gweb::Level.Warn, msg);
     }
 """);
     }
     if has_state_shutdown { m.append("    state::shutdown();\n"); }
-    m.append("    gweb::ops_shutdown();\n    exit(0);\n}\n");
+    m.append("    gweb::_ops_shutdown();\n    exit(0);\n}\n");
 }
 
 // The part of the generated main that the server and the route tests share, up to and including dispatch.
@@ -3367,7 +3367,7 @@ fn gen_main_body(m: u8[>..]&, test: bool) {
         if test { gen_test_ask(m); }
         else {
             format(m, "fn state::ask(ctx: const gweb::Ctx&, msg: ", msg_ty(), ") -> state::Reply, bool {\n");
-            format(m, "    return gweb::owner_call_fd<", msg_ty(), ", state::Reply>(ctx.owner_fd, ", if msg_variable { "copy(msg)" } else { "msg" }, ");\n}\n");
+            format(m, "    return gweb::_owner_call_fd<", msg_ty(), ", state::Reply>(ctx.owner_fd, ", if msg_variable { "copy(msg)" } else { "msg" }, ");\n}\n");
         }
     }
     m.append("\n");
@@ -3396,7 +3396,7 @@ fn gen_main() -> u8[>..] {
     gen_export(m);
     m.append("""
 thread_fn worker(slot: i64, server: net::Socket, owner_fd: i32, cfg: gweb::Config) {
-    gweb::run_worker(slot, server, owner_fd, cfg, ROUTES, dispatch, static_bytes);
+    gweb::_run_worker(slot, server, owner_fd, cfg, ROUTES, dispatch, static_bytes);
 }
 
 // D12: answers the request the dead worker held. Runs contained, so a crash here only costs this attempt.
@@ -3404,20 +3404,20 @@ thread_fn worker(slot: i64, server: net::Socket, owner_fd: i32, cfg: gweb::Confi
 thread_fn crash_reply(slot: i64, cfg: gweb::Config, attempt: i64) {
     var head: u8[>..] = [];
     var abort_text: u8[>..] = [];
-    gweb::crash_info(slot, head, abort_text);
+    gweb::_crash_info(slot, head, abort_text);
     let req, parsed = http::parse_request(head);
     match parsed {
         Ready => {
-            var ctx = gweb::new_ctx(slot, -1);
+            var ctx = gweb::_new_ctx(slot, -1);
             var res = http::new_response();
-            error_reply(gweb::inflight_route_of(slot), attempt, req, ctx, res, abort_text);
+            error_reply(gweb::_inflight_route_of(slot), attempt, req, ctx, res, abort_text);
             ctx.auth = cfg.auth;
-            gweb::apply_cookies(ctx, res);
-            gweb::apply_security(ctx, res, cfg);
-            gweb::dev_inject(res, cfg.dev_id, "");
-            http::send_response(gweb::inflight_conn(slot), res, req.method == http::Method.Head, false);
+            gweb::_apply_cookies(ctx, res);
+            gweb::_apply_security(ctx, res, cfg);
+            gweb::_dev_inject(res, cfg.dev_id, "");
+            http::send_response(gweb::_inflight_conn(slot), res, req.method == http::Method.Head, false);
         },
-        _ => gweb::plain_500(slot),
+        _ => gweb::_plain_500(slot),
     }
 }
 
@@ -3428,23 +3428,23 @@ thread_fn supervisor(slot: i64, server: net::Socket, owner_fd: i32, cfg: gweb::C
     while !thread_wait(thread_spawn_contained(worker, slot, server, owner_fd, cfg), why) {
         var msg: u8[>..] = [];
         format(msg, "gweb: worker ", slot, " stopped: ", why, if net::stopping() { "" } else { "; restarting it" });
-        gweb::log_message(gweb::Level.Error, msg);
-        if gweb::inflight_pending(slot) {
-            gweb::inflight_set_why(slot, why);
-            var attempt = if gweb::inflight_phase_of(slot) == 1 { 2 } else { 1 };
+        gweb::_log_message(gweb::Level.Error, msg);
+        if gweb::_inflight_pending(slot) {
+            gweb::_inflight_set_why(slot, why);
+            var attempt = if gweb::_inflight_phase_of(slot) == 1 { 2 } else { 1 };
             var answered = false;
             while attempt <= 2 && !answered {
                 var attempt_why: u8[>..] = [];
                 answered = thread_wait(thread_spawn_contained(crash_reply, slot, cfg, attempt), attempt_why);
                 attempt += 1;
             }
-            if !answered { gweb::plain_500(slot); }
+            if !answered { gweb::_plain_500(slot); }
         }
-        gweb::inflight_release(slot);
+        gweb::_inflight_release(slot);
         if net::stopping() { break; }
         why.clear();
     }
-    gweb::owner_leave(chans);
+    gweb::_owner_leave(chans);
 }
 
 """);
@@ -3484,14 +3484,14 @@ let SITE_BODY_TYPE = ["application/x-www-form-urlencoded", "application/json", "
 fn gen_site_fns(m: u8[>..]&) {
     for i in SITE_PLAIN.len {
         format(m, "fn site::", SITE_PLAIN[i], "(t: gweb::Tester&, target: const u8[:]) -> http::Response {\n");
-        format(m, "    return gweb::test_send(t, \"", SITE_PLAIN_METHOD[i], "\", target, \"\", \"\", dispatch, static_bytes);\n}\n");
+        format(m, "    return gweb::_test_send(t, \"", SITE_PLAIN_METHOD[i], "\", target, \"\", \"\", dispatch, static_bytes);\n}\n");
     }
     for i in SITE_BODY.len {
         format(m, "fn site::", SITE_BODY[i], "(t: gweb::Tester&, target: const u8[:], body: const u8[:]) -> http::Response {\n");
-        format(m, "    return gweb::test_send(t, \"", SITE_BODY_METHOD[i], "\", target, body, \"", SITE_BODY_TYPE[i], "\", dispatch, static_bytes);\n}\n");
+        format(m, "    return gweb::_test_send(t, \"", SITE_BODY_METHOD[i], "\", target, body, \"", SITE_BODY_TYPE[i], "\", dispatch, static_bytes);\n}\n");
     }
     m.append("fn site::request(t: gweb::Tester&, method: const u8[:], target: const u8[:], body: const u8[:], content_type: const u8[:]) -> http::Response {\n");
-    m.append("    return gweb::test_send(t, method, target, body, content_type, dispatch, static_bytes);\n}\n");
+    m.append("    return gweb::_test_send(t, method, target, body, content_type, dispatch, static_bytes);\n}\n");
 }
 
 fn gen_test_main() -> u8[>..] {

@@ -37,7 +37,7 @@ fn count(s: const u8[:], sub: const u8[:]) -> i64 {
 }
 
 fn ctx_with(k1: const u8[:], k2: const u8[:]) -> gweb::Ctx {
-    var ctx = gweb::new_ctx(0, -1);
+    var ctx = gweb::_new_ctx(0, -1);
     var n = 0;
     if k1.len > 0 { ctx.auth.keys.k[n].append(k1); n += 1; }
     if k2.len > 0 { ctx.auth.keys.k[n].append(k2); n += 1; }
@@ -78,7 +78,7 @@ fn flip_first(v: u8[>..]&) { v[0] = if v[0] == 'A' { 'B' } else { 'A' }; }
 // Changes the last base64 character in a way that only touches the unused trailing bits of a 32-byte MAC.
 fn noncanonical_tail(v: u8[>..]&) {
     let last = v.len - 1;
-    let idx = gweb::b64_value(v[last]);
+    let idx = gweb::_b64_value(v[last]);
     v[last] = gweb::B64URL[idx ^ 1];
 }
 
@@ -146,7 +146,7 @@ fn load(ctx: gweb::Ctx&, value: const u8[:], now: i64, headers: const u8[:], nam
     var raw: u8[>..] = [];
     build(raw, "GET", "/", headers, name, value);
     let req, parsed = http::parse_request(raw);
-    return gweb::session_at(req, ctx, now);
+    return gweb::_session_at(req, ctx, now);
 }
 
 fn logged_in_ctx(remember: bool, data: const u8[:], value: u8[>..]&) -> gweb::Ctx {
@@ -156,7 +156,7 @@ fn logged_in_ctx(remember: bool, data: const u8[:], value: u8[>..]&) -> gweb::Ct
     let req, parsed = http::parse_request(raw);
     var opts = gweb::LoginOptions { remember: remember, .. };
     opts.data.append(data);
-    check(gweb::login_at(req, ctx, res, 42, 7, opts, NOW), "login ok");
+    check(gweb::_login_at(req, ctx, res, 42, 7, opts, NOW), "login ok");
     set_value(ctx.set_cookies, "gw_session", value);
     return ctx;
 }
@@ -170,7 +170,7 @@ fn session_tests() {
     let req, parsed = http::parse_request(raw);
     var opts = gweb::LoginOptions { .. };
     opts.data.append("hi");
-    check(gweb::login_at(req, ctx, res, 42, 7, opts, NOW), "login ok");
+    check(gweb::_login_at(req, ctx, res, 42, 7, opts, NOW), "login ok");
     check(ctx.session.state == gweb::SessionState.Valid, "login leaves ctx Valid");
     check(ctx.session.uid == 42 && ctx.session.ver == 7, "ctx uid and ver");
     check(ctx.session.sid.len == 22, "sid is 22 bytes");
@@ -252,7 +252,7 @@ fn session_tests() {
     format(raw16, "GET / HTTP/1.1\r\nHost: a\r\nX-Forwarded-Proto: https\r\n\r\n");
     let req16, p16 = http::parse_request(raw16);
     var res16 = http::new_response();
-    check(gweb::login_at(req16, c16, res16, 5, 1, gweb::LoginOptions { .. }, NOW), "https login ok");
+    check(gweb::_login_at(req16, c16, res16, 5, 1, gweb::LoginOptions { .. }, NOW), "https login ok");
     check(count(c16.set_cookies, "Set-Cookie: __Host-gw_session=") == 1, "__Host- session line");
     check(count(c16.set_cookies, "Set-Cookie: __Host-gw_csrf=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure;") == 1, "__Host- csrf cleared with Secure");
     var hv: u8[>..] = [];
@@ -308,7 +308,7 @@ fn session_tests() {
     // login fails without a key
     var nk = ctx_with("", "");
     var nres = http::new_response();
-    check(!gweb::login_at(req, nk, nres, 1, 1, gweb::LoginOptions { .. }, NOW), "login without a key");
+    check(!gweb::_login_at(req, nk, nres, 1, 1, gweb::LoginOptions { .. }, NOW), "login without a key");
     check_eq(nres.body, "{\"error\":\"GWEB_SECRET is not set\"}", "login 500 body");
     check(nk.set_cookies.len == 0, "no cookie without a key");
 
@@ -317,18 +317,18 @@ fn session_tests() {
     var l2 = ctx_with(KEY1, "");
     var res_a = http::new_response();
     var res_b = http::new_response();
-    gweb::login_at(req, l1, res_a, 1, 1, gweb::LoginOptions { .. }, NOW);
-    gweb::login_at(req, l2, res_b, 1, 1, gweb::LoginOptions { .. }, NOW);
+    gweb::_login_at(req, l1, res_a, 1, 1, gweb::LoginOptions { .. }, NOW);
+    gweb::_login_at(req, l2, res_b, 1, 1, gweb::LoginOptions { .. }, NOW);
     check(l1.session.sid != l2.session.sid, "fresh sid per login");
 
     // set data
     var sd = ctx_with(KEY1, "");
-    check(!gweb::session_set_data_at(req, sd, "x", NOW), "set_data without a session");
+    check(!gweb::_session_set_data_at(req, sd, "x", NOW), "set_data without a session");
     var req_sd_raw: u8[>..] = [];
     build(req_sd_raw, "GET", "/", "", "gw_session", v);
     let req_sd, p_sd = http::parse_request(req_sd_raw);
     var sd1 = ctx_with(KEY1, "");  // the failed call above cached Absent in sd
-    check(gweb::session_set_data_at(req_sd, sd1, "new", NOW + 5), "set_data with a session");
+    check(gweb::_session_set_data_at(req_sd, sd1, "new", NOW + 5), "set_data with a session");
     var dv: u8[>..] = [];
     set_value(sd1.set_cookies, "gw_session", dv);
     var sd2 = ctx_with(KEY1, "");
@@ -352,7 +352,7 @@ fn guard_tests() {
     var raw1: u8[>..] = [];
     build(raw1, "GET", "/admin/posts?page=2&q=a%20b", "", "", "");
     let req1, p1 = http::parse_request(raw1);
-    check(!gweb::require_login_at(req1, ctx, res, "/login", NOW), "guard refuses");
+    check(!gweb::_require_login_at(req1, ctx, res, "/login", NOW), "guard refuses");
     check(ctx.outcome == gweb::Outcome.Redirect && ctx.redirect_status == 303, "303 redirect");
     check_eq(ctx.location, "/login?next=%2Fadmin%2Fposts%3Fpage%3D2%26q%3Da%2520b", "next with path and query");
     check(find(res.headers, "Cache-Control: no-store") >= 0, "guard sets no-store");
@@ -362,7 +362,7 @@ fn guard_tests() {
     var raw2: u8[>..] = [];
     build(raw2, "GET", "/admin", "", "", "");
     let req2, p2 = http::parse_request(raw2);
-    check(!gweb::require_login_at(req2, ctx2, res2, "/login", NOW), "guard refuses, no query");
+    check(!gweb::_require_login_at(req2, ctx2, res2, "/login", NOW), "guard refuses, no query");
     check_eq(ctx2.location, "/login?next=%2Fadmin", "next without a query");
 
     var ctx3 = ctx_with(KEY1, "");
@@ -370,7 +370,7 @@ fn guard_tests() {
     var raw3: u8[>..] = [];
     build(raw3, "POST", "/admin/posts?x=1", "Content-Length: 0\r\n", "", "");
     let req3, p3 = http::parse_request(raw3);
-    check(!gweb::require_login_at(req3, ctx3, res3, "/login", NOW), "guard refuses a POST");
+    check(!gweb::_require_login_at(req3, ctx3, res3, "/login", NOW), "guard refuses a POST");
     check_eq(ctx3.location, "/login", "POST gets a bare login path");
 
     var vctx = ctx_with(KEY1, "");
@@ -380,18 +380,18 @@ fn guard_tests() {
     build(raw4, "GET", "/admin", "", "gw_session", v);
     let req4, p4 = http::parse_request(raw4);
     var res4 = http::new_response();
-    check(gweb::require_login_at(req4, vctx, res4, "/login", NOW + 1), "guard passes");
+    check(gweb::_require_login_at(req4, vctx, res4, "/login", NOW + 1), "guard passes");
     check(vctx.outcome == gweb::Outcome.Continue, "no redirect on success");
     check(find(res4.headers, "Cache-Control: no-store") >= 0, "guard sets no-store on success");
 
     var actx = ctx_with(KEY1, "");
     var ares = http::new_response();
-    check(!gweb::require_login_api_at(req1, actx, ares, NOW), "api guard refuses");
+    check(!gweb::_require_login_api_at(req1, actx, ares, NOW), "api guard refuses");
     check(ares.status == http::Status.Unauthorized, "401 status");
     check_eq(ares.body, "{\"error\":\"login required\"}", "401 body");
     var actx2 = ctx_with(KEY1, "");
     var ares2 = http::new_response();
-    check(gweb::require_login_api_at(req4, actx2, ares2, NOW + 1), "api guard passes");
+    check(gweb::_require_login_api_at(req4, actx2, ares2, NOW + 1), "api guard passes");
 
     // safe_next
     check_eq(gweb::safe_next("/a", "/"), "/a", "safe_next /a");
@@ -414,7 +414,7 @@ fn guard_tests() {
 
 fn password_tests() {
     var h: u8[>..] = [];
-    check(gweb::password_hash_iter(h, "correct horse", 1000), "hash at 1000");
+    check(gweb::_password_hash_iter(h, "correct horse", 1000), "hash at 1000");
     check(starts_with(h, "$pbkdf2-sha256$1000$"), "hash format prefix");
     check(h.len == 15 + 5 + 22 + 1 + 43, "hash length");
     check(gweb::password_verify(h, "correct horse"), "verify right password");
@@ -431,23 +431,23 @@ fn password_tests() {
     check(!gweb::password_verify(cut, "correct horse"), "truncated hash");
 
     var h2: u8[>..] = [];
-    gweb::password_hash_iter(h2, "correct horse", 1000);
+    gweb::_password_hash_iter(h2, "correct horse", 1000);
     check(h != h2, "salted: two hashes differ");
     check(gweb::password_verify(h2, "correct horse"), "second hash verifies");
 
     var long: u8[>..] = [];
     for i in 1025 { long.push('p'); }
     var hl: u8[>..] = [];
-    check(!gweb::password_hash_iter(hl, long, 1000), "hash refuses over 1024 bytes");
+    check(!gweb::_password_hash_iter(hl, long, 1000), "hash refuses over 1024 bytes");
     check(hl.len == 0, "refused hash leaves out unchanged");
     var edge: u8[>..] = [];
     edge.append(long[..1024]);
     var he: u8[>..] = [];
-    check(gweb::password_hash_iter(he, edge, 1000) && gweb::password_verify(he, edge), "1024 bytes round trip");
+    check(gweb::_password_hash_iter(he, edge, 1000) && gweb::password_verify(he, edge), "1024 bytes round trip");
     check(!gweb::password_verify(he, long), "verify refuses over 1024 bytes");
     var hz: u8[>..] = [];
-    check(!gweb::password_hash_iter(hz, "x", 0), "iter 0 refused");
-    check(!gweb::password_hash_iter(hz, "x", 10000001), "iter above the limit refused");
+    check(!gweb::_password_hash_iter(hz, "x", 0), "iter 0 refused");
+    check(!gweb::_password_hash_iter(hz, "x", 10000001), "iter above the limit refused");
 
     check(gweb::password_needs_rehash(h), "needs_rehash at 1000");
     check(!gweb::password_needs_rehash("$pbkdf2-sha256$600000$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"), "no rehash at 600000");

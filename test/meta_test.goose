@@ -25,9 +25,9 @@ fn main() {
     let req, parsed = http::parse_request(raw);
     check(parsed == http::Read.Ready, "request parses");
 
-    var ctx = gweb::new_ctx(0, -1);
+    var ctx = gweb::_new_ctx(0, -1);
     var out: u8[>..] = [];
-    gweb::render_meta(out, req, ctx);
+    gweb::_render_meta(out, req, ctx);
     check_eq(out, "", "nothing set, nothing written");
 
     // Cuts land on a UTF-8 boundary: the two-byte e-acute starting at byte 319 does not fit in 320.
@@ -62,22 +62,22 @@ fn main() {
         gweb::site_url(plain, base);
         check_eq(base, "http://ex.test:8080", "site_url without a forwarded proto");
 
-        var c2 = gweb::new_ctx(0, -1);
+        var c2 = gweb::_new_ctx(0, -1);
         c2.title.append("Home & Co");
         gweb::meta_description(c2, "Fresh \"bread\"");
         gweb::meta_canonical(c2, "/about?x=1&y=2");
         gweb::meta_robots(c2, "noindex");
         gweb::meta_image(c2, "https://cdn.test/a.png");
         out.clear();
-        gweb::render_meta(out, req, c2);
+        gweb::_render_meta(out, req, c2);
         let want = "<meta name=\"description\" content=\"Fresh &quot;bread&quot;\">\n<link rel=\"canonical\" href=\"https://ex.test/about?x=1&amp;y=2\">\n<meta name=\"robots\" content=\"noindex\">\n<meta property=\"og:title\" content=\"Home &amp; Co\">\n<meta property=\"og:description\" content=\"Fresh &quot;bread&quot;\">\n<meta property=\"og:url\" content=\"https://ex.test/about?x=1&amp;y=2\">\n<meta property=\"og:image\" content=\"https://cdn.test/a.png\">\n<meta name=\"twitter:card\" content=\"summary_large_image\">";
         check_eq(out, want, "every tag, absolute urls, escaping");
     }
 
-    var c3 = gweb::new_ctx(0, -1);
+    var c3 = gweb::_new_ctx(0, -1);
     gweb::meta_robots(c3, "noindex");
     out.clear();
-    gweb::render_meta(out, req, c3);
+    gweb::_render_meta(out, req, c3);
     check_eq(out, "<meta name=\"robots\" content=\"noindex\">", "only the tags that are set");
 
     print(checks - failures, " of ", checks, " checks pass");

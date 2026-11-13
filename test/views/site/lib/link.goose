@@ -14,8 +14,8 @@ struct Link { href: u8[..100] = "", text: u8[..40] = "" }
 fn gw_read(r: json::Reader&, v: Link&, warn: i64&) {
     if json::peek(r) != '{' { json::skip(r); warn += 1; return; }
     json::each_member(r) { key =>
-        if key == "href" { gweb::jr_text(r, v.href, warn); }
-        else if key == "text" { gweb::jr_text(r, v.text, warn); }
+        if key == "href" { gweb::_jr_text(r, v.href, warn); }
+        else if key == "text" { gweb::_jr_text(r, v.text, warn); }
         else { json::skip(r); }
     };
 }

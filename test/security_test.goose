@@ -29,32 +29,32 @@ fn html_res() -> http::Response {
 }
 
 fn security_tests() {
-    var cfg = gweb::default_config();
+    var cfg = gweb::_default_config();
     check(cfg.security_headers && cfg.hsts == 0 && cfg.csp == 0, "config defaults");
 
-    var ctx = gweb::new_ctx(0, -1);
+    var ctx = gweb::_new_ctx(0, -1);
     var res = html_res();
-    check(gweb::apply_security(ctx, res, cfg), "defaults apply");
+    check(gweb::_apply_security(ctx, res, cfg), "defaults apply");
     check_eq(res.headers, DEFAULTS, "exact default block");
 
-    var off = gweb::default_config();
+    var off = gweb::_default_config();
     off.security_headers = false;
     var res2 = html_res();
-    var octx = gweb::new_ctx(0, -1);
-    check(gweb::apply_security(octx, res2, off), "opt-out by config");
+    var octx = gweb::_new_ctx(0, -1);
+    check(gweb::_apply_security(octx, res2, off), "opt-out by config");
     check_eq(res2.headers, "", "no headers when security_headers is false");
 
-    var ctx3 = gweb::new_ctx(0, -1);
+    var ctx3 = gweb::_new_ctx(0, -1);
     ctx3.default_headers = false;
     var res3 = html_res();
-    check(gweb::apply_security(ctx3, res3, cfg), "opt-out by ctx");
+    check(gweb::_apply_security(ctx3, res3, cfg), "opt-out by ctx");
     check_eq(res3.headers, "", "no headers when ctx.default_headers is false");
 
-    var hs = gweb::default_config();
+    var hs = gweb::_default_config();
     hs.hsts = 31536000;
     var res4 = html_res();
-    var ctx4 = gweb::new_ctx(0, -1);
-    check(gweb::apply_security(ctx4, res4, hs), "hsts applies");
+    var ctx4 = gweb::_new_ctx(0, -1);
+    check(gweb::_apply_security(ctx4, res4, hs), "hsts applies");
     var want4: u8[>..] = [];
     format(want4, DEFAULTS, "Strict-Transport-Security: max-age=31536000; includeSubDomains\r\n");
     check_eq(res4.headers, want4, "hsts line after the defaults");
@@ -62,66 +62,66 @@ fn security_tests() {
     var res5 = html_res();
     format(res5.headers, "X-Fill: ");
     while res5.headers.len < res5.headers.cap - 10 { res5.headers.push('a'); }
-    var ctx5 = gweb::new_ctx(0, -1);
-    check(!gweb::apply_security(ctx5, res5, cfg), "overflow refused");
+    var ctx5 = gweb::_new_ctx(0, -1);
+    check(!gweb::_apply_security(ctx5, res5, cfg), "overflow refused");
     check(res5.headers.len == 0 && http::code(res5.status) == 500, "overflow becomes the 500");
     check(find(res5.body, "response headers too large") >= 0, "overflow body");
 }
 
 fn csp_tests() {
-    var cfg = gweb::default_config();
-    var ctx = gweb::new_ctx(0, -1);
+    var cfg = gweb::_default_config();
+    var ctx = gweb::_new_ctx(0, -1);
     check(ctx.nonce.len == 0, "no nonce by default");
     var res = html_res();
-    gweb::apply_security(ctx, res, cfg);
+    gweb::_apply_security(ctx, res, cfg);
     check(find(res.headers, "Content-Security-Policy") < 0, "no CSP without a nonce");
 
-    check(gweb::make_nonce(ctx), "make_nonce");
+    check(gweb::_make_nonce(ctx), "make_nonce");
     check(ctx.nonce.len == 22, "nonce is 22 bytes");
     var ok = true;
     for c in ctx.nonce { if find("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_", [c]) < 0 { ok = false; } }
     check(ok, "nonce is b64url");
     var first: u8[>..] = [];
     first.append(ctx.nonce);
-    check(gweb::make_nonce(ctx) && ctx.nonce == first, "make_nonce keeps an existing nonce");
-    var ctx2 = gweb::new_ctx(0, -1);
-    gweb::make_nonce(ctx2);
+    check(gweb::_make_nonce(ctx) && ctx.nonce == first, "make_nonce keeps an existing nonce");
+    var ctx2 = gweb::_new_ctx(0, -1);
+    gweb::_make_nonce(ctx2);
     check(ctx2.nonce != ctx.nonce, "nonce differs between contexts");
     check_eq(gweb::nonce(ctx), first, "template nonce");
 
     cfg.csp = 1;
     var res2 = html_res();
-    check(gweb::apply_security(ctx, res2, cfg), "csp applies");
+    check(gweb::_apply_security(ctx, res2, cfg), "csp applies");
     var want: u8[>..] = [];
     format(want, DEFAULTS, "Content-Security-Policy: script-src 'self' 'nonce-", first,
            "'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'\r\n");
     check_eq(res2.headers, want, "exact CSP line after the defaults");
 
     var res3 = http::new_response();
-    gweb::apply_security(ctx, res3, cfg);
+    gweb::_apply_security(ctx, res3, cfg);
     check(find(res3.headers, "Content-Security-Policy") < 0, "no CSP for text/plain");
 
     cfg.csp = 2;
     var res4 = html_res();
-    gweb::apply_security(ctx, res4, cfg);
+    gweb::_apply_security(ctx, res4, cfg);
     check(find(res4.headers, "Content-Security-Policy-Report-Only: script-src 'self' 'nonce-") >= 0, "report-only name");
 
     // csp_begin with GWEB_CSP off enforces
-    var off = gweb::default_config();
-    var ctx5 = gweb::new_ctx(0, -1);
+    var off = gweb::_default_config();
+    var ctx5 = gweb::_new_ctx(0, -1);
     check(gweb::csp_begin(ctx5), "csp_begin");
     var res5 = html_res();
-    gweb::apply_security(ctx5, res5, off);
+    gweb::_apply_security(ctx5, res5, off);
     check(find(res5.headers, "\r\nContent-Security-Policy: script-src") >= 0, "csp_begin enforces when config is off");
 
     // dev_inject
     var res6 = html_res();
-    gweb::dev_inject(res6, 7, first);
+    gweb::_dev_inject(res6, 7, first);
     var tag: u8[>..] = [];
     format(tag, "<script nonce=\"", first, "\">");
     check(find(res6.body, tag) >= 0, "dev_inject writes the nonce");
     var res7 = html_res();
-    gweb::dev_inject(res7, 7, "");
+    gweb::_dev_inject(res7, 7, "");
     check(starts_with(res7.body, "<script>"), "dev_inject without a nonce");
 }
 
@@ -136,7 +136,7 @@ fn run_cors(method: const u8[:], origin: const u8[:], extra: const u8[:], opts: 
     var raw: u8[>..] = [];
     build(raw, method, origin, extra);
     let req, parsed = http::parse_request(raw);
-    var ctx = gweb::new_ctx(0, -1);
+    var ctx = gweb::_new_ctx(0, -1);
     return gweb::cors(req, ctx, res, opts);
 }
 

@@ -17,8 +17,8 @@ fn check_eq(got: const u8[:], want: const u8[:], what: const u8[:]) {
 }
 
 fn accepts(tail: const u8[:]) -> bool {
-    var ctx = gweb::new_ctx(0, -1);
-    return gweb::set_rest(ctx, "path", tail);
+    var ctx = gweb::_new_ctx(0, -1);
+    return gweb::_set_rest(ctx, "path", tail);
 }
 
 fn repeated(c: u8, n: i64) -> u8[>..] {
@@ -28,23 +28,23 @@ fn repeated(c: u8, n: i64) -> u8[>..] {
 }
 
 fn main() {
-    var ctx = gweb::new_ctx(0, -1);
+    var ctx = gweb::_new_ctx(0, -1);
     check_eq(ctx.params.rest_name, "", "new ctx has no rest name");
     check_eq(gweb::param(ctx, "path"), "", "param is empty on a new ctx");
     check_eq(gweb::param(ctx, ""), "", "empty name on a new ctx");
 
-    check(gweb::set_param(ctx, "id", "7"), "set_param");
-    check(gweb::set_rest(ctx, "path", "a/b/c"), "set_rest");
+    check(gweb::_set_param(ctx, "id", "7"), "set_param");
+    check(gweb::_set_rest(ctx, "path", "a/b/c"), "set_rest");
     check_eq(gweb::param(ctx, "path"), "a/b/c", "tail");
     check_eq(gweb::param(ctx, "other"), "", "another name");
     check_eq(gweb::param(ctx, "id"), "7", "set_param value still resolves");
-    check(gweb::set_rest(ctx, "path", ""), "empty tail");
+    check(gweb::_set_rest(ctx, "path", ""), "empty tail");
     check_eq(gweb::param(ctx, "path"), "", "empty tail value");
     check_eq(gweb::param(ctx, "id"), "7", "set_param survives set_rest");
 
-    check(gweb::set_rest(ctx, "path", "caf%C3%A9"), "keeps raw text");
+    check(gweb::_set_rest(ctx, "path", "caf%C3%A9"), "keeps raw text");
     check_eq(gweb::param(ctx, "path"), "caf%C3%A9", "raw tail");
-    check(!gweb::set_rest(ctx, "path", "a//b"), "refused tail leaves the old value");
+    check(!gweb::_set_rest(ctx, "path", "a//b"), "refused tail leaves the old value");
     check_eq(gweb::param(ctx, "path"), "caf%C3%A9", "old value stays");
 
     let refused: const u8[:][20] = ["a//b", "/a", "a/", "a/./b", "a/../b", "..", ".", "%2e%2e/x", "a/%2E", "%2e",
@@ -66,10 +66,10 @@ fn main() {
     check(!accepts(long_tail), "1025-byte tail");
     let max_name = repeated('n', 32);
     let long_name = repeated('n', 33);
-    var c2 = gweb::new_ctx(0, -1);
-    check(gweb::set_rest(c2, max_name, "a"), "32-byte name");
+    var c2 = gweb::_new_ctx(0, -1);
+    check(gweb::_set_rest(c2, max_name, "a"), "32-byte name");
     check_eq(gweb::param(c2, max_name), "a", "32-byte name resolves");
-    check(!gweb::set_rest(c2, long_name, "a"), "33-byte name");
+    check(!gweb::_set_rest(c2, long_name, "a"), "33-byte name");
 
     var out: u8[>..] = [];
     check(gweb::path_decode(out, "a%20b"), "decode space");

@@ -16,7 +16,7 @@ struct Stream { conn: net::Socket, chunked: bool, head_only: bool, ok: bool }
 fn stream_begin(req: const http::Request&, ctx: Ctx&, res: http::Response&) -> Stream {
     var s = Stream { conn: net::Socket { fd: ctx.conn_fd }, chunked: http::supports_chunked(req),
                      head_only: req.method == http::Method.Head, ok: false };
-    if ctx.conn_fd < 0 || !apply_cookies(ctx, res) { return s; }
+    if ctx.conn_fd < 0 || !_apply_cookies(ctx, res) { return s; }
     s.ok = http::begin_chunked(s.conn, res, s.head_only, http::wants_keep_alive(req), s.chunked);
     ctx.streamed = s.ok;
     return s;

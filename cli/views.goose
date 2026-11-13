@@ -453,11 +453,11 @@ fn gen_read_struct(m: u8[>..]&, code: const u8[:], sname: const u8[:]) {
             for k in split(keys, '\n') { if k.len > 0 { format(m, " || key == \"", k, "\""); } }
         }
         m.append(" { ");
-        if f.kind == K_TEXT { format(m, "gweb::jr_text(r, v.", f.name, ", warn);"); }
-        else if f.kind == K_INT { format(m, "gweb::jr_int(r, v.", f.name, ", warn);"); }
-        else if f.kind == K_BOOL { format(m, "gweb::jr_bool(r, v.", f.name, ", warn);"); }
+        if f.kind == K_TEXT { format(m, "gweb::_jr_text(r, v.", f.name, ", warn);"); }
+        else if f.kind == K_INT { format(m, "gweb::_jr_int(r, v.", f.name, ", warn);"); }
+        else if f.kind == K_BOOL { format(m, "gweb::_jr_bool(r, v.", f.name, ", warn);"); }
         else if f.kind == K_ENUM {
-            m.append("let k = gweb::jr_enum(r, ");
+            m.append("let k = gweb::_jr_enum(r, ");
             names_array(m, f.ty);
             format(m, ", warn); if k >= 0 { v.", f.name, " = gw_pick_", f.ty, "(k); }");
         }
@@ -508,27 +508,27 @@ fn gen_form_struct(m: u8[>..]&, sname: const u8[:]) {
         label_of(f, label);
         m.append("    ");
         if f.kind == K_TEXT {
-            format(m, "gweb::vf_text(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", \"", f.editor, "\", ", f.cap, ", v.", f.name,
+            format(m, "gweb::_vf_text(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", \"", f.editor, "\", ", f.cap, ", v.", f.name,
                    ", errs, ", if f.required { "true" } else { "false" }, ");");
         }
         else if f.kind == K_INT {
-            format(m, "gweb::vf_int(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", \"", f.editor, "\", v.", f.name,
+            format(m, "gweb::_vf_int(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", \"", f.editor, "\", v.", f.name,
                    ", errs, ", if f.required { "true" } else { "false" }, ");");
         }
-        else if f.kind == K_BOOL { format(m, "gweb::vf_bool(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", v.", f.name, ", errs);"); }
+        else if f.kind == K_BOOL { format(m, "gweb::_vf_bool(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", v.", f.name, ", errs);"); }
         else if f.kind == K_ENUM {
-            format(m, "gweb::vf_enum(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", ");
+            format(m, "gweb::_vf_enum(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", ");
             names_array(m, f.ty);
             format(m, ", gw_name_", f.ty, "(v.", f.name, "), errs, ", if f.required { "true" } else { "false" }, ");");
         }
         else if f.kind == K_GROUP {
-            format(m, "{ gweb::vf_group_open(out, \"", label, "\"); var gp: u8[>..] = []; format(gp, prefix, \"", f.name, ".\"); gw_form_", f.ty,
-                   "(out, gp, v.", f.name, ", errs); gweb::vf_group_close(out); }");
+            format(m, "{ gweb::_vf_group_open(out, \"", label, "\"); var gp: u8[>..] = []; format(gp, prefix, \"", f.name, ".\"); gw_form_", f.ty,
+                   "(out, gp, v.", f.name, ", errs); gweb::_vf_group_close(out); }");
         }
         else if f.kind == K_LIST {
-            format(m, "{ gweb::vf_list_open(out, prefix, \"", f.name, "\", \"", label, "\", v.", f.name, ".len); var n = 0; for it in v.", f.name,
-                   " { var ip: u8[>..] = []; format(ip, prefix, \"", f.name, ".\", n, \".\"); gweb::vf_item_open(out, n); gw_form_", f.ty,
-                   "(out, ip, it, errs); gweb::vf_item_close(out); n += 1; } gweb::vf_list_close(out); }");
+            format(m, "{ gweb::_vf_list_open(out, prefix, \"", f.name, "\", \"", label, "\", v.", f.name, ".len); var n = 0; for it in v.", f.name,
+                   " { var ip: u8[>..] = []; format(ip, prefix, \"", f.name, ".\", n, \".\"); gweb::_vf_item_open(out, n); gw_form_", f.ty,
+                   "(out, ip, it, errs); gweb::_vf_item_close(out); n += 1; } gweb::_vf_list_close(out); }");
         }
         else {
             format(m, "{ var fname: u8[>..] = []; format(fname, prefix, \"", f.name, "\"); ", find_ns(f.ty), "::gw_field(out, fname, v.", f.name,
@@ -545,11 +545,11 @@ fn gen_parse_struct(m: u8[>..]&, sname: const u8[:]) {
         if f.owner != sname { continue; }
         let req = if f.required { "true" } else { "false" };
         m.append("    ");
-        if f.kind == K_TEXT { format(m, "gweb::vp_text(req, prefix, \"", f.name, "\", v.", f.name, ", errs, ", req, ");"); }
-        else if f.kind == K_INT { format(m, "gweb::vp_int(req, prefix, \"", f.name, "\", v.", f.name, ", errs, ", req, ");"); }
-        else if f.kind == K_BOOL { format(m, "gweb::vp_bool(req, prefix, \"", f.name, "\", v.", f.name, ");"); }
+        if f.kind == K_TEXT { format(m, "gweb::_vp_text(req, prefix, \"", f.name, "\", v.", f.name, ", errs, ", req, ");"); }
+        else if f.kind == K_INT { format(m, "gweb::_vp_int(req, prefix, \"", f.name, "\", v.", f.name, ", errs, ", req, ");"); }
+        else if f.kind == K_BOOL { format(m, "gweb::_vp_bool(req, prefix, \"", f.name, "\", v.", f.name, ");"); }
         else if f.kind == K_ENUM {
-            m.append("{ let k = gweb::vp_enum(req, prefix, \"");
+            m.append("{ let k = gweb::_vp_enum(req, prefix, \"");
             format(m, f.name, "\", ");
             names_array(m, f.ty);
             format(m, ", errs, ", req, "); if k >= 0 { v.", f.name, " = gw_pick_", f.ty, "(k); } }");
@@ -558,7 +558,7 @@ fn gen_parse_struct(m: u8[>..]&, sname: const u8[:]) {
             format(m, "{ var gp: u8[>..] = []; format(gp, prefix, \"", f.name, ".\"); gw_parse_", f.ty, "(req, gp, v.", f.name, ", errs); }");
         }
         else if f.kind == K_LIST {
-            format(m, "{ let n = gweb::vp_count(req, prefix, \"", f.name, "\", ", f.cap, ", errs); v.", f.name, ".clear(); for k in n { var it = ", f.ty,
+            format(m, "{ let n = gweb::_vp_count(req, prefix, \"", f.name, "\", ", f.cap, ", errs); v.", f.name, ".clear(); for k in n { var it = ", f.ty,
                    " { .. }; var ip: u8[>..] = []; format(ip, prefix, \"", f.name, ".\", k, \".\"); gw_parse_", f.ty, "(req, ip, it, errs); v.", f.name, ".push(it); } }");
         }
         else {
@@ -688,13 +688,13 @@ fn gen_meta(v: const View&, label: const u8[:], slots: const u8[:]) {
         label_of(f, l);
         var kind: u8[>..] = [];
         format(kind, "gweb::FieldKind.", KIND_NAMES[f.kind]);
-        format(m, "            gweb::vm_field(m, \"", f.name, "\", \"", l, "\", \"", f.help, "\", \"", f.editor, "\", ", kind, ", \"", field_kind_ty(f), "\", ",
+        format(m, "            gweb::_vm_field(m, \"", f.name, "\", \"", l, "\", \"", f.help, "\", \"", f.editor, "\", ", kind, ", \"", field_kind_ty(f), "\", ",
                f.cap, ", ", if f.required { "true" } else { "false" }, ");\n");
     }
     for l in split(slots, '\n') {
         let parts = split(l, '\t');
         if parts.len != 4 || parts[0] != v.group || parts[1] != v.name { continue; }
-        format(m, "            gweb::vm_slot(m, \"", parts[2], "\", \"", parts[3], "\");\n");
+        format(m, "            gweb::_vm_slot(m, \"", parts[2], "\", \"", parts[3], "\");\n");
     }
     meta_text.append(m);
 }

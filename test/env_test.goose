@@ -42,7 +42,7 @@ fn put(dir: const u8[:], file: const u8[:], text: const u8[:]) {
 fn parse(line: const u8[:]) -> i64, u8[>..], u8[>..] {
     var n: u8[>..] = [];
     var v: u8[>..] = [];
-    let r = gweb::parse_env_line(line, n, v);
+    let r = gweb::_parse_env_line(line, n, v);
     return r, n, v;
 }
 
@@ -86,7 +86,7 @@ fn test_files(dir: const u8[:]) {
     put(dir, ".env.production", "GWT_ORDER=prod\nGWT_ONLY_PROD=1\n");
     put(dir, ".env.local", "GWT_ORDER=local\nGWT_ONLY_LOCAL=1\n");
     put(dir, ".env.production.local", "GWT_ORDER=prodlocal\n");
-    check(gweb::load_env_files_in(dir, "production", err), "production loads");
+    check(gweb::_load_env_files_in(dir, "production", err), "production loads");
     check_eq(val("GWT_ORDER"), "prodlocal", ".env.production.local beats the rest");
     check_eq(val("GWT_ONLY_PROD"), "1", ".env.production read");
     check_eq(val("GWT_ONLY_LOCAL"), "1", ".env.local read");
@@ -99,23 +99,23 @@ fn test_files(dir: const u8[:]) {
     put(dir, ".env", "GWT_O2=env\n");
     put(dir, ".env.production", "GWT_O2=prod\n");
     put(dir, ".env.local", "GWT_O2=local\n");
-    check(gweb::load_env_files_in(dir, "production", err), "second load");
+    check(gweb::_load_env_files_in(dir, "production", err), "second load");
     check_eq(val("GWT_O2"), "local", ".env.local beats .env.production");
 
     blank(dir);
     put(dir, ".env", "GWT_O3=env\n");
     put(dir, ".env.production", "GWT_O3=prod\n");
-    check(gweb::load_env_files_in(dir, "production", err), "third load");
+    check(gweb::_load_env_files_in(dir, "production", err), "third load");
     check_eq(val("GWT_O3"), "prod", ".env.production beats .env");
 
     // The real environment beats every file: GWT_REAL is set first, then a file tries to set it.
-    check(gweb::load_env_files_in(dir, "production", err), "load again is fine");
+    check(gweb::_load_env_files_in(dir, "production", err), "load again is fine");
     blank(dir);
     put(dir, ".env", "GWT_O4=file\n");
     put(dir, ".env.test", "GWT_O5=test\n");
     put(dir, ".env.local", "GWT_O5=local\nGWT_O6=local\n");
     put(dir, ".env.test.local", "GWT_O6=testlocal\n");
-    check(gweb::load_env_files_in(dir, "test", err), "test loads");
+    check(gweb::_load_env_files_in(dir, "test", err), "test loads");
     check_eq(val("GWT_O5"), "test", ".env.local skipped for test");
     check_eq(val("GWT_O6"), "testlocal", ".env.test.local read for test");
     check_eq(val("GWT_O4"), "file", ".env read for test");
@@ -126,9 +126,9 @@ fn test_real_env_wins(dir: const u8[:]) {
     // The first file to set GWT_R wins, so a later file never changes it; a value already in the process is the same case.
     blank(dir);
     put(dir, ".env", "GWT_R=first\n");
-    check(gweb::load_env_files_in(dir, "production", err), "load R");
+    check(gweb::_load_env_files_in(dir, "production", err), "load R");
     put(dir, ".env", "GWT_R=second\n");
-    check(gweb::load_env_files_in(dir, "production", err), "reload R");
+    check(gweb::_load_env_files_in(dir, "production", err), "reload R");
     check_eq(val("GWT_R"), "first", "an existing value is not overwritten");
 }
 
@@ -138,16 +138,16 @@ fn test_errors(dir: const u8[:]) {
     put(dir, ".env.local", "GWT_E1=ok\n\nthis is bad\nGWT_E2=x\n");
     var p: u8[>..] = [];
     format(p, dir, "/.env.local");
-    check(!gweb::load_env_file(p, err), "bad line refused");
+    check(!gweb::_load_env_file(p, err), "bad line refused");
     var want: u8[>..] = [];
     format(want, p, ":3: error: expected NAME=value");
     check_eq(err, want, "error text and line number");
     check_eq(val("GWT_E1"), "ok", "lines before the error were applied");
     check(val("GWT_E2").len == 0, "lines after the error were not");
     var err2: u8[>..] = [];
-    check(gweb::load_env_file("no/such/file", err2) && err2.len == 0, "missing file skipped");
+    check(gweb::_load_env_file("no/such/file", err2) && err2.len == 0, "missing file skipped");
     var err3: u8[>..] = [];
-    check(!gweb::load_env_files_in(dir, "../x", err3), "bad env name refused");
+    check(!gweb::_load_env_files_in(dir, "../x", err3), "bad env name refused");
     check_eq(err3, "GWEB_ENV: invalid name", "bad env name message");
 }
 
@@ -184,7 +184,7 @@ fn test_typed() {
     check(gweb::c_setenv("GWT_I1", "other") == 1 && gweb::env_int("GWT_I1", 7) == 42, "c_setenv keeps the first value");
     check(gweb::c_setenv("", "x") == 0 && gweb::c_setenv("A=B", "x") == 0, "c_setenv refuses bad names");
     var env_now: u8[>..] = [];
-    gweb::environment(env_now);
+    gweb::_environment(env_now);
     check(env_now.len > 0, "environment is never empty");
 }
 
@@ -199,40 +199,40 @@ fn test_secret() {
     var err: u8[>..] = [];
     let k32 = key('a', 32);
     let k64 = key('b', 64);
-    check(gweb::parse_secret(k32, keys, err), "one 32-byte key");
+    check(gweb::_parse_secret(k32, keys, err), "one 32-byte key");
     check(keys.n == 1 && keys.k[0] == k32, "key stored");
     var three: u8[>..] = [];
     format(three, k32, ",", k64, " , ", key('c', 40));
-    check(gweb::parse_secret(three, keys, err), "three keys, spaces trimmed");
+    check(gweb::_parse_secret(three, keys, err), "three keys, spaces trimmed");
     check(keys.n == 3 && keys.k[1] == k64 && keys.k[2] == key('c', 40), "three keys stored");
     var four: u8[>..] = [];
     format(four, k32, ",", k32, ",", k32, ",", k32);
-    check(gweb::parse_secret(four, keys, err) && keys.n == 4, "four keys");
+    check(gweb::_parse_secret(four, keys, err) && keys.n == 4, "four keys");
 
     let secret_bad = key('z', 31);
     var bad: u8[>..] = [];
-    check(!gweb::parse_secret(secret_bad, keys, bad), "31 bytes refused");
+    check(!gweb::_parse_secret(secret_bad, keys, bad), "31 bytes refused");
     check(find(bad, secret_bad) < 0 && find(bad, "zzzz") < 0, "error does not hold key bytes");
     check(keys.n == 0, "keys cleared on error");
     var bad2: u8[>..] = [];
-    check(!gweb::parse_secret(key('y', 65), keys, bad2), "65 bytes refused");
+    check(!gweb::_parse_secret(key('y', 65), keys, bad2), "65 bytes refused");
     check(find(bad2, "yyyy") < 0, "65-byte error has no key bytes");
     var five: u8[>..] = [];
     format(five, k32, ",", k32, ",", k32, ",", k32, ",", k32);
     var bad3: u8[>..] = [];
-    check(!gweb::parse_secret(five, keys, bad3), "five keys refused");
+    check(!gweb::_parse_secret(five, keys, bad3), "five keys refused");
     check_eq(bad3, "GWEB_SECRET: more than 4 keys", "five keys message");
     var empty_item: u8[>..] = [];
     format(empty_item, k32, ",,", k32);
     var bad4: u8[>..] = [];
-    check(!gweb::parse_secret(empty_item, keys, bad4), "empty item refused");
+    check(!gweb::_parse_secret(empty_item, keys, bad4), "empty item refused");
     check_eq(bad4, "GWEB_SECRET: key 2 is empty", "empty item message");
     var trailing: u8[>..] = [];
     format(trailing, k32, ",");
     var bad5: u8[>..] = [];
-    check(!gweb::parse_secret(trailing, keys, bad5), "trailing comma refused");
+    check(!gweb::_parse_secret(trailing, keys, bad5), "trailing comma refused");
     var bad6: u8[>..] = [];
-    check(!gweb::parse_secret("", keys, bad6), "empty text refused");
+    check(!gweb::_parse_secret("", keys, bad6), "empty text refused");
 }
 
 fn main() {

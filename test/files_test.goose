@@ -42,7 +42,7 @@ fn fetch(method: const u8[:], extra: const u8[:], rel: const u8[:], opts: const 
     var raw: u8[>..] = [];
     format(raw, method, " /f HTTP/1.1\r\nHost: a\r\n", extra, "\r\n");
     let req, parsed = http::parse_request(raw);
-    var ctx = gweb::new_ctx(0, -1);
+    var ctx = gweb::_new_ctx(0, -1);
     var res = http::new_response();
     let ok = gweb::send_file(req, ctx, res, DIR, rel, opts);
     return res, ok;
@@ -150,7 +150,7 @@ fn main() {
     check(!gweb::file_path_ok("a/../b") && gweb::file_path_ok("a/b.txt") && gweb::file_path_ok("a b/c-d_e.f"), "file_path_ok");
     // A root that does not exist.
     let req, parsed = http::parse_request("GET /f HTTP/1.1\r\nHost: a\r\n\r\n");
-    var ctx = gweb::new_ctx(0, -1);
+    var ctx = gweb::_new_ctx(0, -1);
     var res = http::new_response();
     check(!gweb::send_file(req, ctx, res, ".gweb.files-test-nope", "hello.txt", PLAIN), "a missing root: false");
 

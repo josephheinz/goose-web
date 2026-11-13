@@ -22,7 +22,7 @@ fn POST(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
     if !gweb::password_verify(if known { ADMIN_HASH } else { "" }, password) || !known {
         var to: u8[>..] = [];
         to.append("/login?error=1");
-        if next.len > 0 { to.append("&next="); gweb::pct_encode(to, next); }
+        if next.len > 0 { to.append("&next="); gweb::_pct_encode(to, next); }
         gweb::redirect(ctx, to, 303);
         return;
     }

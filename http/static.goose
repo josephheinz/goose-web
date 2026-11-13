@@ -10,7 +10,7 @@ import gweb;
 // Answers 304 when If-None-Match carries the ETag of the representation to send; otherwise returns the index to send, so run_worker sends the embedded bytes.
 // immutable is for the hashed URL, whose name changes with the bytes. gz is the index of a gzip variant, or -1: the plain ETag
 // and the variant's differ, because a cache must not take one for the other.
-fn send_static(req: const http::Request&, res: http::Response&, index: i64, gz: i64, content_type: const u8[:], etag: const u8[:], immutable: bool) -> i64 {
+fn _send_static(req: const http::Request&, res: http::Response&, index: i64, gz: i64, content_type: const u8[:], etag: const u8[:], immutable: bool) -> i64 {
     var tag: u8[>..] = [];
     tag.append(etag);
     var sent = index;

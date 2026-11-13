@@ -55,7 +55,7 @@ fn content_type(out: u8[>..]&, b: const u8[:]) {
 // ---------------------------------------------------------------- running a parse
 
 fn new_ctx() -> gweb::Ctx {
-    var ctx = gweb::new_ctx(0, -1);
+    var ctx = gweb::_new_ctx(0, -1);
     ctx.upload_dir.append(DIR);
     return ctx;
 }
@@ -83,7 +83,7 @@ fn parse(ctx: gweb::Ctx&, res: http::Response&, ct: const u8[:], body: const u8[
         raw.append(body);
     }
     let req, parsed = http::parse_request(raw);
-    return gweb::multipart_begin(req, ctx, res, out);
+    return gweb::_multipart_begin(req, ctx, res, out);
 }
 
 fn file_bytes(path: const u8[:], out: u8[>..]&) -> bool {
@@ -114,18 +114,18 @@ fn main() {
     var rawm: u8[>..] = [];
     format(rawm, "POST /f HTTP/1.1\r\nHost: a\r\nContent-Type: ", ct, "\r\nContent-Length: 12\r\n\r\n");
     let rm, pm = http::parse_request(rawm);
-    check(gweb::is_multipart(rm), "multipart detected");
-    check_num(gweb::content_length(rm), 12, "content_length");
+    check(gweb::_is_multipart(rm), "multipart detected");
+    check_num(gweb::_content_length(rm), 12, "content_length");
     let ru, pu = http::parse_request("POST /f HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: x\r\n\r\n");
-    check(!gweb::is_multipart(ru), "urlencoded is not multipart");
-    check_num(gweb::content_length(ru), -1, "malformed content_length");
+    check(!gweb::_is_multipart(ru), "urlencoded is not multipart");
+    check_num(gweb::_content_length(ru), -1, "malformed content_length");
     let rn, pn = http::parse_request("POST /f HTTP/1.1\r\nHost: a\r\n\r\n");
-    check(!gweb::is_multipart(rn), "no content type");
-    check_num(gweb::content_length(rn), 0, "absent content_length");
+    check(!gweb::_is_multipart(rn), "no content type");
+    check_num(gweb::_content_length(rn), 0, "absent content_length");
     let ri, pi = http::parse_request("POST /f HTTP/1.1\r\nContent-Type: Multipart/Form-Data;boundary=x\r\n\r\n");
-    check(gweb::is_multipart(ri), "case-insensitive type");
+    check(gweb::_is_multipart(ri), "case-insensitive type");
     let rx, px = http::parse_request("POST /f HTTP/1.1\r\nContent-Type: multipart/form-datax\r\n\r\n");
-    check(!gweb::is_multipart(rx), "longer type name");
+    check(!gweb::_is_multipart(rx), "longer type name");
 
     // The main fixture: text fields (percent-encoded in the result, in order), two files, an untouched file input.
     var png: u8[>..] = [];
@@ -473,18 +473,18 @@ fn main() {
     check_eq(n8, "a_b_c.txt", "unsafe bytes");
 
     // sniff
-    check_eq(gweb::sniff_bytes("\x89PNG\r\n\x1A\nrest"), "image/png", "png");
-    check_eq(gweb::sniff_bytes("\xFF\xD8\xFF\xE0jfif"), "image/jpeg", "jpeg");
-    check_eq(gweb::sniff_bytes("GIF89a..."), "image/gif", "gif89a");
-    check_eq(gweb::sniff_bytes("GIF87a..."), "image/gif", "gif87a");
-    check_eq(gweb::sniff_bytes("RIFF\x10\x00\x00\x00WEBPVP8 "), "image/webp", "webp");
-    check_eq(gweb::sniff_bytes("RIFF\x10\x00\x00\x00WAVEfmt "), "", "riff but not webp");
-    check_eq(gweb::sniff_bytes("%PDF-1.7"), "application/pdf", "pdf");
-    check_eq(gweb::sniff_bytes("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"), "", "svg is not an image");
-    check_eq(gweb::sniff_bytes("<?xml version=\"1.0\"?><svg/>"), "", "xml svg");
-    check_eq(gweb::sniff_bytes("<html>"), "", "html");
-    check_eq(gweb::sniff_bytes(""), "", "empty");
-    check_eq(gweb::sniff_bytes("\x89PN"), "", "short png");
+    check_eq(gweb::_sniff_bytes("\x89PNG\r\n\x1A\nrest"), "image/png", "png");
+    check_eq(gweb::_sniff_bytes("\xFF\xD8\xFF\xE0jfif"), "image/jpeg", "jpeg");
+    check_eq(gweb::_sniff_bytes("GIF89a..."), "image/gif", "gif89a");
+    check_eq(gweb::_sniff_bytes("GIF87a..."), "image/gif", "gif87a");
+    check_eq(gweb::_sniff_bytes("RIFF\x10\x00\x00\x00WEBPVP8 "), "image/webp", "webp");
+    check_eq(gweb::_sniff_bytes("RIFF\x10\x00\x00\x00WAVEfmt "), "", "riff but not webp");
+    check_eq(gweb::_sniff_bytes("%PDF-1.7"), "application/pdf", "pdf");
+    check_eq(gweb::_sniff_bytes("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"), "", "svg is not an image");
+    check_eq(gweb::_sniff_bytes("<?xml version=\"1.0\"?><svg/>"), "", "xml svg");
+    check_eq(gweb::_sniff_bytes("<html>"), "", "html");
+    check_eq(gweb::_sniff_bytes(""), "", "empty");
+    check_eq(gweb::_sniff_bytes("\x89PN"), "", "short png");
     // sniff on files: the client's claim does not matter
     var sctx = new_ctx();
     var sres = http::new_response();

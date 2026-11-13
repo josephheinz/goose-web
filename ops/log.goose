@@ -15,14 +15,14 @@ struct LogEvent { line: u8[..2048], level: Level, truncated: bool, json: bool }
 const LOG_RESERVE = 24;   // room kept for the closing "}" and the truncated marker
 
 // Text values with a space, control byte, " or = (or no bytes at all) are quoted.
-fn text_needs_quote(s: const u8[:]) -> bool {
+fn _text_needs_quote(s: const u8[:]) -> bool {
     if s.len == 0 { return true; }
     for c in s { if c <= ' ' || c == 127 || c == 34 || c == '=' { return true; } }
     return false;
 }
 
-fn text_value(out: u8[>..]&, s: const u8[:]) {
-    if !text_needs_quote(s) { out.append(s); return; }
+fn _text_value(out: u8[>..]&, s: const u8[:]) {
+    if !_text_needs_quote(s) { out.append(s); return; }
     out.append("\"");
     json_escape(out, s);
     out.append("\"");
@@ -37,26 +37,26 @@ fn log_event(ctx: const Ctx&, level: Level, msg: const u8[:]) -> LogEvent {
     if e.json {
         var ts: u8[>..] = [];
         c_rfc3339(ts);
-        format(e.line, "{\"ts\":\"", ts, "\",\"level\":\"", level_name(level), "\",\"msg\":\"");
-        if !json_escape_max(m, msg, budget) { e.truncated = true; }
+        format(e.line, "{\"ts\":\"", ts, "\",\"level\":\"", _level_name(level), "\",\"msg\":\"");
+        if !_json_escape_max(m, msg, budget) { e.truncated = true; }
         e.line.append(m);
         e.line.append("\"");
     } else {
-        format(e.line, level_name(level), " ");
+        format(e.line, _level_name(level), " ");
         let whole = msg.len <= budget;
         for c in msg[..min(msg.len, budget)] { m.push(if c < 32 || c == 127 { ' ' } else { c }); }
         e.truncated = !whole;
         e.line.append(m);
     }
-    if ctx.request_id.len > 0 { field_text(e, "request_id", ctx.request_id); }
-    if ctx.trace_id.len > 0 { field_text(e, "trace_id", ctx.trace_id); field_text(e, "span_id", ctx.span_id); }
+    if ctx.request_id.len > 0 { _field_text(e, "request_id", ctx.request_id); }
+    if ctx.trace_id.len > 0 { _field_text(e, "trace_id", ctx.trace_id); _field_text(e, "span_id", ctx.span_id); }
     if ctx.job_id != 0 { log_field(e, "job_id", ctx.job_id); log_field(e, "attempt", ctx.attempt); }
     return e;
 }
 
 // Appends " key=value" or ,"key":value; frag is the value already in the format's notation. A field that does not
 // fit is dropped and the event is marked truncated.
-fn push_field(e: LogEvent&, key: const u8[:], frag: const u8[:]) {
+fn _push_field(e: LogEvent&, key: const u8[:], frag: const u8[:]) {
     var piece: u8[>..] = [];
     if e.json {
         piece.append(",\"");
@@ -72,32 +72,32 @@ fn push_field(e: LogEvent&, key: const u8[:], frag: const u8[:]) {
     e.line.append(piece);
 }
 
-fn field_text(e: LogEvent&, key: const u8[:], v: const u8[:]) {
+fn _field_text(e: LogEvent&, key: const u8[:], v: const u8[:]) {
     var frag: u8[>..] = [];
     if e.json { frag.append("\""); json_escape(frag, v); frag.append("\""); }
-    else { text_value(frag, v); }
-    push_field(e, key, frag);
+    else { _text_value(frag, v); }
+    _push_field(e, key, frag);
 }
 
-fn log_field(e: LogEvent&, key: const u8[:], v: const u8[:]) { field_text(e, key, v); }
+fn log_field(e: LogEvent&, key: const u8[:], v: const u8[:]) { _field_text(e, key, v); }
 
 fn log_field(e: LogEvent&, key: const u8[:], v: i64) {
     var frag: u8[>..] = [];
     format(frag, v);
-    push_field(e, key, frag);
+    _push_field(e, key, frag);
 }
 
 // NaN and infinity are null in json, since json has no notation for them.
 fn log_field(e: LogEvent&, key: const u8[:], v: f64) {
     var frag: u8[>..] = [];
     if e.json && (v != v || v - v != 0.0) { frag.append("null"); } else { format(frag, v); }
-    push_field(e, key, frag);
+    _push_field(e, key, frag);
 }
 
 fn log_field(e: LogEvent&, key: const u8[:], v: bool) {
     var frag: u8[>..] = [];
     frag.append(if v { "true" } else { "false" });
-    push_field(e, key, frag);
+    _push_field(e, key, frag);
 }
 
 // Appends the finished line (no newline): the fields, then truncated=true if any was dropped, then "}" in json.
@@ -111,7 +111,7 @@ fn log_render(e: const LogEvent&, out: u8[>..]&) {
 fn log_emit(e: const LogEvent&) {
     var line: u8[>..] = [];
     log_render(e, line);
-    log_write(e.level, line);
+    _log_write(e.level, line);
 }
 
 fn log_debug(ctx: const Ctx&, msg: const u8[:]) { let e = log_event(ctx, Level.Debug, msg); log_emit(e); }
@@ -160,15 +160,15 @@ fn traceparent(ctx: const Ctx&, out: u8[>..]&) {
 
 // Call in main, before the workers start: sets the log level and format, starts the metrics table (with --metrics;
 // routes_nl is the route patterns joined by newlines) and the tracing exporter (from the OTEL_* variables).
-fn ops_init(cfg: const Config&, routes_nl: const u8[:]) {
-    log_configure(level_from_name(cfg.log_level), cfg.log_format == "json");
+fn _ops_init(cfg: const Config&, routes_nl: const u8[:]) {
+    _log_configure(_level_from_name(cfg.log_level), cfg.log_format == "json");
     if cfg.metrics { c_metrics_init(cfg.workers as i32, routes_nl); }
     let t = c_otel_start_from_env();
-    if t == 1 { log_message(Level.Info, "gweb: tracing on"); }
-    else if t == 2 { log_message(Level.Warn, "gweb: tracing is off: the OTLP endpoint is not usable"); }
+    if t == 1 { _log_message(Level.Info, "gweb: tracing on"); }
+    else if t == 2 { _log_message(Level.Warn, "gweb: tracing is off: the OTLP endpoint is not usable"); }
 }
 
 // Call in main when the server has stopped: sends the queued spans, waiting up to 2 seconds.
-fn ops_shutdown() {
-    if c_otel_flush(2000) == 0 { log_message(Level.Warn, "gweb: tracing export did not finish in 2 s"); }
+fn _ops_shutdown() {
+    if c_otel_flush(2000) == 0 { _log_message(Level.Warn, "gweb: tracing export did not finish in 2 s"); }
 }

@@ -13,8 +13,8 @@ struct Media { key: u8[..32] = "", name: u8[..120] = "" }
 fn gw_read(r: json::Reader&, v: Media&, warn: i64&) {
     if json::peek(r) != '{' { json::skip(r); warn += 1; return; }
     json::each_member(r) { k =>
-        if k == "key" { gweb::jr_text(r, v.key, warn); }
-        else if k == "name" { gweb::jr_text(r, v.name, warn); }
+        if k == "key" { gweb::_jr_text(r, v.key, warn); }
+        else if k == "name" { gweb::_jr_text(r, v.name, warn); }
         else { json::skip(r); }
     };
 }

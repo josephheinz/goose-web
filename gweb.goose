@@ -102,17 +102,17 @@ struct Config { port: i64, host: u8[..64], workers: i64, log: bool, idle_ms: i64
                 probe: bool,            // --probe: config_from_args answers it and exits
                 hub: u64 = 0 }          // the net::Hub handle; 0 when the app uses no streams or WebSockets
 
-fn no_params() -> Params { Params { n: 0, names: [""; 8], values: [""; 8] } }
+fn _no_params() -> Params { Params { n: 0, names: [""; 8], values: [""; 8] } }
 
-fn new_ctx(worker: i64, owner_fd: i32, hub: u64 = 0) -> Ctx {
-    Ctx { params: no_params(), worker: worker, owner_fd: owner_fd, outcome: Outcome.Continue,
+fn _new_ctx(worker: i64, owner_fd: i32, hub: u64 = 0) -> Ctx {
+    Ctx { params: _no_params(), worker: worker, owner_fd: owner_fd, outcome: Outcome.Continue,
           redirect_status: 302, location: "", title: "", meta: Meta { .. }, set_cookies: "", hub: hub }
 }
 
 // ---------------------------------------------------------------- params and query
 
 // False, and the dispatcher answers 404, when a limit is exceeded: 8 params, 32-byte name, 256-byte value.
-fn set_param(ctx: Ctx&, name: const u8[:], value: const u8[:]) -> bool {
+fn _set_param(ctx: Ctx&, name: const u8[:], value: const u8[:]) -> bool {
     let i = ctx.params.n;
     if i >= 8 || name.len > 32 || value.len > 256 { return false; }
     ctx.params.names[i].clear();
@@ -139,7 +139,7 @@ fn param_int(ctx: const Ctx&, name: const u8[:]) -> i64, bool {
 }
 
 // The decoded byte at i and the bytes it spans; -1 for a % without two hex digits.
-fn path_byte(s: const u8[:], i: i64) -> i64, i64 {
+fn _path_byte(s: const u8[:], i: i64) -> i64, i64 {
     if s[i] != '%' { return s[i], 1; }
     if i + 2 < s.len && ascii::hex_value(s[i + 1]) >= 0 && ascii::hex_value(s[i + 2]) >= 0 {
         return (ascii::hex_value(s[i + 1]) * 16 + ascii::hex_value(s[i + 2])), 3;
@@ -149,7 +149,7 @@ fn path_byte(s: const u8[:], i: i64) -> i64, i64 {
 
 // True when every decoded byte is allowed: not / or \ or a control byte, and no segment decodes to . or ..
 // Raw slashes separate segments.
-fn path_valid(s: const u8[:]) -> bool {
+fn _path_valid(s: const u8[:]) -> bool {
     var i = 0;
     var seg_len = 0;
     var dots = 0;
@@ -160,7 +160,7 @@ fn path_valid(s: const u8[:]) -> bool {
             dots = 0;
             i += 1;
         } else {
-            let b, width = path_byte(s, i);
+            let b, width = _path_byte(s, i);
             if b < 32 || b == 127 || b == '/' || b == '\\' { return false; }
             seg_len += 1;
             if b == '.' { dots += 1; }
@@ -173,10 +173,10 @@ fn path_valid(s: const u8[:]) -> bool {
 // Appends s with %XX decoded; + stays +. False, with nothing appended, on a malformed %, a decoded / or \
 // or control byte, or a segment that decodes to . or ..
 fn path_decode(out: u8[>..]&, s: const u8[:]) -> bool {
-    if !path_valid(s) { return false; }
+    if !_path_valid(s) { return false; }
     var i = 0;
     while i < s.len {
-        let b, width = path_byte(s, i);
+        let b, width = _path_byte(s, i);
         out.push(b as u8);
         i += width;
     }
@@ -185,7 +185,7 @@ fn path_decode(out: u8[>..]&, s: const u8[:]) -> bool {
 
 // Called by the generated dispatcher. False, and the dispatcher answers 404, when the name or tail is over its
 // limit, a segment is empty, or path_decode would refuse the tail; "" is a valid tail.
-fn set_rest(ctx: Ctx&, name: const u8[:], rest: const u8[:]) -> bool {
+fn _set_rest(ctx: Ctx&, name: const u8[:], rest: const u8[:]) -> bool {
     if name.len > 32 || rest.len > 1024 { return false; }
     if rest.len > 0 {
         if rest[0] == '/' || rest[rest.len - 1] == '/' { return false; }
@@ -193,7 +193,7 @@ fn set_rest(ctx: Ctx&, name: const u8[:], rest: const u8[:]) -> bool {
             if rest[i] == '/' && rest[i - 1] == '/' { return false; }
         }
     }
-    if !path_valid(rest) { return false; }
+    if !_path_valid(rest) { return false; }
     ctx.params.rest_name.clear();
     ctx.params.rest_name.append(name);
     ctx.params.rest.clear();
@@ -209,7 +209,7 @@ fn query(req: const http::Request&, name: const u8[:], out: u8[>..]&) -> bool {
 }
 
 // Returns the segment count, or 17 when there are more than 16; starts and ends are offsets into path.
-fn split(path: const u8[:], seg: const u8[:][16]&, starts: i64[16]&, ends: i64[16]&) -> i64 {
+fn _split(path: const u8[:], seg: const u8[:][16]&, starts: i64[16]&, ends: i64[16]&) -> i64 {
     var n = 0;
     var start = 1;
     if path.len <= 1 { return 0; }
@@ -248,7 +248,7 @@ let COOKIE_PLAIN_BYTES = byte_set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRS
 let COOKIE_DOMAIN_BYTES = byte_set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.");
 let HEX_UPPER = "0123456789ABCDEF";
 
-fn all_in(s: const u8[:], set: const ByteSet&) -> bool {
+fn _all_in(s: const u8[:], set: const ByteSet&) -> bool {
     for c in s { if !set.members[c] { return false; } }
     return true;
 }
@@ -299,10 +299,10 @@ fn cookie_int(req: const http::Request&, name: const u8[:]) -> i64, bool {
 // a __Secure- or __Host- name breaks its rule, or the response's cookies would pass 2048 bytes.
 fn set_cookie(ctx: Ctx&, name: const u8[:], value: const u8[:], opts: CookieOptions = CookieOptions { .. }) -> bool {
     let secure = opts.secure || opts.same_site == SameSite.None;
-    if name.len == 0 || name.len > COOKIE_NAME_MAX || !all_in(name, COOKIE_NAME_BYTES) { return false; }
+    if name.len == 0 || name.len > COOKIE_NAME_MAX || !_all_in(name, COOKIE_NAME_BYTES) { return false; }
     if opts.path.len == 0 || opts.path[0] != '/' { return false; }
     for c in opts.path { if c <= ' ' || c >= 127 || c == ';' { return false; } }
-    if !all_in(opts.domain, COOKIE_DOMAIN_BYTES) || opts.max_age < -1 { return false; }
+    if !_all_in(opts.domain, COOKIE_DOMAIN_BYTES) || opts.max_age < -1 { return false; }
     if starts_with(name, "__Secure-") && !secure { return false; }
     if starts_with(name, "__Host-") && (!secure || opts.path != "/" || opts.domain.len > 0) { return false; }
     var encoded = 0;
@@ -336,7 +336,7 @@ fn clear_cookie(ctx: Ctx&, name: const u8[:], opts: CookieOptions = CookieOption
 }
 
 // False when the lines do not fit beside res.headers: the reply becomes a 500 with no cookies, so a cookie is never dropped silently.
-fn apply_cookies(ctx: Ctx&, res: http::Response&) -> bool {
+fn _apply_cookies(ctx: Ctx&, res: http::Response&) -> bool {
     if ctx.set_cookies.len == 0 { return true; }
     if ctx.set_cookies.len > res.headers.cap - res.headers.len {
         ctx.set_cookies.clear();
@@ -419,29 +419,29 @@ fn redirect(ctx: Ctx&, to: const u8[:], status: i64 = 302) {
     ctx.location.append(to[..min(to.len, 1024)]);
 }
 
-fn apply_redirect(ctx: const Ctx&, res: http::Response&) {
+fn _apply_redirect(ctx: const Ctx&, res: http::Response&) {
     res.status = http::status_from_code(ctx.redirect_status);
     res.content_type.clear();
     res.body.clear();
     http::set_header(res, "Location", ctx.location);
 }
 
-fn options(res: http::Response&, allow: const u8[:]) {
+fn _options(res: http::Response&, allow: const u8[:]) {
     res.status = http::Status.NoContent;
     http::set_header(res, "Allow", allow);
 }
 
-fn method_not_allowed(res: http::Response&, allow: const u8[:]) {
+fn _method_not_allowed(res: http::Response&, allow: const u8[:]) {
     http::json_error(res, http::Status.MethodNotAllowed, "method not allowed");
     http::set_header(res, "Allow", allow);
 }
 
-fn plain_not_found(res: http::Response&) {
+fn _plain_not_found(res: http::Response&) {
     http::text(res, http::Status.NotFound, "404 not found\n");
 }
 
 // The request's Content-Length: 0 when absent, -1 when malformed. Pages with MAX_UPLOAD compare it before reading the body.
-fn content_length(req: const http::Request&) -> i64 { return http::content_length(req.head); }
+fn _content_length(req: const http::Request&) -> i64 { return http::content_length(req.head); }
 
 // ---------------------------------------------------------------- config
 
@@ -456,14 +456,14 @@ extern fn c_if_end(slot: i64) = "gweb_inflight_end";
 extern fn c_performance_cores() -> i64 = "gweb_performance_cores";
 
 // min(performance cores, 4); hardware threads where cores are unknown.
-fn default_workers() -> i64 {
+fn _default_workers() -> i64 {
     let perf = c_performance_cores();
     let cores = if perf > 0 { perf } else { hardware_threads() };
     return max(1, min(cores, 4));
 }
 
-fn default_config() -> Config {
-    Config { port: 3000, host: "0.0.0.0", workers: default_workers(), log: false,
+fn _default_config() -> Config {
+    Config { port: 3000, host: "0.0.0.0", workers: _default_workers(), log: false,
              idle_ms: 5000, max_body: 1048576, dev_id: 0,
              max_upload: 33554432, spool_over: 65536, upload_dir: ".gweb.uploads",
              auth: AuthConfig { .. }, security_headers: true, hsts: 0, csp: 0, export_dir: "",
@@ -477,22 +477,22 @@ fn env_int(name: const u8[:]) -> i64, bool {
     return parse_int(trim(e));
 }
 
-fn valid_log_level(s: const u8[:]) -> bool { s == "debug" || s == "info" || s == "warn" || s == "error" }
+fn _valid_log_level(s: const u8[:]) -> bool { s == "debug" || s == "info" || s == "warn" || s == "error" }
 
-fn valid_log_format(s: const u8[:]) -> bool { s == "text" || s == "json" }
+fn _valid_log_format(s: const u8[:]) -> bool { s == "text" || s == "json" }
 
-// config_from(args()), then --probe: GET http://127.0.0.1:PORT/__gweb/ready; exit 0 on 200, else 1.
-fn config_from_args() -> Config {
+// _config_from(args()), then --probe: GET http://127.0.0.1:PORT/__gweb/ready; exit 0 on 200, else 1.
+fn _config_from_args() -> Config {
     let argv = args();
     var a: (const u8[:])[>..] = [];
     var i = 0;
     while i < argv.len { a.push(argv[i]); i += 1; }
-    let cfg = config_from(a);
-    if cfg.probe { exit(probe(cfg.port)); }
+    let cfg = _config_from(a);
+    if cfg.probe { exit(_probe(cfg.port)); }
     return cfg;
 }
 
-fn probe(port: i64) -> i64 {
+fn _probe(port: i64) -> i64 {
     var url: u8[>..] = [];
     format(url, "http://127.0.0.1:", port, "/__gweb/ready");
     var body: u8[>..] = [];
@@ -505,15 +505,15 @@ fn probe(port: i64) -> i64 {
 // GWEB_DRAIN_MS, GWEB_DRAIN_DELAY_MS, GWEB_LOG_FORMAT, GWEB_LOG_LEVEL, GWEB_METRICS=1, GWEB_JOB_RUNNERS,
 // GWEB_SCHEDULE=0 (flags win). a[0] is the program name. Exits with 2 on a bad flag, .env file, secret,
 // session lifetime, GWEB_HSTS or GWEB_CSP.
-fn config_from(a: (const u8[:])[:]) -> Config {
-    var cfg = default_config();
+fn _config_from(a: (const u8[:])[:]) -> Config {
+    var cfg = _default_config();
     var envname: u8[>..] = [];
     var env_err: u8[>..] = [];
     var dev = false;
     for arg in a { if arg == "--dev-id" { dev = true; } }
     c_setenv("GWEB_ENV", if dev { "development" } else { "production" });
-    environment(envname);
-    if !load_env_files(envname, env_err) { print(env_err); exit(2); }
+    _environment(envname);
+    if !_load_env_files(envname, env_err) { print(env_err); exit(2); }
     var e: u8[>..] = [];
     if env("PORT", e) { let p, ok = parse_int(trim(e)); if ok { cfg.port = p; } }
     e.clear();
@@ -526,9 +526,9 @@ fn config_from(a: (const u8[:])[:]) -> Config {
     let runners, has_runners = env_int("GWEB_JOB_RUNNERS");
     if has_runners && runners >= 0 { cfg.job_runners = runners; }
     e.clear();
-    if env("GWEB_LOG_FORMAT", e) && valid_log_format(trim(e)) { cfg.log_format.clear(); cfg.log_format.append(trim(e)); }
+    if env("GWEB_LOG_FORMAT", e) && _valid_log_format(trim(e)) { cfg.log_format.clear(); cfg.log_format.append(trim(e)); }
     e.clear();
-    if env("GWEB_LOG_LEVEL", e) && valid_log_level(trim(e)) { cfg.log_level.clear(); cfg.log_level.append(trim(e)); }
+    if env("GWEB_LOG_LEVEL", e) && _valid_log_level(trim(e)) { cfg.log_level.clear(); cfg.log_level.append(trim(e)); }
     e.clear();
     if env("GWEB_METRICS", e) && trim(e) == "1" { cfg.metrics = true; }
     e.clear();
@@ -558,28 +558,28 @@ fn config_from(a: (const u8[:])[:]) -> Config {
             if flag == "--job-runners" && ok && n >= 0 { cfg.job_runners = n; i += 2; continue; }
             if flag == "--job-queue" && ok && n > 0 { cfg.job_queue = n; i += 2; continue; }
             if flag == "--job-attempts" && ok && n > 0 { cfg.job_attempts = n; i += 2; continue; }
-            if flag == "--log-format" && valid_log_format(v) { cfg.log_format.clear(); cfg.log_format.append(v); i += 2; continue; }
-            if flag == "--log-level" && valid_log_level(v) { cfg.log_level.clear(); cfg.log_level.append(v); i += 2; continue; }
+            if flag == "--log-format" && _valid_log_format(v) { cfg.log_format.clear(); cfg.log_format.append(v); i += 2; continue; }
+            if flag == "--log-level" && _valid_log_level(v) { cfg.log_level.clear(); cfg.log_level.append(v); i += 2; continue; }
             if flag == "--host" { cfg.host.clear(); cfg.host.append(v[..min(v.len, 64)]); i += 2; continue; }
         }
         print("unknown or incomplete flag: ", flag);
         print("flags: --port N --host H --workers N --log --idle-ms N --max-body N --max-upload N --upload-dir D --csp --export DIR --drain-ms N --drain-delay-ms N --log-format text|json --log-level debug|info|warn|error --metrics --no-schedule --job-runners N --job-queue N --job-attempts N --probe (--dev-id N: gweb dev only)");
         exit(2);
     }
-    old_env_names();
+    _old_env_names();
     var secret_err: u8[>..] = [];
     e.clear();
     if env("GWEB_SECRET", e) && trim(e).len > 0 {
-        if !parse_secret(e, cfg.auth.keys, secret_err) { print(secret_err); exit(2); }
+        if !_parse_secret(e, cfg.auth.keys, secret_err) { print(secret_err); exit(2); }
     } else if cfg.dev_id != 0 {
-        if !dev_secret(cfg.auth.keys, secret_err) { print(secret_err); exit(2); }
+        if !_dev_secret(cfg.auth.keys, secret_err) { print(secret_err); exit(2); }
     }
-    cfg.auth.idle = env_positive("GWEB_SESSION_IDLE", cfg.auth.idle);
-    cfg.auth.max = env_positive("GWEB_SESSION_MAX", cfg.auth.max);
+    cfg.auth.idle = _env_positive("GWEB_SESSION_IDLE", cfg.auth.idle);
+    cfg.auth.max = _env_positive("GWEB_SESSION_MAX", cfg.auth.max);
     cfg.auth.trust_proxy = env_bool("GWEB_TRUST_PROXY", false);
     cfg.security_headers = env_bool("GWEB_SECURITY_HEADERS", true);
-    cfg.hsts = env_nonneg("GWEB_HSTS", 0);
-    cfg.csp = env_csp("GWEB_CSP");
+    cfg.hsts = _env_nonneg("GWEB_HSTS", 0);
+    cfg.csp = _env_csp("GWEB_CSP");
     if csp_flag { cfg.csp = 1; }
     return cfg;
 }
@@ -591,7 +591,7 @@ fn config_from(a: (const u8[:])[:]) -> Config {
 let OLD_ENV = ["WEB_SECRET", "WEB_CSP", "WEB_WORKERS", "WEB_TRUST_PROXY", "WEB_HSTS", "WEB_SESSION_IDLE",
                "WEB_SECURITY_HEADERS", "WEB_SESSION_MAX"];
 
-fn old_env_names() {
+fn _old_env_names() {
     var bad = false;
     for name in OLD_ENV {
         var v: u8[>..] = [];
@@ -636,7 +636,7 @@ fn b64url(out: u8[>..]&, data: const u8[:]) {
 extern fn c_setenv(name: const u8[:], value: const u8[:]) -> i32 = "gweb_setenv";
 
 // Appends GWEB_ENV, or "production" when it is unset or empty.
-fn environment(out: u8[>..]&) {
+fn _environment(out: u8[>..]&) {
     let before = out.len;
     env("GWEB_ENV", out);
     if out.len == before { out.append("production"); }
@@ -652,7 +652,7 @@ fn env_int(name: const u8[:], fallback: i64) -> i64 {
     return fallback;
 }
 
-fn lower_is(s: const u8[:], word: const u8[:]) -> bool {
+fn _lower_is(s: const u8[:], word: const u8[:]) -> bool {
     if s.len != word.len { return false; }
     for i in s.len {
         var c = s[i];
@@ -667,8 +667,8 @@ fn env_bool(name: const u8[:], fallback: bool) -> bool {
     var e: u8[>..] = [];
     if !env(name, e) { return fallback; }
     let t = trim(e);
-    for w in ["1", "true", "yes", "on"] { if lower_is(t, w) { return true; } }
-    for w in ["0", "false", "no", "off"] { if lower_is(t, w) { return false; } }
+    for w in ["1", "true", "yes", "on"] { if _lower_is(t, w) { return true; } }
+    for w in ["0", "false", "no", "off"] { if _lower_is(t, w) { return false; } }
     return fallback;
 }
 
@@ -682,7 +682,7 @@ fn env_required(name: const u8[:]) -> bool {
 }
 
 // Only a positive integer replaces fallback; a bad lifetime is a startup error, not a silent default.
-fn env_positive(name: const u8[:], fallback: i64) -> i64 {
+fn _env_positive(name: const u8[:], fallback: i64) -> i64 {
     var e: u8[>..] = [];
     if !env(name, e) || trim(e).len == 0 { return fallback; }
     let n, ok = parse_int(trim(e));
@@ -693,7 +693,7 @@ fn env_positive(name: const u8[:], fallback: i64) -> i64 {
 }
 
 // Like env_positive, but 0 is allowed.
-fn env_nonneg(name: const u8[:], fallback: i64) -> i64 {
+fn _env_nonneg(name: const u8[:], fallback: i64) -> i64 {
     var e: u8[>..] = [];
     if !env(name, e) || trim(e).len == 0 { return fallback; }
     let n, ok = parse_int(trim(e));
@@ -704,24 +704,24 @@ fn env_nonneg(name: const u8[:], fallback: i64) -> i64 {
 }
 
 // 1 for 1/true/yes/on, 2 for report-only, 0 for unset, empty or 0/false/no/off; anything else is a startup error.
-fn env_csp(name: const u8[:]) -> i64 {
+fn _env_csp(name: const u8[:]) -> i64 {
     var e: u8[>..] = [];
     if !env(name, e) || trim(e).len == 0 { return 0; }
     let t = trim(e);
-    if lower_is(t, "report-only") { return 2; }
-    for w in ["1", "true", "yes", "on"] { if lower_is(t, w) { return 1; } }
-    for w in ["0", "false", "no", "off"] { if lower_is(t, w) { return 0; } }
+    if _lower_is(t, "report-only") { return 2; }
+    for w in ["1", "true", "yes", "on"] { if _lower_is(t, w) { return 1; } }
+    for w in ["0", "false", "no", "off"] { if _lower_is(t, w) { return 0; } }
     print(name, " must be 1, 0 or report-only");
     exit(2);
     return 0;
 }
 
-fn env_name_start(c: u8) -> bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
-fn env_name_byte(c: u8) -> bool { return env_name_start(c) || (c >= '0' && c <= '9'); }
+fn _env_name_start(c: u8) -> bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
+fn _env_name_byte(c: u8) -> bool { return _env_name_start(c) || (c >= '0' && c <= '9'); }
 
 // One .env line: 0 skipped (blank or comment), 1 a pair (name and value appended), -1 malformed.
 // An optional "export " prefix; the value is trimmed and one pair of matching quotes removed; # inside a value is kept.
-fn parse_env_line(line: const u8[:], name: u8[>..]&, value: u8[>..]&) -> i64 {
+fn _parse_env_line(line: const u8[:], name: u8[>..]&, value: u8[>..]&) -> i64 {
     let t = trim(line);
     if t.len == 0 || t[0] == '#' { return 0; }
     var i = 0;
@@ -730,8 +730,8 @@ fn parse_env_line(line: const u8[:], name: u8[>..]&, value: u8[>..]&) -> i64 {
         while i < t.len && t[i] == ' ' { i += 1; }
     }
     let start = i;
-    while i < t.len && env_name_byte(t[i]) { i += 1; }
-    if i == start || !env_name_start(t[start]) || i >= t.len || t[i] != '=' { return -1; }
+    while i < t.len && _env_name_byte(t[i]) { i += 1; }
+    if i == start || !_env_name_start(t[start]) || i >= t.len || t[i] != '=' { return -1; }
     let v = trim(t[i + 1..]);
     name.append(t[start..i]);
     if v.len >= 2 && (v[0] == '"' || v[0] == '\'') && v[v.len - 1] == v[0] {
@@ -742,8 +742,8 @@ fn parse_env_line(line: const u8[:], name: u8[>..]&, value: u8[>..]&) -> i64 {
     return 1;
 }
 
-// std::split, which gweb::split (the path splitter) shadows in this namespace.
-fn split_on(s: const u8[:], sep: u8) -> const u8[:][>..] {
+// std::split, which gweb::_split (the path splitter) shadows in this namespace.
+fn _split_on(s: const u8[:], sep: u8) -> const u8[:][>..] {
     var out: const u8[:][>..] = [];
     var start = 0;
     for c, i in s {
@@ -755,13 +755,13 @@ fn split_on(s: const u8[:], sep: u8) -> const u8[:][>..] {
 
 // Sets every pair in the file that is not already set, so the real environment and earlier files win.
 // A missing file is skipped. False, with err set to "path:N: error: ...", on a malformed line.
-fn load_env_file(path: const u8[:], err: u8[>..]&) -> bool {
+fn _load_env_file(path: const u8[:], err: u8[>..]&) -> bool {
     var text: u8[>..] = [];
     if !read_file(path, text) { return true; }
-    for line, i in split_on(text, '\n') {
+    for line, i in _split_on(text, '\n') {
         var name: u8[>..] = [];
         var value: u8[>..] = [];
-        let r = parse_env_line(line, name, value);
+        let r = _parse_env_line(line, name, value);
         if r < 0 {
             format(err, path, ":", i + 1, ": error: expected NAME=value");
             return false;
@@ -775,10 +775,10 @@ fn load_env_file(path: const u8[:], err: u8[>..]&) -> bool {
 }
 
 // dir is "" for the working directory, else a folder path without a trailing slash.
-fn load_env_files_in(dir: const u8[:], envname: const u8[:], err: u8[>..]&) -> bool {
+fn _load_env_files_in(dir: const u8[:], envname: const u8[:], err: u8[>..]&) -> bool {
     if envname.len == 0 || envname.len > 32 { format(err, "GWEB_ENV: invalid name"); return false; }
     for c in envname {
-        if !env_name_byte(c) && c != '-' { format(err, "GWEB_ENV: invalid name"); return false; }
+        if !_env_name_byte(c) && c != '-' { format(err, "GWEB_ENV: invalid name"); return false; }
     }
     for k in 4 {
         if k == 1 && envname == "test" { continue; }   // tests must not depend on a developer's local overrides
@@ -788,22 +788,22 @@ fn load_env_files_in(dir: const u8[:], envname: const u8[:], err: u8[>..]&) -> b
         else if k == 1 { path.append(".env.local"); }
         else if k == 2 { format(path, ".env.", envname); }
         else { path.append(".env"); }
-        if !load_env_file(path, err) { return false; }
+        if !_load_env_file(path, err) { return false; }
     }
     return true;
 }
 
 // Order: .env.<env>.local, .env.local (not for test), .env.<env>, .env; the first to set a name wins.
-fn load_env_files(envname: const u8[:], err: u8[>..]&) -> bool {
-    return load_env_files_in("", envname, err);
+fn _load_env_files(envname: const u8[:], err: u8[>..]&) -> bool {
+    return _load_env_files_in("", envname, err);
 }
 
 // ---- secrets
 
 // Parses GWEB_SECRET: 1 to 4 comma-separated keys of 32 to 64 bytes. False, with err set, otherwise; err never holds key bytes.
-fn parse_secret(text: const u8[:], keys: Keys&, err: u8[>..]&) -> bool {
+fn _parse_secret(text: const u8[:], keys: Keys&, err: u8[>..]&) -> bool {
     keys.n = 0;
-    for item, i in split_on(trim(text), ',') {
+    for item, i in _split_on(trim(text), ',') {
         let k = trim(item);
         if i >= 4 { format(err, "GWEB_SECRET: more than 4 keys"); keys.n = 0; return false; }
         if k.len == 0 { format(err, "GWEB_SECRET: key ", i + 1, " is empty"); keys.n = 0; return false; }
@@ -817,10 +817,10 @@ fn parse_secret(text: const u8[:], keys: Keys&, err: u8[>..]&) -> bool {
 }
 
 // gweb dev only: a stable key in .gweb.dev/secret keeps sessions alive across rebuilds. 32 random bytes as 64 hex digits.
-fn dev_secret(keys: Keys&, err: u8[>..]&) -> bool {
+fn _dev_secret(keys: Keys&, err: u8[>..]&) -> bool {
     var text: u8[>..] = [];
     var ignored: u8[>..] = [];
-    if read_file(".gweb.dev/secret", text) && parse_secret(text, keys, ignored) { return true; }
+    if read_file(".gweb.dev/secret", text) && _parse_secret(text, keys, ignored) { return true; }
     var raw: u8[..32] = [0; 32];
     if c_entropy(raw) == 0 { format(err, "gweb: cannot read system entropy for the dev secret"); return false; }
     var hex: u8[>..] = [];
@@ -830,13 +830,13 @@ fn dev_secret(keys: Keys&, err: u8[>..]&) -> bool {
     }
     make_dir(".gweb.dev");
     write_file(".gweb.dev/secret", hex);   // a write failure only costs session persistence across restarts
-    return parse_secret(hex, keys, err);
+    return _parse_secret(hex, keys, err);
 }
 
 // ---- security headers and CSP (DESIGN-ADDENDUM-13)
 
 // 16 random bytes as 22 b64url bytes in ctx.nonce; true without change when already set. False when entropy fails.
-fn make_nonce(ctx: Ctx&) -> bool {
+fn _make_nonce(ctx: Ctx&) -> bool {
     if ctx.nonce.len > 0 { return true; }
     var raw: u8[..16] = [0; 16];
     if c_entropy(raw) == 0 { return false; }
@@ -847,10 +847,10 @@ fn make_nonce(ctx: Ctx&) -> bool {
 }
 
 // For a subtree's `before`: turns the CSP on for this request even when GWEB_CSP is off.
-fn csp_begin(ctx: Ctx&) -> bool { return make_nonce(ctx); }
+fn csp_begin(ctx: Ctx&) -> bool { return _make_nonce(ctx); }
 
 // Appends the default security headers, HSTS and CSP; false, with a bare 500, when they do not fit beside res.headers.
-fn apply_security(ctx: Ctx&, res: http::Response&, cfg: const Config&) -> bool {
+fn _apply_security(ctx: Ctx&, res: http::Response&, cfg: const Config&) -> bool {
     var hdrs: u8[>..] = [];
     if cfg.security_headers && ctx.default_headers {
         hdrs.append("X-Content-Type-Options: nosniff\r\n");
@@ -876,11 +876,11 @@ fn apply_security(ctx: Ctx&, res: http::Response&, cfg: const Config&) -> bool {
 
 // One parsed request through the framework. Returns the static file index to send (or -1), and true when the
 // request was answered here (gweb dev's status, health, readiness, metrics): not logged and not counted.
-fn respond<D>(req: const http::Request&, ctx: Ctx&, conn_fd: i32, cfg: const Config&, res: http::Response&) -> i64, bool {
+fn _respond<D>(req: const http::Request&, ctx: Ctx&, conn_fd: i32, cfg: const Config&, res: http::Response&) -> i64, bool {
     let p = req.path;
     let get_like = req.method == http::Method.Get || req.method == http::Method.Head;
     if cfg.dev_id != 0 && p == "/__gweb/id" {
-        dev_status(res, cfg.dev_id);
+        _dev_status(res, cfg.dev_id);
         return -1, true;
     }
     if get_like && p == "/__gweb/health" {
@@ -903,7 +903,7 @@ fn respond<D>(req: const http::Request&, ctx: Ctx&, conn_fd: i32, cfg: const Con
         return -1, true;
     }
     let tracing = c_otel_on() != 0;
-    if cfg.log || tracing { begin_request(req, ctx, tracing); }
+    if cfg.log || tracing { _begin_request(req, ctx, tracing); }
     if get_like && p.len > 1 && p[p.len - 1] == '/' {
         var to: u8[>..] = [];
         to.append(p[..p.len - 1]);
@@ -914,24 +914,24 @@ fn respond<D>(req: const http::Request&, ctx: Ctx&, conn_fd: i32, cfg: const Con
     }
     ctx.auth = cfg.auth;
     ctx.conn_fd = conn_fd;
-    if cfg.csp != 0 && !make_nonce(ctx) {
+    if cfg.csp != 0 && !_make_nonce(ctx) {
         http::json_error(res, http::Status.InternalServerError, "csp nonce unavailable");
         return -1, false;
     }
     var static_index = D(req, ctx, res);
-    if !apply_cookies(ctx, res) { static_index = -1; ctx.detach = Detach.None; }
-    if !ctx.streamed && !apply_security(ctx, res, cfg) { static_index = -1; ctx.detach = Detach.None; }
-    if !ctx.fragment { dev_inject(res, cfg.dev_id, ctx.nonce); }
+    if !_apply_cookies(ctx, res) { static_index = -1; ctx.detach = Detach.None; }
+    if !ctx.streamed && !_apply_security(ctx, res, cfg) { static_index = -1; ctx.detach = Detach.None; }
+    if !ctx.fragment { _dev_inject(res, cfg.dev_id, ctx.nonce); }
     return static_index, false;
 }
 
 // D, the generated dispatcher, returns the index of a static file to send, or -1; S gives its bytes, sent without a copy.
 // routes is the route patterns joined by newlines, in the order of the indexes D puts in ctx.route_label; it names the
 // route in the access log and in spans. Returns when the process is stopping and this worker has drained.
-fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config, routes: const u8[:] = "") {
+fn _run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config, routes: const u8[:] = "") {
     // One worker takes every waiting connection per pass; several take one each, so a burst spreads.
     let lp = net::connection_loop(server, cfg.idle_ms, cfg.max_body, if cfg.workers == 1 { 0 } else { 1 });
-    // Uploads: make the directory, then opt in. main() calls gweb::prepare_uploads once first, which deletes files an earlier run left (names gnet-* and gw-*).
+    // Uploads: make the directory, then opt in. main() calls gweb::_prepare_uploads once first, which deletes files an earlier run left (names gnet-* and gw-*).
     // Without a usable directory a multipart body stays in memory, up to --max-body.
     if cfg.upload_dir.len > 0 && c_up_mkdir(cfg.upload_dir) != 0 {
         if !lp.set_uploads(cfg.max_upload, cfg.spool_over, cfg.upload_dir) {
@@ -954,7 +954,7 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config, 
         match ev {
             Request, Spooled => {
                 let t0 = if timed { c_now_us() } else { 0 };
-                var ctx = new_ctx(slot, owner_fd, cfg.hub);
+                var ctx = _new_ctx(slot, owner_fd, cfg.hub);
                 ctx.start_us = t0;
                 ctx.upload_dir.append(cfg.upload_dir);
                 var spool_ok = true;
@@ -974,7 +974,7 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config, 
                         if !spool_ok {
                             http::json_error(res, http::Status.InternalServerError, http::reason(http::Status.InternalServerError));
                         } else {
-                            let index, here = respond(req, ctx, conn.fd, cfg, res, D);
+                            let index, here = _respond(req, ctx, conn.fd, cfg, res, D);
                             static_index = index;
                             internal = here;
                         }
@@ -985,7 +985,7 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config, 
                 keep = keep && !net::draining();
                 if ctx.request_id.len > 0 && !ctx.streamed { http::add_header(res, "X-Request-Id", ctx.request_id); }
                 let head_only = req.method == http::Method.Head;
-                var label: const u8[:] = if static_index >= 0 { "static" } else { route_name(routes, ctx.route_label) };
+                var label: const u8[:] = if static_index >= 0 { "static" } else { _route_name(routes, ctx.route_label) };
                 var blen = 0;
                 if ctx.streamed {
                     // A stream wrote its own reply; the connection survives only if its body was framed (chunked), ended, and keep-alive was asked for.
@@ -1014,16 +1014,16 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config, 
                     let dur = c_now_us() - t0;
                     if cfg.metrics {
                         let route_index = if static_index >= 0 { -2 } else { ctx.route_label };
-                        c_metrics_request(slot as i32, route_index as i32, method_index(req.method) as i32,
+                        c_metrics_request(slot as i32, route_index as i32, _method_index(req.method) as i32,
                                           http::code(res.status) as i32, dur);
                     }
                     if cfg.log {
                         var line: u8[>..] = [];
-                        access_line(line, json_log, slot, req.method_text, req.target, label, res.status, dur, blen,
+                        _access_line(line, json_log, slot, req.method_text, req.target, label, res.status, dur, blen,
                                     ctx.request_id, ctx.trace_id, ctx.span_id);
-                        log_write(Level.Info, line);
+                        _log_write(Level.Info, line);
                     }
-                    if ctx.sampled { push_server_span(ctx, req, label, res.status, dur); }
+                    if ctx.sampled { _push_server_span(ctx, req, label, res.status, dur); }
                 }
                 c_if_end(slot);
                 // The reply is out: delete the spool file and every upload not saved (a saved one is gone, so its unlink fails harmlessly).
@@ -1053,7 +1053,7 @@ fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config, 
 // ---------------------------------------------------------------- dev live reload
 
 // Line 1 is the build id; the rest is gweb dev's last build errors (empty after a good build).
-fn dev_status(res: http::Response&, dev_id: i64) {
+fn _dev_status(res: http::Response&, dev_id: i64) {
     http::text(res, http::Status.Ok, "");
     format(res.body, dev_id);
     var errs: u8[>..] = [];
@@ -1072,7 +1072,7 @@ fn dev_status(res: http::Response&, dev_id: i64) {
 // box at the bottom right, dismissed by a click and shown again only when their text changes.
 // Two overlay slots: sys (build failed or server down; the poll sets and clears it) and isl
 // (page errors; cleared by a click or reload). sys shows first.
-fn dev_inject(res: http::Response&, dev_id: i64, nonce: const u8[:]) {
+fn _dev_inject(res: http::Response&, dev_id: i64, nonce: const u8[:]) {
     if dev_id == 0 || !starts_with(res.content_type, "text/html") { return; }
     if nonce.len > 0 { format(res.body, "<script nonce=\"", nonce, "\">"); } else { res.body.append("<script>"); }
     format(res.body, "(function(){var id=\"", dev_id, "\",fails=0,box,sys=\"\",isl=\"\",wbox,wtxt=\"\",wdis=\"\";\n");
@@ -1092,7 +1092,7 @@ fn dev_inject(res: http::Response&, dev_id: i64, nonce: const u8[:]) {
     res.body.append("""setInterval(function(){fetch("/__gweb/id",{cache:"no-store"}).then(function(r){return r.text()}).then(function(t){fails=0;var n=t.indexOf("\n"),cur=n<0?t:t.slice(0,n),rest=n<0?"":t.slice(n+1),f=rest.indexOf("\f"),errs=f<0?rest:rest.slice(0,f),warns=f<0?"":rest.slice(f+1);if(cur!==id){location.reload();return}sys=errs.trim()?"build failed\n\n"+errs:"";draw();wdraw(warns)}).catch(function(){if(++fails>=4){sys="gweb dev: the server is not responding";draw()}})},500)})();</script>""");
 }
 
-fn no_static(i: i64) -> const u8[:] { "" }
+fn _no_static(i: i64) -> const u8[:] { "" }
 
 // ---------------------------------------------------------------- operations
 // Logging, metrics and tracing helpers that run_worker needs; ops.goose and jobs.goose build the app API on them.
@@ -1125,16 +1125,16 @@ extern fn c_otel_start_from_env() -> i32 = "gweb_otel_start_from_env";
 extern fn c_otel_on() -> i32 = "gweb_otel_on";
 extern fn c_otel_flush(timeout_ms: i32) -> i32 = "gweb_otel_flush";
 
-fn level_name(l: Level) -> const u8[:] {
+fn _level_name(l: Level) -> const u8[:] {
     match l { Debug => "debug", Info => "info", Warn => "warn", Error => "error" }
 }
 
-fn level_num(l: Level) -> i64 {
+fn _level_num(l: Level) -> i64 {
     match l { Debug => 0, Info => 1, Warn => 2, Error => 3 }
 }
 
 // "info" for anything that is not a level name.
-fn level_from_name(s: const u8[:]) -> Level {
+fn _level_from_name(s: const u8[:]) -> Level {
     if s == "debug" { return Level.Debug; }
     if s == "warn" { return Level.Warn; }
     if s == "error" { return Level.Error; }
@@ -1142,34 +1142,34 @@ fn level_from_name(s: const u8[:]) -> Level {
 }
 
 // Sets the level and format every log_write and log_message uses (process-wide, in C).
-fn log_configure(level: Level, json: bool) {
-    c_log_config(level_num(level) as i32, if json { 1 } else { 0 });
+fn _log_configure(level: Level, json: bool) {
+    c_log_config(_level_num(level) as i32, if json { 1 } else { 0 });
 }
 
 // Writes one finished line (no newline needed) when level is at or above the configured one.
-fn log_write(level: Level, line: const u8[:]) {
+fn _log_write(level: Level, line: const u8[:]) {
     let floor = c_log_level() as i64;
-    if level_num(level) < floor { return; }
+    if _level_num(level) < floor { return; }
     c_log_line(line);
 }
 
 // A framework message: the text as it is in text format, {"ts","level","msg"} in json format.
-fn log_message(level: Level, msg: const u8[:]) {
+fn _log_message(level: Level, msg: const u8[:]) {
     var line: u8[>..] = [];
     if c_log_json() != 0 {
         line.append("{\"ts\":\"");
         c_rfc3339(line);
-        format(line, "\",\"level\":\"", level_name(level), "\",\"msg\":\"");
+        format(line, "\",\"level\":\"", _level_name(level), "\",\"msg\":\"");
         json_escape(line, msg);
         line.append("\"}");
     } else {
         line.append(msg);
     }
-    log_write(level, line);
+    _log_write(level, line);
 }
 
 // The bytes of one JSON string body: " and \ with a backslash, bytes below 0x20 as \u00XX, the rest as they are.
-fn json_escape_byte(out: u8[>..]&, c: u8) {
+fn _json_escape_byte(out: u8[>..]&, c: u8) {
     if c == 34 { out.append("\\\""); }
     else if c == '\\' { out.append("\\\\"); }
     else if c < 32 {
@@ -1182,21 +1182,21 @@ fn json_escape_byte(out: u8[>..]&, c: u8) {
 
 // Appends s, escaped for the inside of a JSON string (no quotes).
 fn json_escape(out: u8[>..]&, s: const u8[:]) {
-    for c in s { json_escape_byte(out, c); }
+    for c in s { _json_escape_byte(out, c); }
 }
 
 // Like json_escape, but stops before the byte that would take out past max bytes; false when it stopped.
-fn json_escape_max(out: u8[>..]&, s: const u8[:], max: i64) -> bool {
+fn _json_escape_max(out: u8[>..]&, s: const u8[:], max: i64) -> bool {
     for c in s {
         let width = if c == 34 || c == '\\' { 2 } else if c < 32 { 6 } else { 1 };
         if out.len + width > max { return false; }
-        json_escape_byte(out, c);
+        _json_escape_byte(out, c);
     }
     return true;
 }
 
 // 1 to 64 bytes of [A-Za-z0-9._-]: what run_worker accepts as the request's X-Request-Id.
-fn request_id_valid(s: const u8[:]) -> bool {
+fn _request_id_valid(s: const u8[:]) -> bool {
     if s.len < 1 || s.len > 64 { return false; }
     for c in s {
         let ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
@@ -1206,12 +1206,12 @@ fn request_id_valid(s: const u8[:]) -> bool {
 }
 
 // The order of http::Method, which the metrics table indexes by.
-fn method_index(m: http::Method) -> i64 {
+fn _method_index(m: http::Method) -> i64 {
     match m { Get => 0, Head => 1, Post => 2, Put => 3, Patch => 4, Delete => 5, Options => 6, Other => 7 }
 }
 
 // Line i of routes (patterns joined by newlines); "" when there is none.
-fn route_name(routes: const u8[:], i: i64) -> const u8[:] {
+fn _route_name(routes: const u8[:], i: i64) -> const u8[:] {
     if i < 0 { return ""; }
     var n = 0;
     var start = 0;
@@ -1227,9 +1227,9 @@ fn route_name(routes: const u8[:], i: i64) -> const u8[:] {
 
 // Takes X-Request-Id when it is valid, else makes 16 hex digits. With tracing: reads traceparent (a new trace
 // id when it is missing or invalid), makes this request's span id and decides whether it is sampled.
-fn begin_request(req: const http::Request&, ctx: Ctx&, tracing: bool) {
+fn _begin_request(req: const http::Request&, ctx: Ctx&, tracing: bool) {
     let sent, has = http::header(req, "x-request-id");
-    if has && request_id_valid(trim(sent)) {
+    if has && _request_id_valid(trim(sent)) {
         ctx.request_id.append(trim(sent));
     } else {
         var id: u8[>..] = [];
@@ -1257,7 +1257,7 @@ fn begin_request(req: const http::Request&, ctx: Ctx&, tracing: bool) {
     ctx.sampled = c_otel_sample(parent_sampled, trace) != 0;
 }
 
-fn push_server_span(ctx: const Ctx&, req: const http::Request&, route: const u8[:], status: http::Status, dur_us: i64) {
+fn _push_server_span(ctx: const Ctx&, req: const http::Request&, route: const u8[:], status: http::Status, dur_us: i64) {
     var name: u8[>..] = [];
     name.append(req.method_text);
     if route.len > 0 { name.push(' '); name.append(route); }
@@ -1270,7 +1270,7 @@ fn push_server_span(ctx: const Ctx&, req: const http::Request&, route: const u8[
 
 // Appends one access line. Text: [slot] METHOD target -> 200 OK 42us. Json: one object with ts, level, msg "request",
 // method, target, route ("-" when none), status, dur_us, bytes, worker, and request_id, trace_id and span_id when set.
-fn access_line(out: u8[>..]&, json: bool, slot: i64, method: const u8[:], target: const u8[:], route: const u8[:],
+fn _access_line(out: u8[>..]&, json: bool, slot: i64, method: const u8[:], target: const u8[:], route: const u8[:],
                status: http::Status, dur_us: i64, bytes: i64, request_id: const u8[:], trace_id: const u8[:],
                span_id: const u8[:]) {
     if !json {

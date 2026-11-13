@@ -29,7 +29,7 @@ fn fragment(req: const http::Request&) -> const u8[:] {
 }
 
 // 1 for names[0], 2 for names[1]...; 0 for the whole page (no header, or an unknown name).
-fn fragment_index(req: const http::Request&, names: const u8[:][:]) -> i64 {
+fn _fragment_index(req: const http::Request&, names: const u8[:][:]) -> i64 {
     let want = fragment(req);
     if want.len == 0 { return 0; }
     for n, i in names { if n == want { return i + 1; } }
@@ -42,7 +42,7 @@ fn no_store(res: http::Response&) {
 }
 
 // Echoes the name in GW-Fragment, forbids caching, and keeps gweb dev's script out.
-fn fragment_reply(req: const http::Request&, ctx: Ctx&, res: http::Response&) {
+fn _fragment_reply(req: const http::Request&, ctx: Ctx&, res: http::Response&) {
     ctx.fragment = true;
     http::set_header(res, "GW-Fragment", fragment(req));
     no_store(res);

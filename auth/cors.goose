@@ -11,15 +11,15 @@ import gweb;
 struct CorsOptions { origins: u8[..1024] = "", methods: u8[..128] = "GET, POST, PUT, PATCH, DELETE",
                      headers: u8[..256] = "Content-Type, X-CSRF-Token", credentials: bool = false, max_age: i64 = 600 }
 
-fn cors_origin_allowed(opts: const CorsOptions&, origin: const u8[:]) -> bool {
+fn _cors_origin_allowed(opts: const CorsOptions&, origin: const u8[:]) -> bool {
     if origin.len == 0 { return false; }
-    for item in split_on(opts.origins, ',') {
+    for item in _split_on(opts.origins, ',') {
         if trim(item) == origin { return true; }
     }
     return false;
 }
 
-fn cors_overflow(res: http::Response&) -> bool {
+fn _cors_overflow(res: http::Response&) -> bool {
     res.headers.clear();
     http::json_error(res, http::Status.InternalServerError, "response headers too large");
     return false;
@@ -32,7 +32,7 @@ fn cors(req: const http::Request&, ctx: Ctx&, res: http::Response&, opts: CorsOp
     if !has { return true; }
     let origin = trim(raw);
     let any = trim(opts.origins) == "*" && !opts.credentials;
-    let allowed = any || (trim(opts.origins) != "*" && cors_origin_allowed(opts, origin));
+    let allowed = any || (trim(opts.origins) != "*" && _cors_origin_allowed(opts, origin));
     let safe = req.method == http::Method.Get || req.method == http::Method.Head || req.method == http::Method.Options;
     let rm, has_rm = http::header(req, "access-control-request-method");
     let preflight = req.method == http::Method.Options && has_rm;
@@ -48,10 +48,10 @@ fn cors(req: const http::Request&, ctx: Ctx&, res: http::Response&, opts: CorsOp
 
     // The origin is request bytes, so it goes through the checking add_header.
     if any {
-        if !http::add_header(res, "Access-Control-Allow-Origin", "*") { return cors_overflow(res); }
-    } else if !http::add_header(res, "Access-Control-Allow-Origin", origin) { return cors_overflow(res); }
-    if !http::add_header(res, "Vary", "Origin") { return cors_overflow(res); }
-    if opts.credentials && !http::add_header(res, "Access-Control-Allow-Credentials", "true") { return cors_overflow(res); }
+        if !http::add_header(res, "Access-Control-Allow-Origin", "*") { return _cors_overflow(res); }
+    } else if !http::add_header(res, "Access-Control-Allow-Origin", origin) { return _cors_overflow(res); }
+    if !http::add_header(res, "Vary", "Origin") { return _cors_overflow(res); }
+    if opts.credentials && !http::add_header(res, "Access-Control-Allow-Credentials", "true") { return _cors_overflow(res); }
     if !preflight { return true; }
 
     res.status = http::Status.NoContent;
@@ -59,6 +59,6 @@ fn cors(req: const http::Request&, ctx: Ctx&, res: http::Response&, opts: CorsOp
     format(age, opts.max_age);
     if !http::add_header(res, "Access-Control-Allow-Methods", opts.methods)
         || !http::add_header(res, "Access-Control-Allow-Headers", opts.headers)
-        || !http::add_header(res, "Access-Control-Max-Age", age) { return cors_overflow(res); }
+        || !http::add_header(res, "Access-Control-Max-Age", age) { return _cors_overflow(res); }
     return false;
 }

@@ -55,46 +55,46 @@ fn test_escape() {
     check_eq(out, want, "json_escape: quote, backslash, control bytes; non-ASCII passes through");
 
     var cut: u8[>..] = [];
-    check(!gweb::json_escape_max(cut, "abcdef", 4), "json_escape_max stops");
+    check(!gweb::_json_escape_max(cut, "abcdef", 4), "json_escape_max stops");
     check_eq(cut, "abcd", "json_escape_max keeps what fits");
     var cut2: u8[>..] = [];
-    check(!gweb::json_escape_max(cut2, "ab\ncd", 4), "json_escape_max never cuts an escape");
+    check(!gweb::_json_escape_max(cut2, "ab\ncd", 4), "json_escape_max never cuts an escape");
     check_eq(cut2, "ab", "json_escape_max stops before a \\u00XX that does not fit");
     var whole: u8[>..] = [];
-    check(gweb::json_escape_max(whole, "abcd", 4), "json_escape_max: exact fit");
+    check(gweb::_json_escape_max(whole, "abcd", 4), "json_escape_max: exact fit");
 }
 
 fn test_request_id() {
-    check(gweb::request_id_valid("a"), "one byte");
-    check(gweb::request_id_valid("Req-1_x.y"), "letters digits . _ -");
-    check(gweb::request_id_valid("0123456789012345678901234567890123456789012345678901234567890123"), "64 bytes");
-    check(!gweb::request_id_valid("01234567890123456789012345678901234567890123456789012345678901234"), "65 bytes");
-    check(!gweb::request_id_valid(""), "empty");
-    check(!gweb::request_id_valid("a b"), "space");
-    check(!gweb::request_id_valid("a/b"), "slash");
-    check(!gweb::request_id_valid("a\"b"), "quote");
-    check(!gweb::request_id_valid("a\nb"), "newline");
+    check(gweb::_request_id_valid("a"), "one byte");
+    check(gweb::_request_id_valid("Req-1_x.y"), "letters digits . _ -");
+    check(gweb::_request_id_valid("0123456789012345678901234567890123456789012345678901234567890123"), "64 bytes");
+    check(!gweb::_request_id_valid("01234567890123456789012345678901234567890123456789012345678901234"), "65 bytes");
+    check(!gweb::_request_id_valid(""), "empty");
+    check(!gweb::_request_id_valid("a b"), "space");
+    check(!gweb::_request_id_valid("a/b"), "slash");
+    check(!gweb::_request_id_valid("a\"b"), "quote");
+    check(!gweb::_request_id_valid("a\nb"), "newline");
     var accent: u8[>..] = [];
     accent.append("caf");
     accent.push(195);
     accent.push(169);
-    check(!gweb::request_id_valid(accent), "non-ASCII");
+    check(!gweb::_request_id_valid(accent), "non-ASCII");
 }
 
 fn test_routes() {
     let routes = "/\n/users/[id]\n/files/[...path]";
-    check_eq(gweb::route_name(routes, 0), "/", "route 0");
-    check_eq(gweb::route_name(routes, 1), "/users/[id]", "route 1");
-    check_eq(gweb::route_name(routes, 2), "/files/[...path]", "last route");
-    check_eq(gweb::route_name(routes, 3), "", "past the end");
-    check_eq(gweb::route_name(routes, -1), "", "no route");
-    check_eq(gweb::route_name("", 0), "", "no routes");
-    check(gweb::method_index(http::Method.Get) == 0 && gweb::method_index(http::Method.Head) == 1 && gweb::method_index(http::Method.Other) == 7, "method order");
+    check_eq(gweb::_route_name(routes, 0), "/", "route 0");
+    check_eq(gweb::_route_name(routes, 1), "/users/[id]", "route 1");
+    check_eq(gweb::_route_name(routes, 2), "/files/[...path]", "last route");
+    check_eq(gweb::_route_name(routes, 3), "", "past the end");
+    check_eq(gweb::_route_name(routes, -1), "", "no route");
+    check_eq(gweb::_route_name("", 0), "", "no routes");
+    check(gweb::_method_index(http::Method.Get) == 0 && gweb::_method_index(http::Method.Head) == 1 && gweb::_method_index(http::Method.Other) == 7, "method order");
 }
 
 fn test_log_text() {
-    gweb::log_configure(gweb::Level.Debug, false);
-    var ctx = gweb::new_ctx(0, -1);
+    gweb::_log_configure(gweb::Level.Debug, false);
+    var ctx = gweb::_new_ctx(0, -1);
     ctx.request_id.append("req-1");
     var e = gweb::log_event(ctx, gweb::Level.Info, "order placed");
     let id: i64 = 42;
@@ -118,17 +118,17 @@ fn test_log_text() {
     raw.append("a");
     raw.push('\n');
     raw.append("b");
-    let blank = gweb::new_ctx(0, -1);
+    let blank = gweb::_new_ctx(0, -1);
     let e3 = gweb::log_event(blank, gweb::Level.Error, raw);
     check_eq(rendered(e3), "error a b", "a control byte in a text message becomes a space");
 
-    var traced = gweb::new_ctx(0, -1);
+    var traced = gweb::_new_ctx(0, -1);
     traced.trace_id.append(T32);
     traced.span_id.append(S16);
     let e4 = gweb::log_event(traced, gweb::Level.Debug, "m");
     check_eq(rendered(e4), "debug m trace_id=0123456789abcdef0123456789abcdef span_id=0123456789abcdef", "trace ids from ctx");
 
-    var job = gweb::new_ctx(-1, -1);
+    var job = gweb::_new_ctx(-1, -1);
     job.job_id = 7;
     job.attempt = 2;
     let e5 = gweb::log_event(job, gweb::Level.Warn, "job attempt failed");
@@ -136,8 +136,8 @@ fn test_log_text() {
 }
 
 fn test_log_json() {
-    gweb::log_configure(gweb::Level.Debug, true);
-    var ctx = gweb::new_ctx(0, -1);
+    gweb::_log_configure(gweb::Level.Debug, true);
+    var ctx = gweb::_new_ctx(0, -1);
     ctx.request_id.append("req-1");
     var e = gweb::log_event(ctx, gweb::Level.Info, "order \"placed\"");
     let id: i64 = 42;
@@ -161,11 +161,11 @@ fn test_log_json() {
     var raw: u8[>..] = [];
     raw.push(2);
     raw.append("x");
-    let blank = gweb::new_ctx(0, -1);
+    let blank = gweb::_new_ctx(0, -1);
     let e2 = gweb::log_event(blank, gweb::Level.Error, raw);
     check_eq(after_ts(rendered(e2)), "\",\"level\":\"error\",\"msg\":\"\\u0002x\"}", "control byte in a json message");
 
-    var traced = gweb::new_ctx(0, -1);
+    var traced = gweb::_new_ctx(0, -1);
     traced.trace_id.append(T32);
     traced.span_id.append(S16);
     let e3 = gweb::log_event(traced, gweb::Level.Info, "m");
@@ -173,11 +173,11 @@ fn test_log_json() {
 }
 
 fn test_truncation() {
-    let blank = gweb::new_ctx(0, -1);
+    let blank = gweb::_new_ctx(0, -1);
     var big: u8[>..] = [];
     for i in 200 { big.push('x'); }
     for as_json in [false, true] {
-        gweb::log_configure(gweb::Level.Info, as_json);
+        gweb::_log_configure(gweb::Level.Info, as_json);
         var e = gweb::log_event(blank, gweb::Level.Info, "many");
         for k in 15 {
             var key: u8[>..] = [];
@@ -194,7 +194,7 @@ fn test_truncation() {
     var long: u8[>..] = [];
     for i in 3000 { long.push('a'); }
     for as_json in [false, true] {
-        gweb::log_configure(gweb::Level.Info, as_json);
+        gweb::_log_configure(gweb::Level.Info, as_json);
         let e = gweb::log_event(blank, gweb::Level.Info, long);
         let line = rendered(e);
         check(e.truncated && line.len <= 2048, "a long message is cut");
@@ -204,27 +204,27 @@ fn test_truncation() {
 
 fn test_access_line() {
     var text: u8[>..] = [];
-    gweb::access_line(text, false, 2, "GET", "/x?y=1", "/users/[id]", http::Status.Ok, 42, 5, "r-1", "", "");
+    gweb::_access_line(text, false, 2, "GET", "/x?y=1", "/users/[id]", http::Status.Ok, 42, 5, "r-1", "", "");
     check_eq(text, "[2] GET /x?y=1 -> 200 OK 42us", "text access line");
 
     var js: u8[>..] = [];
-    gweb::access_line(js, true, 2, "GET", "/x?y=\"1\"", "/users/[id]", http::Status.NotFound, 42, 5, "r-1", T32, S16);
+    gweb::_access_line(js, true, 2, "GET", "/x?y=\"1\"", "/users/[id]", http::Status.NotFound, 42, 5, "r-1", T32, S16);
     check_eq(after_ts(js), "\",\"level\":\"info\",\"msg\":\"request\",\"method\":\"GET\",\"target\":\"/x?y=\\\"1\\\"\",\"route\":\"/users/[id]\",\"status\":404,\"dur_us\":42,\"bytes\":5,\"worker\":2,\"request_id\":\"r-1\",\"trace_id\":\"0123456789abcdef0123456789abcdef\",\"span_id\":\"0123456789abcdef\"}", "json access line with trace");
 
     var bare: u8[>..] = [];
-    gweb::access_line(bare, true, 0, "POST", "/", "", http::Status.Ok, 1, 0, "", "", "");
+    gweb::_access_line(bare, true, 0, "POST", "/", "", http::Status.Ok, 1, 0, "", "", "");
     check_eq(after_ts(bare), "\",\"level\":\"info\",\"msg\":\"request\",\"method\":\"POST\",\"target\":\"/\",\"route\":\"-\",\"status\":200,\"dur_us\":1,\"bytes\":0,\"worker\":0}", "json access line without ids");
 }
 
 fn test_config() {
-    let d = gweb::config_from(["server"]);
+    let d = gweb::_config_from(["server"]);
     check(d.drain_ms == 10000 && d.drain_delay_ms == 0, "default drain");
     check_eq(d.log_format, "text", "default log format");
     check_eq(d.log_level, "info", "default log level");
     check(!d.metrics && !d.probe && d.schedule && !d.log, "default switches");
     check(d.job_runners == 1 && d.job_queue == 10000 && d.job_attempts == 5, "default job settings");
 
-    let c = gweb::config_from(["server", "--drain-ms", "250", "--drain-delay-ms", "1000", "--log-format", "json",
+    let c = gweb::_config_from(["server", "--drain-ms", "250", "--drain-delay-ms", "1000", "--log-format", "json",
                               "--log-level", "debug", "--metrics", "--job-runners", "3", "--job-queue", "50",
                               "--job-attempts", "2", "--no-schedule", "--probe", "--port", "8080", "--log"]);
     check(c.drain_ms == 250, "--drain-ms");
@@ -239,17 +239,17 @@ fn test_config() {
     check(c.probe, "--probe");
     check(c.port == 8080 && c.log, "older flags still parse beside the new ones");
 
-    let z = gweb::config_from(["server", "--drain-ms", "0", "--job-runners", "0", "--log-level", "error", "--log-format", "text"]);
+    let z = gweb::_config_from(["server", "--drain-ms", "0", "--job-runners", "0", "--log-level", "error", "--log-format", "text"]);
     check(z.drain_ms == 0 && z.job_runners == 0, "zero drain and no runners are allowed");
     check_eq(z.log_level, "error", "--log-level error");
     check_eq(z.log_format, "text", "--log-format text");
-    let w = gweb::config_from(["server", "--log-level", "warn"]);
+    let w = gweb::_config_from(["server", "--log-level", "warn"]);
     check_eq(w.log_level, "warn", "--log-level warn");
 }
 
 // A job's ctx carries the hub, so jobs can gweb::publish.
 fn test_job_ctx() {
-    let c = gweb::job_ctx(0, -1, 7, 1, "job", 77);
+    let c = gweb::_job_ctx(0, -1, 7, 1, "job", 77);
     check(c.hub == 77 && c.job_id == 7 && c.worker == -1, "job_ctx carries the hub");
 }
 

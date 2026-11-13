@@ -10,7 +10,7 @@ import gweb;
 import site.template;
 
 // The longest prefix of s that fits max bytes without splitting a UTF-8 sequence.
-fn utf8_cut(s: const u8[:], max: i64) -> i64 {
+fn _utf8_cut(s: const u8[:], max: i64) -> i64 {
     if s.len <= max { return s.len; }
     var n = max;
     while n > 0 && s[n] >= 128 && s[n] < 192 { n -= 1; }
@@ -19,22 +19,22 @@ fn utf8_cut(s: const u8[:], max: i64) -> i64 {
 
 fn meta_description(ctx: Ctx&, s: const u8[:]) {
     ctx.meta.description.clear();
-    ctx.meta.description.append(s[..utf8_cut(s, 320)]);
+    ctx.meta.description.append(s[.._utf8_cut(s, 320)]);
 }
 
 fn meta_canonical(ctx: Ctx&, url: const u8[:]) {
     ctx.meta.canonical.clear();
-    ctx.meta.canonical.append(url[..utf8_cut(url, 512)]);
+    ctx.meta.canonical.append(url[.._utf8_cut(url, 512)]);
 }
 
 fn meta_image(ctx: Ctx&, url: const u8[:]) {
     ctx.meta.image.clear();
-    ctx.meta.image.append(url[..utf8_cut(url, 512)]);
+    ctx.meta.image.append(url[.._utf8_cut(url, 512)]);
 }
 
 fn meta_robots(ctx: Ctx&, s: const u8[:]) {
     ctx.meta.robots.clear();
-    ctx.meta.robots.append(s[..utf8_cut(s, 64)]);
+    ctx.meta.robots.append(s[.._utf8_cut(s, 64)]);
 }
 
 // SITE_URL wins because Host comes from the client; the fallback is for development.
@@ -52,7 +52,7 @@ fn site_url(req: const http::Request&, out: u8[>..]&) {
     if has_host { out.append(trim(host)); }
 }
 
-fn meta_url(out: u8[>..]&, req: const http::Request&, url: const u8[:]) {
+fn _meta_url(out: u8[>..]&, req: const http::Request&, url: const u8[:]) {
     var abs: u8[>..] = [];
     if url.len > 0 && url[0] == '/' { site_url(req, abs); }
     abs.append(url);
@@ -60,7 +60,7 @@ fn meta_url(out: u8[>..]&, req: const http::Request&, url: const u8[:]) {
 }
 
 // One tag per line, no newline after the last, so the layout line holding @meta() stays one line.
-fn render_meta(out: u8[>..]&, req: const http::Request&, ctx: const Ctx&) {
+fn _render_meta(out: u8[>..]&, req: const http::Request&, ctx: const Ctx&) {
     var first = true;
     if ctx.meta.description.len > 0 {
         out.append("<meta name=\"description\" content=\""); escape(out, ctx.meta.description); out.append("\">");
@@ -68,7 +68,7 @@ fn render_meta(out: u8[>..]&, req: const http::Request&, ctx: const Ctx&) {
     }
     if ctx.meta.canonical.len > 0 {
         if !first { out.push('\n'); }
-        out.append("<link rel=\"canonical\" href=\""); meta_url(out, req, ctx.meta.canonical); out.append("\">");
+        out.append("<link rel=\"canonical\" href=\""); _meta_url(out, req, ctx.meta.canonical); out.append("\">");
         first = false;
     }
     if ctx.meta.robots.len > 0 {
@@ -88,12 +88,12 @@ fn render_meta(out: u8[>..]&, req: const http::Request&, ctx: const Ctx&) {
     }
     if ctx.meta.canonical.len > 0 {
         if !first { out.push('\n'); }
-        out.append("<meta property=\"og:url\" content=\""); meta_url(out, req, ctx.meta.canonical); out.append("\">");
+        out.append("<meta property=\"og:url\" content=\""); _meta_url(out, req, ctx.meta.canonical); out.append("\">");
         first = false;
     }
     if ctx.meta.image.len > 0 {
         if !first { out.push('\n'); }
-        out.append("<meta property=\"og:image\" content=\""); meta_url(out, req, ctx.meta.image); out.append("\">\n");
+        out.append("<meta property=\"og:image\" content=\""); _meta_url(out, req, ctx.meta.image); out.append("\">\n");
         out.append("<meta name=\"twitter:card\" content=\"summary_large_image\">");
     }
 }
