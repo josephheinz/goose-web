@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.0.0 (unreleased)
+
+The API freeze. `docs/site/stability.md` lists exactly what is stable. Every `Breaking:` line below is covered by
+`sh tools/migrate-v1.sh [DIR]`, which does the renames, the `.gweb*` paths and the `--access-log` flag, and prints a
+reminder for what it cannot do. `test/migrate.sh` runs it on the v0.7.0 fixtures and the tutorial and builds the result.
+
+- Breaking: generic public functions have prefixed names. `gweb::write` and `end` are `stream_write` and `stream_end`; `send` is `socket_send`; `debug`, `info`, `warn` and `error` are `log_debug`, `log_info`, `log_warn` and `log_error`; `field`, `log`, `emit` and `render` are `log_field`, `log_event`, `log_emit` and `log_render`; `count` and `gauge` are `metric_count` and `metric_gauge`. `tools/migrate-v1.sh` renames them.
+- Breaking: the generated folders are `.gweb`, `.gweb.dev`, `.gweb.test`, `.gweb.check`, `.gweb.lsp` and `.gweb.uploads` (were `.gooseweb*`). Update `.gitignore`, Dockerfiles and scripts. `tools/migrate-v1.sh` does.
+- Breaking: the server flag `--log` is `--access-log` (`Config.log` is `Config.access_log`). The old flag is refused with a message that names the new one. `--log-format` and `--log-level` are unchanged. `tools/migrate-v1.sh` does.
+- Breaking: `gweb::form_int(req, id, out, errs, required)`, the form decoder, is `gweb::form_i64`. The two-argument reader `form_int` keeps its name. `form_enum` moved to `gweb.forms.valid`. `tools/migrate-v1.sh` renames the decoder.
+- Breaking: `gweb::cookie_or` and `gweb::cookie_int` percent-decode the value, as `Set-Cookie` writes it, and `cookie_or` returns an owned `u8[>..]` (was a slice). A Props field that held the result must be `u8[>..]` or `u8[..N]`. New: `gweb::cookie_raw` reads the bytes as sent. `tools/migrate-v1.sh` prints a reminder.
+- Breaking: `X-Forwarded-Proto` counts only under `GWEB_TRUST_PROXY`. Behind a TLS proxy, set it, or the session and CSRF cookies lose `__Host-` and `Secure`, and `site_url` stays `http`. See DEPLOY-PROXY.
+- Breaking: `gweb dev` binds `127.0.0.1` (was all interfaces). `gweb dev --host 0.0.0.0` or `GWEB_HOST` opens it. `start` and the server still bind `0.0.0.0`.
+- Breaking: one config rule. Flags and `GWEB_*` variables are the same set, with the same parser, and a bad value exits 2 with a message that names the flag or variable (some used to be ignored). Precedence is flag, then environment (real, then `.env` files), then default. Dev defaults apply only under `--dev-id` and never override either.
+- Breaking: names that begin with `_` are internal, and generated-code plumbing and module-private helpers got the prefix (`gweb::new_ctx` is `gweb::_new_ctx`, `gweb::respond` is `gweb::_respond`, and so on). Documented names are unchanged. `tools/migrate-v1.sh` renames the ones an app or a test may have called. `put`, `raw`, `arg`, `has` and `json_text` are not renamed: only generated code calls them. They are not stable.
+- Breaking: `gweb::reserved_prefixes()` includes `__gweb`.
+- Breaking: `gweb::FieldErrors` holds 64 entries (was 16). When more are added, the last one is a form-level error and the rest are dropped, so an overflow is visible.
+- Breaking: `gweb.package` takes a semver minimum: `gweb 1.0` accepts any 1.x. A package that needs a newer gweb stops the build with the two versions named.
+- The server's startup line changed. Its text is not stable.
+- New: a package learns its mount. `gweb gen` writes a `NAME::MOUNT` constant for each mounted package (`"/admin"`; `""` at the root).
+- New: configurable limits `--max-upload-parts` (64), `--max-upload-files` (8, at most 16) and `--max-upload-text` (65536), with `GWEB_MAX_UPLOAD_PARTS`, `_FILES` and `_TEXT`, and the Config fields `upload_parts`, `upload_files`, `upload_text`. `gweb::markdown(out, src, max_input)` takes the input cap. The README has a Limits table of what is configurable and what is fixed (a fixed limit may grow, never shrink).
+- New: `gweb help`, `gweb --help`, `gweb -h` and `gweb COMMAND --help`; `server --help`. A wrong command line prints the reason and the usage on stderr and exits 2. `docs/site/cli.md` is current.
+- New: `send_file` sends `Last-Modified`, answers `If-Modified-Since` with 304, and a HEAD for a streamed file sends `Content-Length`. Range requests are not implemented.
+- Docs: the README Signatures block lists every hook; `docs/site/stability.md` is the 1.0 contract.
+
 ## v0.7.0
 
 Made ready for a CMS package (Addendum 20). The integration fixture is `test/cmsready/`.
