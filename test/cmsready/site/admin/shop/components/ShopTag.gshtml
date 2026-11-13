@@ -1,0 +1,4 @@
+<script goose>
+@prop const text: u8[:];
+</script>
+<span class="shop-tag">{text}</span>

@@ -1,0 +1,3 @@
+/* the admin's own stylesheet, from the package's public/ folder */
+.admin nav { display: flex; gap: 1rem; }
+.pill { border-radius: 1em; }

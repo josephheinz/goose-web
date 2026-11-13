@@ -1,0 +1,7 @@
+<h1>Log in</h1>
+{#if props.err}<p id="error">Wrong username or password.</p>{/if}
+<form method="post" action="/admin/login/submit">@gweb::csrf_field(ctx)
+<input name="username"><input name="password" type="password">
+<input type="hidden" name="next" value="{props.next}">
+<button>Log in</button>
+</form>

@@ -1,0 +1,5 @@
+<script goose>
+@prop const label: u8[:];
+@prop const n: i64 = 0;
+</script>
+<span class="pill">{label}: {n}</span>

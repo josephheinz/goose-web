@@ -1,0 +1,6 @@
+<h1>Media</h1>
+{#if props.err.len > 0}<p id="error">{props.err}</p>{/if}
+<form method="post" enctype="multipart/form-data">@gweb::csrf_field(ctx)
+<input type="file" name="file"><button>Upload</button>
+</form>
+<ul id="media">{#for m in props.rows}<li><a href="/media/{m.key}/{m.name}">{m.name}</a> {m.size}</li>{/for}</ul>

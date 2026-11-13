@@ -1,0 +1,7 @@
+<h1>Edit {props.doc.channel.host}{props.doc.path}</h1>
+{#if props.saved}<p id="saved">Saved.</p>{/if}
+<form method="post" action="/admin/nodes/{props.doc.id}">@gweb::csrf_field(ctx)
+<fieldset><legend>Page</legend>@views::types_form(props.doc.type_name, props.doc.props, props.errs, "t.")</fieldset>
+<fieldset><legend>Text</legend>@views::widgets_form("Text", cms::text_props(props.doc), props.errs, "w.")</fieldset>
+<button>Save</button>
+</form>

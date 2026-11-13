@@ -152,6 +152,7 @@ step rate_test.c c_test rate_test "$ROOT/src/rate.c" -lpthread
 step cache_test.c c_test cache_test "$ROOT/src/cache_core.c"
 step testing_test testing_test
 step i18n_test i18n_test
+step files_test goose_test files_test
 step sse_test sse_test
 step components sh "$HERE/components.sh"
 step runtime sh "$HERE/runtime.sh"
@@ -175,6 +176,7 @@ step markdown_test goose_test markdown_test
 step srcmap sh "$HERE/srcmap.sh"
 step packages env PORT="${PORT:-4001}" sh "$HERE/packages.sh"
 step views sh "$HERE/views.sh"
+step cmsready env PORT="${PORT:-4005}" sh "$HERE/cmsready.sh"
 step tutorial env PORT="${PORT:-4002}" sh "$HERE/tutorial.sh"
 step lsp sh "$HERE/lsp.sh"
 step ops env PORT="${PORT:-4003}" sh "$HERE/ops.sh"

@@ -1,0 +1,6 @@
+<div class="admin" data-admin-layout>
+<link rel="stylesheet" href="@asset("/admin/admin.css")">
+<nav><a href="/admin">Dashboard</a> <a href="/admin/media">Media</a> <a href="/admin/shop">Shop</a>
+{#if gweb::logged_in(ctx)}<form method="post" action="/admin/logout">@gweb::csrf_field(ctx)<button id="logout">Log out</button></form>{/if}</nav>
+@slot()
+</div>

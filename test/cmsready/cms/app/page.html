@@ -1,0 +1,8 @@
+<h1>admin-home</h1>
+@Pill(label: "nodes", n: props.count)
+<ul id="nodes">{#for r in props.rows}<li><a href="/admin/nodes/{r.id}">{r.host}{r.path}</a> {r.title} rev {r.rev}</li>{/for}</ul>
+{#if props.err.len > 0}<p id="error">{props.err}</p>{/if}
+<form method="post" action="/admin/new">@gweb::csrf_field(ctx)
+<select name="channel">{#for c in props.channels}<option value="{c.id}">{c.host}</option>{/for}</select>
+<input name="path" value=""><button>Create</button>
+</form>

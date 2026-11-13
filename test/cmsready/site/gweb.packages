@@ -1,0 +1,3 @@
+# test/cmsready.sh replaces the first line with a git source (file://REPO@v0.1.0 at /admin)
+../cms at /admin
+./admin/shop at /admin/shop
