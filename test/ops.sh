@@ -69,7 +69,8 @@ metric() { curl -s -m 5 "$URL/__gweb/metrics" | awk -v n="$1" '$1 == n { print $
 count_at_least() { [ "$(count_of)" -ge "$1" ] 2>/dev/null; }
 log_lines() { grep -c -- "$2" "$WORK/$1.log"; }
 log_at_least() { [ "$(log_lines "$1" "$2")" -ge "$3" ]; }
-gone() { ! kill -0 "$1" 2>/dev/null; }
+# A zombie counts as gone: dash (Ubuntu's sh) reaps background children only at `wait`, and kill -0 succeeds on one.
+gone() { st=$(ps -o stat= -p "$1" 2>/dev/null); case "$st" in ""|Z*) return 0 ;; *) return 1 ;; esac; }
 up() { curl -s -m 2 -o /dev/null "$URL/__gweb/ready"; }
 
 # start NAME FLAGS...: starts the site's server in the background with its log in $WORK/NAME.log.

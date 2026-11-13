@@ -1,3 +1,6 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE   /* usleep under -std=c11 on Linux */
+#endif
 #include "goose.h"
 #include "ops.h"
 #include "check.h"

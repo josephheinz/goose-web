@@ -1,3 +1,6 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE   /* usleep under -std=c11 on Linux */
+#endif
 /* The owner transport's quit path: -3 after every user has left, pending frames first. */
 #include "goose.h"
 #include "check.h"
