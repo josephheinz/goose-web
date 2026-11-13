@@ -11,7 +11,7 @@ import std;
 var failures = 0;
 var checks = 0;
 
-const DIR = ".gooseweb.files-test";
+const DIR = ".gweb.files-test";
 
 fn check(ok: bool, what: const u8[:]) {
     checks += 1;
@@ -52,14 +52,14 @@ let PLAIN = gweb::FileOptions { .. };
 
 fn main() {
     make_dir(DIR);
-    make_dir(".gooseweb.files-test/sub");
-    write_file(".gooseweb.files-test/hello.txt", "hello file");
-    write_file(".gooseweb.files-test/sub/pic.PNG", "pngbytes");
-    write_file(".gooseweb.files-test/.secret", "hidden");
-    write_file(".gooseweb.files-test/noext", "x");
+    make_dir(".gweb.files-test/sub");
+    write_file(".gweb.files-test/hello.txt", "hello file");
+    write_file(".gweb.files-test/sub/pic.PNG", "pngbytes");
+    write_file(".gweb.files-test/.secret", "hidden");
+    write_file(".gweb.files-test/noext", "x");
     var big: u8[>..] = [];
     for i in 5000 { big.push((i % 251) as u8); }
-    write_file(".gooseweb.files-test/big.bin", big);
+    write_file(".gweb.files-test/big.bin", big);
 
     // 200, type, length, ETag, Cache-Control.
     let r1, ok1 = fetch("GET", "", "hello.txt", PLAIN);
@@ -152,14 +152,14 @@ fn main() {
     let req, parsed = http::parse_request("GET /f HTTP/1.1\r\nHost: a\r\n\r\n");
     var ctx = gweb::new_ctx(0, -1);
     var res = http::new_response();
-    check(!gweb::send_file(req, ctx, res, ".gooseweb.files-test-nope", "hello.txt", PLAIN), "a missing root: false");
+    check(!gweb::send_file(req, ctx, res, ".gweb.files-test-nope", "hello.txt", PLAIN), "a missing root: false");
 
-    delete_file(".gooseweb.files-test/hello.txt");
-    delete_file(".gooseweb.files-test/sub/pic.PNG");
-    delete_file(".gooseweb.files-test/.secret");
-    delete_file(".gooseweb.files-test/noext");
-    delete_file(".gooseweb.files-test/big.bin");
-    delete_dir(".gooseweb.files-test/sub");
+    delete_file(".gweb.files-test/hello.txt");
+    delete_file(".gweb.files-test/sub/pic.PNG");
+    delete_file(".gweb.files-test/.secret");
+    delete_file(".gweb.files-test/noext");
+    delete_file(".gweb.files-test/big.bin");
+    delete_dir(".gweb.files-test/sub");
     delete_dir(DIR);
 
     if failures > 0 { print("files_test: ", failures, " of ", checks, " checks FAILED"); exit(1); }

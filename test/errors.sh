@@ -59,7 +59,7 @@ logged() {
 
 start_server() {
   : > "$LOG"
-  (cd "$WORK/ok" && exec .gooseweb/server --port "$PORT" --workers 1 "$@" >> "$LOG" 2>&1) &
+  (cd "$WORK/ok" && exec .gweb/server --port "$PORT" --workers 1 "$@" >> "$LOG" 2>&1) &
   PID=$!
   up=""
   for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -215,16 +215,16 @@ sys.exit(0 if isinstance(d, str) and d.startswith("GET /crash") and len(d) <= 40
 fi
 
 # 2b. Step 7: build-error excerpts. `gweb dev --once` (hidden) builds once, writes
-# .gooseweb.dev/errors.txt with the excerpts and exits; a good site leaves it empty.
+# .gweb.dev/errors.txt with the excerpts and exits; a good site leaves it empty.
 cp -R "$HERE/errors/site" "$WORK/bad"
-rm -rf "$WORK/bad/.gooseweb"
+rm -rf "$WORK/bad/.gweb"
 mkdir -p "$WORK/bad/app/broken"
 printf '%s\n' '<h1>one</h1>' '<p>two</p>' '<p>three</p>' '<p>{no_such_name}</p>' '<p>five</p>' '<p>six</p>' '<p>seven</p>' > "$WORK/bad/app/broken/page.html"
 "$GWEB" -C "$WORK/bad" build > "$WORK/bad.plain" 2>&1
 plain_rc=$?
 "$GWEB" -C "$WORK/bad" dev --once > /dev/null 2>&1
 dev_rc=$?
-ET="$WORK/bad/.gooseweb.dev/errors.txt"
+ET="$WORK/bad/.gweb.dev/errors.txt"
 check "$([ "$plain_rc" != 0 ] && [ "$dev_rc" != 0 ] && echo ok)" "a type error in page.html fails build and dev --once"
 check "$(grep -q '^app/broken/page.html:4:' "$ET" 2>/dev/null && echo ok)" "errors.txt has the path:line: error line"
 check "$(grep -qF '>   4 | <p>{no_such_name}</p>' "$ET" 2>/dev/null && echo ok)" "errors.txt marks the error line with > and its number"
@@ -261,7 +261,7 @@ finally:
     p.kill(); p.wait()
 ' "$1" "$PORT" "$N" 2>/dev/null
 }
-after=$(cd "$WORK/ok" && bench "$WORK/ok/.gooseweb/server")
+after=$(cd "$WORK/ok" && bench "$WORK/ok/.gweb/server")
 echo "INFO plaintext (curl, $N requests, 2 workers): ${after:-n/a} requests/s with the in-flight copy"
 if [ -n "${BENCH_BASE:-}" ] && [ -x "$BENCH_BASE" ]; then
   before=$(cd "$WORK/ok" && bench "$BENCH_BASE")

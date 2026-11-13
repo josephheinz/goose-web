@@ -32,7 +32,7 @@ RUN apt-get update \
  && useradd --system --uid 10001 --home-dir /app --shell /usr/sbin/nologin app \
  && mkdir -p /app/data \
  && chown app:app /app/data
-COPY --from=build /src/app/.gooseweb/server /app/server
+COPY --from=build /src/app/.gweb/server /app/server
 WORKDIR /app
 USER app
 VOLUME /app/data

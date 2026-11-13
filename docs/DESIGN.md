@@ -3,7 +3,7 @@
 
 ## Summary
 
-goose-web is a package (`web`, directory `goose-web`, sibling of `goose-net`) plus a CLI (`gweb`). `gweb` scans `app/`, `lib/`, `public/`, writes a generated program into `<project>/.gooseweb/`, and runs `goose build` on it. User files are **copied** into `.gooseweb/` under identifier names with a derived `namespace` prefixed onto line 1, so line numbers are unchanged and users write no namespace. Templates compile to one Goose line per HTML line. Workers share one listening fd, each running its own goose-net loop. The owner thread is `main`, reached over per-worker socketpairs.
+goose-web is a package (`web`, directory `goose-web`, sibling of `goose-net`) plus a CLI (`gweb`). `gweb` scans `app/`, `lib/`, `public/`, writes a generated program into `<project>/.gweb/`, and runs `goose build` on it. User files are **copied** into `.gweb/` under identifier names with a derived `namespace` prefixed onto line 1, so line numbers are unchanged and users write no namespace. Templates compile to one Goose line per HTML line. Workers share one listening fd, each running its own goose-net loop. The owner thread is `main`, reached over per-worker socketpairs.
 
 I checked the core of this with `goose check`/`goose build` in the scratchpad (`e1/`, `e2/`, `e3/`). What compiled and ran:
 
@@ -20,7 +20,7 @@ Not tested: the real socketpair transport (I used a queue stand-in), accept bala
 
 Findings that change the constraints you gave me:
 
-- **Root directory is the import root.** With the root at `.gooseweb/main.goose`, imports are `import r1;`, not `import gen.r1;`, and `import lib.util;` needs `.gooseweb/lib`.
+- **Root directory is the import root.** With the root at `.gweb/main.goose`, imports are `import r1;`, not `import gen.r1;`, and `import lib.util;` needs `.gweb/lib`.
 - **Package sources are compared as paths, not resolved.** The root must declare `net` at exactly `<goose-web dir>/../goose-net` (absolute is fine). Declaring the real path behind a symlink fails with "declared from a different source".
 - **`var props: Props;` is illegal** ("must be constructed at its declaration"). Loaders must return the value. `Props { .. }` works without declared defaults.
 - **A struct with a resizable tail cannot be an array element**, so it cannot go through `from_bytes<R[>..]>`. `Reply` must be fixed or variable-size (`Todo[]`, not `Todo[>..]`); the receiver needs `copy(r)`.
@@ -46,7 +46,7 @@ Findings that change the constraints you gave me:
 - Dynamic segment: a folder literally named `[id]`; the name inside must be an identifier and becomes the param name.
 - Folders starting with `_` are ignored.
 - `route.goose` and `page.html` in the same folder is a gen error; so is a public file colliding with a route.
-- Import mechanism: copy each `app/` file to `.gooseweb/<ns>.goose` with `namespace <ns>; ` prefixed to line 1; symlink `.gooseweb/lib -> ../lib`.
+- Import mechanism: copy each `app/` file to `.gweb/<ns>.goose` with `namespace <ns>; ` prefixed to line 1; symlink `.gweb/lib -> ../lib`.
 
 **Why.** Copies allow bracket and hyphen folder names and inject the namespace without shifting lines. Only column numbers on line 1 move.
 
@@ -56,7 +56,7 @@ Findings that change the constraints you gave me:
 - Inlining everything into one file: line mapping becomes a table instead of an identity.
 - Catch-all `[...x]` and route groups `(x)`: deferred to v2.
 
-**Risks.** Editors see route files without a namespace or a root, so the language server may flag `import web;`. A stale `.gooseweb/` is avoided by wiping it on every gen.
+**Risks.** Editors see route files without a namespace or a root, so the language server may flag `import web;`. A stale `.gweb/` is avoided by wiping it on every gen.
 
 ## 2. Namespaces
 
@@ -73,7 +73,7 @@ Findings that change the constraints you gave me:
 
 ## 3. Generated code and dispatcher
 
-**Choice.** Everything lives in `<project>/.gooseweb/`: `main.goose` (root), the copies, `*_html.goose` templates, the `lib` symlink, `map.txt` (gen file to source file, and `main.goose` line to source), and the binary `server`.
+**Choice.** Everything lives in `<project>/.gweb/`: `main.goose` (root), the copies, `*_html.goose` templates, the `lib` symlink, `map.txt` (gen file to source file, and `main.goose` line to source), and the binary `server`.
 
 `main.goose` starts:
 
@@ -224,7 +224,7 @@ fn handle(msg: const Msg&) -> Reply {
 - Expressions are Goose, pasted verbatim. In scope: `props` (when `page.goose` has `load`), `ctx`, and everything in the page's namespace.
 - Layouts see `ctx` only; pages set `ctx.title` in `load`.
 - A layout compiles to `fn render<F>(out: u8[>..]&, ctx: const web::Ctx&)`, so `{{slot}}` may sit inside an `{{#if}}`. A page compiles to `fn render<P>(out: u8[>..]&, ctx: const web::Ctx&, props: const P&)`.
-- **Error mapping:** a tag may not span lines, and each HTML line becomes exactly one Goose line. The function header shares line 1 and the closing brace shares the last line. So `.gooseweb/p2_products_html.goose:N` is `app/products/page.html:N`; I confirmed the compiler reports the right line for a bad field. Unbalanced tags are `gweb` errors in the same `path:line: error:` form.
+- **Error mapping:** a tag may not span lines, and each HTML line becomes exactly one Goose line. The function header shares line 1 and the closing brace shares the last line. So `.gweb/p2_products_html.goose:N` is `app/products/page.html:N`; I confirmed the compiler reports the right line for a bad field. Unbalanced tags are `gweb` errors in the same `path:line: error:` form.
 
 **Rejected.**
 - JSX-like components: a parser project.
@@ -256,14 +256,14 @@ fn handle(msg: const Msg&) -> Reply {
 | Command | Does |
 |---|---|
 | `gweb new <dir>` | Scaffold |
-| `gweb gen` | Write `.gooseweb/` only |
-| `gweb build [--debug] [-o path]` | gen + `goose build -o .gooseweb/server` |
+| `gweb gen` | Write `.gweb/` only |
+| `gweb build [--debug] [-o path]` | gen + `goose build -o .gweb/server` |
 | `gweb start [--port N] [--workers N]` | build + run |
 | `gweb dev` | Watch loop |
 | `gweb routes` | Print the route table |
 
 - **Dev:** poll file count and newest mtime of `app/`, `lib/`, `public/` every 250 ms. On change, gen and build to `server.next`. On success, SIGTERM the child, rename, and respawn with `--log --workers 2`. On failure, print errors and keep the old server running.
-- **Errors:** run `goose` with `--color never`, capture stderr, replace `.gooseweb/<file>:` using `map.txt` (and `.gooseweb/lib/` with `lib/`); line numbers pass through.
+- **Errors:** run `goose` with `--color never`, capture stderr, replace `.gweb/<file>:` using `map.txt` (and `.gweb/lib/` with `lib/`); line numbers pass through.
 - The compiler is `$GOOSE`, else `goose` on `PATH`.
 
 **Rejected.**
@@ -346,7 +346,7 @@ fn load(ctx: web::Ctx&, res: http::Response&) -> Props {
 ```
 
 ```goose
-// .gooseweb/main.goose (sketch)
+// .gweb/main.goose (sketch)
 import r3_api_todos_id; import p2_products; import p2_products_html; import l0; import state;
 let S0 = embed_file("../public/css/site.css");
 fn state::ask(ctx: web::Ctx&, msg: Msg) -> Reply, bool { return web::owner_call<Msg, Reply>(ctx, msg); }

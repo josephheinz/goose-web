@@ -49,7 +49,7 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     *"gweb: locales/de.txt lacks 1 key (falls back to en): only_en"*) ok ;;
     *) bad "the build did not print the lacks line:"; echo "$out" | sed 's/^/    /' ;;
   esac
-  "$WORK/ok/.gooseweb/server" --port "$PORT" >/dev/null 2>&1 &
+  "$WORK/ok/.gweb/server" --port "$PORT" >/dev/null 2>&1 &
   PID=$!
   up=""
   for i in 1 2 3 4 5 6 7 8 9 10; do

@@ -440,7 +440,7 @@ The rows below are numbered 1 to 52. Each row is one `check`.
 | 77 | `POST /save` without a token | 403 |
 | 78 | `POST /save` with the cookie and the header | 200, `saved` |
 | 79 | `POST /webhook` with no token and `Sec-Fetch-Site: cross-site` | 200, `hook` |
-| 80 | `grep` of `$WORK/ok/.gooseweb/main.goose` | it has `::CSRF && !web::csrf_ok(req, res)` |
+| 80 | `grep` of `$WORK/ok/.gweb/main.goose` | it has `::CSRF && !web::csrf_ok(req, res)` |
 | 81 | `expect_fail bare:app/api/route.goose 'const CSRF = 0;'`, line 1 | the D9 route message |
 | 82 | `expect_fail bare:app/page.goose 'const CSRF = false;'`, line 1 | the D9 page message (other errors may follow; the match is a substring) |
 
@@ -554,7 +554,7 @@ Report E1 to E3 in two lines each before step 1.
   - cookie_test 59;
   - release_check all passed.
 - **Generated-code check:**
-  - Run `./gweb -C ../examples/shop gen`, then read `.gooseweb/main.goose`.
+  - Run `./gweb -C ../examples/shop gen`, then read `.gweb/main.goose`.
   - The `/products/[id]` page function has no `csrf_` line.
   - `/fragments` has `csrf_ok` before middleware and `csrf_begin` after `web::html`.
   - The two `api/todos` routes start with `::CSRF && !web::csrf_ok`.

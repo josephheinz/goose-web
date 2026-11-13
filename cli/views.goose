@@ -703,7 +703,7 @@ var cur_code: u8[>..];
 
 // ---------------------------------------------------------------- everything
 
-// Writes each view and returns the registry source (the file .gooseweb/views.goose), or "" when there are none.
+// Writes each view and returns the registry source (the file .gweb/views.goose), or "" when there are none.
 fn gen() -> u8[>..] {
     var reg: u8[>..] = [];
     meta_text.clear();

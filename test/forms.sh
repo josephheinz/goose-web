@@ -62,7 +62,7 @@ temp_clean() {
 start_server() {
   rm -rf "$UP" "$SAVED"
   mkdir -p "$SAVED"
-  (cd "$WORK/ok" && GW_SAVE_DIR="$SAVED" exec .gooseweb/server --port "$PORT" --upload-dir "$UP" "$@" >/dev/null 2>&1) &
+  (cd "$WORK/ok" && GW_SAVE_DIR="$SAVED" exec .gweb/server --port "$PORT" --upload-dir "$UP" "$@" >/dev/null 2>&1) &
   PID=$!
   up=""
   for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -140,7 +140,7 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     check "$(! body_has l2 'gw-loading' && ! body_has l2 'quick-loading' && echo ok)" "a GW-Fragment reply has no loading template"
     req l3 GET /signup -H "$C"
     check "$(! body_has l3 'gw-loading' && echo ok)" "a page outside the folder has no loading template"
-    check "$(grep -qF 'gw-loading' "$WORK/ok/.gooseweb/main.goose" && echo ok)" "main.goose renders the loading template for the quick page"
+    check "$(grep -qF 'gw-loading' "$WORK/ok/.gweb/main.goose" && echo ok)" "main.goose renders the loading template for the quick page"
 
     # Multipart on a page. _csrf travels as a text part.
     req m1 POST /upload -H "$C" -F "_csrf=$TK" -F "title=T" -F "photo=@$WORK/small.bin;filename=pic1.bin;type=application/octet-stream"
@@ -182,7 +182,7 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     check "$(temp_clean && echo ok)" "no temp file at the end"
 
     # The generated code reads like D1 and D9.
-    GEN="$WORK/ok/.gooseweb"
+    GEN="$WORK/ok/.gweb"
     check "$(grep -qF '// gweb: form decoders (generated)' "$GEN/p"*"_signup.goose" 2>/dev/null && echo ok)" "the signup copy ends with the generated decoders"
     check "$(grep -qF 'gweb::form_int(req, "age", f.age, errs, true);' "$GEN"/*signup.goose && grep -qF 'gweb::form_text(req, "note", f.note, errs, false);' "$GEN"/*signup.goose && echo ok)" "decoder statements: required and optional text, int"
     check "$(grep -qF 'gweb::form_upload(ctx, "photo", f.photo, errs, true);' "$GEN"/*upload.goose && echo ok)" "decoder statement for gweb::Upload"
@@ -196,7 +196,7 @@ fi
 
 # 2. Expected failures, in a copy of the site.
 cp -R "$HERE/forms/site" "$WORK/f"
-rm -rf "$WORK/f/.gooseweb"
+rm -rf "$WORK/f/.gweb"
 
 # expect_fail TEXT LINE MESSAGE: app/signup/page.goose holds TEXT; the build
 # must say app/signup/page.goose:LINE: error: MESSAGE.

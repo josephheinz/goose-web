@@ -25,8 +25,8 @@ if [ -x "$ROOT/gweb" ]; then
   mkdir -p "$WORK/stores"
   cp "$HERE"/components/stores/R[A-Z]*.gshtml "$WORK/stores/"
   if "$ROOT/gweb" -C "$WORK" gen >"$WORK/gen.log" 2>&1; then
-    JSDOM_DIR=$DIR GW_DIR="$WORK/.gooseweb/_gw" node "$HERE/reactive_dom_test.mjs" || status=1
-    JSDOM_DIR=$DIR GW_DIR="$WORK/.gooseweb/_gw" node "$HERE/store_dom_test.mjs" || status=1
+    JSDOM_DIR=$DIR GW_DIR="$WORK/.gweb/_gw" node "$HERE/reactive_dom_test.mjs" || status=1
+    JSDOM_DIR=$DIR GW_DIR="$WORK/.gweb/_gw" node "$HERE/store_dom_test.mjs" || status=1
   else
     cat "$WORK/gen.log"
     echo "FAIL reactive.sh: gweb gen of the R*.gshtml components"

@@ -40,7 +40,7 @@ has_header() { grep -q "^$2" "$WORK/$1.h"; }
 # start DIR [VAR=VALUE...]: runs the built server with only those variables set from the suite's choice; SITE_URL is cleared first.
 start() {
   dir=$1; shift
-  env -u SITE_URL "$@" "$dir/.gooseweb/server" --port "$PORT" >/dev/null 2>&1 &
+  env -u SITE_URL "$@" "$dir/.gweb/server" --port "$PORT" >/dev/null 2>&1 &
   PID=$!
   for i in 1 2 3 4 5 6 7 8 9 10; do
     sleep 0.5
@@ -143,7 +143,7 @@ if out=$("$GWEB" -C "$HERE/sitemap/multi" build 2>&1); then
     serves mr /robots.txt 'text/plain' "$WORK/want.txt" -H 'Host: b.test'
     stop
   fi
-  rm -rf "$HERE/sitemap/multi/.gooseweb"
+  rm -rf "$HERE/sitemap/multi/.gweb"
 else
   bad "gweb build of the multi-host site"; echo "$out"
 fi

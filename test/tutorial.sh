@@ -68,7 +68,7 @@ if ! out=$("$GWEB" -C "$WORK/app" build 2>&1); then
   echo "$out"
 else
   ok
-  "$WORK/app/.gooseweb/server" --port "$PORT" >/dev/null 2>&1 &
+  "$WORK/app/.gweb/server" --port "$PORT" >/dev/null 2>&1 &
   PID=$!
   up=""
   for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do

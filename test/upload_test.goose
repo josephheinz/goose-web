@@ -12,7 +12,7 @@ var failures = 0;
 var checks = 0;
 var spool_n = 0;
 
-const DIR = ".gooseweb.upload-test";
+const DIR = ".gweb.upload-test";
 const B = "----gwTestBoundary7MA4YWxk";
 
 fn check(ok: bool, what: const u8[:]) {

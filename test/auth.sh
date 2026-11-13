@@ -49,7 +49,7 @@ token() { sed -n 's/.*name="_csrf" value="\([^"]*\)".*/\1/p' "$WORK/$1.b" | head
 
 # start [ENV=VALUE ...]: the built server on $PORT, waiting until it answers.
 start() {
-  (cd "$WORK/ok" && exec env "$@" ./.gooseweb/server --port "$PORT" --dev-id 5 >/dev/null 2>&1) &
+  (cd "$WORK/ok" && exec env "$@" ./.gweb/server --port "$PORT" --dev-id 5 >/dev/null 2>&1) &
   PID=$!
   for i in 1 2 3 4 5 6 7 8 9 10; do
     sleep 0.5
@@ -159,8 +159,8 @@ fi
 # 3. Production without GWEB_SECRET refuses to start.
 cp -R "$WORK/ok" "$WORK/prod"
 rm -f "$WORK/prod/.env.development" "$WORK/prod/.env.local" "$WORK/prod/.env.production.local" "$WORK/prod/.env.production"
-rm -rf "$WORK/prod/.gooseweb.dev"
-out=$(cd "$WORK/prod" && env -u GWEB_SECRET GWEB_ENV=production ./.gooseweb/server --port "$PORT" 2>&1)
+rm -rf "$WORK/prod/.gweb.dev"
+out=$(cd "$WORK/prod" && env -u GWEB_SECRET GWEB_ENV=production ./.gweb/server --port "$PORT" 2>&1)
 code=$?
 check "$([ "$code" = 2 ] && case "$out" in (*"set GWEB_SECRET"*) echo ok ;; esac)" "production without GWEB_SECRET: exit 2 and the message, got $code '$out'"
 

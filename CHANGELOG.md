@@ -62,7 +62,7 @@ Needs the matching goose-net release (spool mode, `net::Hub`, `Loop.detach`, chu
 
 - Forms: a `*Form` struct in `page.goose` or `route.goose` gets a generated `decode`. New `web::valid`: `FieldErrors`, `check_email`, `check_range`, `check_length`, `check_one_of`, `field_error`, `invalid`, `field_value`, `errors_json`, `set_status`, `unprocessable`.
 - 422: a form with errors answers 422. `gwi.js` morphs a 422 fragment reply instead of refusing it.
-- Uploads: multipart posts, `web::Upload`, `save_upload`, `check_upload`, `const MAX_UPLOAD`. Flags `--max-upload N` (default 32 MiB) and `--upload-dir D` (default `.gooseweb.uploads`). Large bodies are spooled to disk. `gw-target` forms with `enctype="multipart/form-data"` send `FormData`.
+- Uploads: multipart posts, `web::Upload`, `save_upload`, `check_upload`, `const MAX_UPLOAD`. Flags `--max-upload N` (default 32 MiB) and `--upload-dir D` (default `.gweb.uploads`). Large bodies are spooled to disk. `gw-target` forms with `enctype="multipart/form-data"` send `FormData`.
 - Error pages: `error.html` (nearest wins) and `web::fail`. A crashed request now gets the error page instead of hanging; `gweb dev` shows the abort text and source lines. Build errors in the dev overlay get source lines.
 - `loading.html` and `gw-loading`: a loading state for slow fragment requests.
 - A page `fn POST` or `fn load` may take `res`; `web::done(ctx)` ends the reply itself.
@@ -116,7 +116,7 @@ Needs the matching goose-net release (spool mode, `net::Hub`, `Loop.detach`, chu
 
 ## v0.2.1
 
-- Fix: `gweb test` no longer deletes `.gooseweb/`; it generates into `.gooseweb.test/`. Add `.gooseweb.test/` to `.gitignore`.
+- Fix: `gweb test` no longer deletes `.gweb/`; it generates into `.gweb.test/`. Add `.gweb.test/` to `.gitignore`.
 
 Pins goose-net v0.2.1 and goose-sqlite v0.2.1.
 

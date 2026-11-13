@@ -1,7 +1,7 @@
 // component: the .gshtml component translator. gweb calls compile() once for each
 // components/Name.gshtml.
 //
-// .gooseweb/Name.goose stays line for line with the source, so a Goose compiler
+// .gweb/Name.goose stays line for line with the source, so a Goose compiler
 // error maps back to its markup line; gw_check, gw_json and component follow
 // the last source line. _gw/Name.js is the browser module.
 

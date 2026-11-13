@@ -105,7 +105,7 @@ stamp() { sed -n 's/.*<!--stamp:\([0-9]*\)-->.*/\1/p' "$WORK/$1.b" | head -n 1; 
 # Starts the server and polls up to 30 s. A zombie passes kill -0 under dash, so ps decides.
 alive() { [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null && case "$(ps -o stat= -p "$PID" 2>/dev/null)" in ''|Z*) return 1 ;; esac; }
 start() {
-  (cd "$WORK/site" && exec ./.gooseweb/server --port "$PORT" --workers 1 >"$WORK/server.log" 2>&1) &
+  (cd "$WORK/site" && exec ./.gweb/server --port "$PORT" --workers 1 >"$WORK/server.log" 2>&1) &
   PID=$!
   deadline=$(( $(date +%s) + 30 ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
@@ -288,7 +288,7 @@ check "$([ "$(status am)" = 200 ] && echo ok)" "the server still answers after t
 # 2i. Logout, then the guard again.
 # 2i. Four workers: every worker drops its cache at the epoch, and every reader sees the committed write.
 stop
-(cd "$WORK/site" && exec ./.gooseweb/server --port "$PORT" --workers 4 >"$WORK/server4.log" 2>&1) &
+(cd "$WORK/site" && exec ./.gweb/server --port "$PORT" --workers 4 >"$WORK/server4.log" 2>&1) &
 PID=$!
 deadline=$(( $(date +%s) + 30 ))
 up=""

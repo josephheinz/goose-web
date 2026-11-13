@@ -16,7 +16,7 @@ Template examples here use the current syntax. The final spelling of `{{#fragmen
 Prototype in `/private/tmp/claude-501/-Users-joeheinz-Documents/4ae17d8b-d8e8-4e87-98d8-883f15c4658c/scratchpad/arch-fragments/w/` (a copy of goose-web, goose-net and goose-sqlite).
 
 **Verified by building and running:**
-- **Server side:** `web.goose` with the `Ctx` field and the `run_worker` line, `form.goose` exactly as in section 3, and the generated code of section 4 (hand-edited into the shop's `.gooseweb/`) compile with `goose build` and behave as specified under curl.
+- **Server side:** `web.goose` with the `Ctx` field and the `run_worker` line, `form.goose` exactly as in section 3, and the generated code of section 4 (hand-edited into the shop's `.gweb/`) compile with `goose build` and behave as specified under curl.
   - A fragment reply has only the region, the `GW-Fragment` echo, `Cache-Control: no-store`, and no dev script under `--dev-id`.
   - An unknown fragment name gives the whole page without the echo.
   - POST, form decoding (`+`, `%XX`, UTF-8, escaping), the 403 on `Sec-Fetch-Site: cross-site`, and the 405 with `Allow: GET, HEAD, POST, OPTIONS` all work.
@@ -393,7 +393,7 @@ Benchmark pages, `/todos` included, stay byte-identical.
 
 Same shape as `components.sh`.
 
-1. **An ok project,** built and started as `.gooseweb/server --port P --dev-id 5`. Curl checks:
+1. **An ok project,** built and started as `.gweb/server --port P --dev-id 5`. Curl checks:
    - the fragment reply's bytes are a substring of the whole page;
    - the echo header and `no-store` are present;
    - a fragment reply has no `__gweb/id`, while the whole page has it;
@@ -475,7 +475,7 @@ Same shape as `components.sh`.
 - **Unverified:** the 303-follow path, non-Chromium browsers, and all gweb-side code.
 - **Size:** 3,133 of 3,584 bytes. Any v2 swap mode will need the limit raised again.
 
-Prototype files: `/private/tmp/claude-501/-Users-joeheinz-Documents/4ae17d8b-d8e8-4e87-98d8-883f15c4658c/scratchpad/arch-fragments/w/goose-web/client/gwi.js`, `/private/tmp/claude-501/-Users-joeheinz-Documents/4ae17d8b-d8e8-4e87-98d8-883f15c4658c/scratchpad/arch-fragments/w/goose-web/form.goose`, `/private/tmp/claude-501/-Users-joeheinz-Documents/4ae17d8b-d8e8-4e87-98d8-883f15c4658c/scratchpad/arch-fragments/w/goose-web/web.goose`, and the hand-edited generated code in `/private/tmp/claude-501/-Users-joeheinz-Documents/4ae17d8b-d8e8-4e87-98d8-883f15c4658c/scratchpad/arch-fragments/w/goose-web/examples/shop/.gooseweb/`. Nothing outside the scratchpad was written, and nothing was committed.
+Prototype files: `/private/tmp/claude-501/-Users-joeheinz-Documents/4ae17d8b-d8e8-4e87-98d8-883f15c4658c/scratchpad/arch-fragments/w/goose-web/client/gwi.js`, `/private/tmp/claude-501/-Users-joeheinz-Documents/4ae17d8b-d8e8-4e87-98d8-883f15c4658c/scratchpad/arch-fragments/w/goose-web/form.goose`, `/private/tmp/claude-501/-Users-joeheinz-Documents/4ae17d8b-d8e8-4e87-98d8-883f15c4658c/scratchpad/arch-fragments/w/goose-web/web.goose`, and the hand-edited generated code in `/private/tmp/claude-501/-Users-joeheinz-Documents/4ae17d8b-d8e8-4e87-98d8-883f15c4658c/scratchpad/arch-fragments/w/goose-web/examples/shop/.gweb/`. Nothing outside the scratchpad was written, and nothing was committed.
 
 ## Follow-up 1
 

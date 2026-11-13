@@ -207,7 +207,7 @@ From a handler, the owner, or another job: `jobs::enqueue(ctx, jobs::Job.Welcome
 
 **Docker:** `gweb new` writes a `Dockerfile` and a `.dockerignore`:
 - **Build stage** `debian:bookworm-slim`: `gcc`, `libsqlite3-dev`, `git`, `ca-certificates`, `curl`; the Goose compiler from `ARG GOOSE_URL` (a Linux release tarball; required, see Open questions); goose-web at `ARG GWEB_REF` (default the release tag); `goose build -o gweb cli/gweb.goose`; then `gweb build` in the app.
-- **Runtime stage** `debian:bookworm-slim`: `libsqlite3-0`, a non-root user, `COPY .gooseweb/server /app/server`, `WORKDIR /app`, `VOLUME /app/data`, `ENV PORT=3000 TZ=UTC GWEB_LOG_FORMAT=json`, `EXPOSE 3000`, `STOPSIGNAL SIGTERM`, `HEALTHCHECK CMD ["/app/server", "--probe"]`, `CMD ["/app/server"]`.
+- **Runtime stage** `debian:bookworm-slim`: `libsqlite3-0`, a non-root user, `COPY .gweb/server /app/server`, `WORKDIR /app`, `VOLUME /app/data`, `ENV PORT=3000 TZ=UTC GWEB_LOG_FORMAT=json`, `EXPOSE 3000`, `STOPSIGNAL SIGTERM`, `HEALTHCHECK CMD ["/app/server", "--probe"]`, `CMD ["/app/server"]`.
 - The server handles SIGTERM as PID 1 itself (Decision 2), so it needs no `--init`.
 
 **Windows:** not supported natively. The server uses POSIX sockets, `poll`, `socketpair`, pthreads, `fork`/`exec` and signals; `gweb` uses `posix_spawn`, `popen` and `ftw`. Supported routes: WSL2 (the Linux build) and Docker Desktop (the image). A native port would need a Winsock poll loop (or IOCP), a replacement for the socketpair owner channels, console control events instead of signals, and no handoff. It is not planned (see Open questions).

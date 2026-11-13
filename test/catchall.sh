@@ -51,7 +51,7 @@ repeat() { python3 -I -c 'import sys; sys.stdout.write(sys.argv[1] * int(sys.arg
 # 1. The site.
 cp -R "$HERE/catchall/site" "$WORK/ok"
 if out=$("$GWEB" -C "$WORK/ok" build --no-minify 2>&1); then
-  "$WORK/ok/.gooseweb/server" --port "$PORT" >/dev/null 2>&1 &
+  "$WORK/ok/.gweb/server" --port "$PORT" >/dev/null 2>&1 &
   PID=$!
   up=""
   for i in 1 2 3 4 5 6 7 8 9 10; do

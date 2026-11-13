@@ -248,8 +248,8 @@ differs from every component's.
 `@Name(expr)` with one `Name::State` value, and re-renders the whole component on each event. Port them with
 Addendum 12 section 10; both styles in one file is an error.
 
-**Output.** `.gooseweb/Name.goose` keeps the source's lines, so compiler errors point at the `.gshtml`.
-`.gooseweb/_gw/Name.js` is the browser module: pretty under `gweb dev` (real names, a
+**Output.** `.gweb/Name.goose` keeps the source's lines, so compiler errors point at the `.gshtml`.
+`.gweb/_gw/Name.js` is the browser module: pretty under `gweb dev` (real names, a
 `// components/Name.gshtml:LINE` comment above each function), compact under `gweb build` and `gweb start`.
 The page gets the server render, the state as JSON, and `<script type="module" src="/_gw/Name.js">`. The core
 runtime is `client/gwi.js` in dev and `client/gwi.min.js` otherwise; optional modules (`gwf`, `gwh`, `gwl`,
@@ -261,8 +261,8 @@ slices, `as`, bitwise operators, char literals, generics, globals and imports. C
 else as `components/Name.gshtml:LINE: error:`.
 
 **`gweb test`.** Runs each `test_*` function (and a zero case) as Goose and as JavaScript, pretty and compact,
-and compares the state and the render byte for byte. Needs `node`. It generates into `.gooseweb.test/`, so a
-built `.gooseweb/server` and a running `gweb dev` are untouched.
+and compares the state and the render byte for byte. Needs `node`. It generates into `.gweb.test/`, so a
+built `.gweb/server` and a running `gweb dev` are untouched.
 
 **Tests of this package.** `test/components.sh` (parity fixtures in `test/components/`, `Fail*` per error,
 `Warn*` per warning), `test/runtime.sh` (minified modules are current and under their size ceilings, then the
@@ -280,19 +280,19 @@ precision in the browser. Component state lives in the page only. Handlers get n
 
 ```
 gweb [-C dir] new <dir>      a starter project
-gweb gen                     write .gooseweb/ only
-gweb build [--debug]         gen, then goose build to .gooseweb/server
+gweb gen                     write .gweb/ only
+gweb build [--debug]         gen, then goose build to .gweb/server
 gweb start [flags]           build and run (--port N --host H --workers N --log --idle-ms N --max-body N --max-upload N --upload-dir D --csp)
 gweb export [-o DIR]         build, then write the site as static files to DIR (default out/)
 gweb dev [flags]             build, run with --log on 2 workers and port 60053 (unless --port), rebuild on change
 gweb routes                  the route table (GET,POST and a frag line for each fragment)
-gweb test                    component parity (test_* as Goose and JavaScript), then tests/*.goose route tests (writes .gooseweb.test/; leaves .gooseweb/ alone)
+gweb test                    component parity (test_* as Goose and JavaScript), then tests/*.goose route tests (writes .gweb.test/; leaves .gweb/ alone)
 gweb check                   goose check on a copy of the site; errors name .gshtml and page.html lines
 gweb lsp                     language server for .gshtml and templates (needs node)
 gweb version                 the gweb version and the package sources it declares
 ```
 
-Server flags (`gweb start`, `.gooseweb/server`; env in `docs/DEPLOY.md`):
+Server flags (`gweb start`, `.gweb/server`; env in `docs/DEPLOY.md`):
 
 ```
 --drain-ms N          drain time after SIGTERM before connections are cut (10000; dev 200)
@@ -612,7 +612,7 @@ GWEB_SECRET=3f1c...64 hex digits...   # openssl rand -hex 32
 - `GWEB_SECRET` is 1 to 4 comma-separated keys of 32 to 64 bytes. The first signs, all verify, so
   you rotate by putting the new key first. Put it in `.env*.local` (git-ignored by `gweb new`) or the
   real environment, never in a committed `.env`.
-- `gweb dev` makes a throwaway key in `.gooseweb.dev/secret` when none is set. Production refuses to
+- `gweb dev` makes a throwaway key in `.gweb.dev/secret` when none is set. Production refuses to
   start without `GWEB_SECRET` when the app uses sessions or signed cookies.
 - Read your own settings with `gweb::env_str`, `env_int`, `env_bool` and `env_required`. An
   optional `app/config.goose` with `fn check() -> bool` runs before the server listens; false exits 2.
@@ -805,7 +805,7 @@ gweb::save_upload(p.form.photo, dest);            // false if dest exists; the f
 ```
 
 - `--max-upload N` (default 32 MiB) caps a multipart body; `--max-body` still caps everything else.
-  A multipart body over 64 KiB is spooled to a file in `--upload-dir D` (default `.gooseweb.uploads`) as it arrives.
+  A multipart body over 64 KiB is spooled to a file in `--upload-dir D` (default `.gweb.uploads`) as it arrives.
   One server per upload dir: files left by an earlier run are deleted at start.
 - Limits: 8 files, 64 parts, 64 KiB per text field. A malformed body is a 400, a ninth file a 413.
 - Unsaved files are deleted after the response. Use `gweb::save_upload` to keep one.
@@ -1135,7 +1135,7 @@ Rules for authors:
 ## i18n
 
 `locales/default` holds the default locale's tag (`en`). `locales/<tag>.txt` holds one catalog per locale; `<tag>` is
-like `en`, `de` or `pt-BR`. `gweb` compiles them to `.gooseweb/t.goose`, and pages and layouts can call `t::` (a route, middleware or `lib/` file writes `import t;`).
+like `en`, `de` or `pt-BR`. `gweb` compiles them to `.gweb/t.goose`, and pages and layouts can call `t::` (a route, middleware or `lib/` file writes `import t;`).
 
 ```
 # locales/en.txt

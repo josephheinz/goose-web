@@ -14,7 +14,7 @@
 # 2d. test/components/site: a component with literal http::get and http::post urls and the route.goose that
 #    answers them (Name::gw_json) builds; the server sends the JSON and /_gw/gwh.js; gweb gen writes gwh.js only
 #    for a site that uses http.
-# 3. gweb test leaves .gooseweb/ alone: the built server and main.goose keep
+# 3. gweb test leaves .gweb/ alone: the built server and main.goose keep
 #    their checksums across a test run.
 #
 # Needs node, and gweb built beside this folder (goose build -o gweb cli/gweb.goose).
@@ -126,7 +126,7 @@ cp -R "$HERE/components/site" "$WORK/site"
 if out=$("$GWEB" -C "$WORK/site" build --strict 2>&1); then
   ok
   PORT=${PORT:-$((4000 + $$ % 900))}
-  "$WORK/site/.gooseweb/server" --port "$PORT" >/dev/null 2>&1 &
+  "$WORK/site/.gweb/server" --port "$PORT" >/dev/null 2>&1 &
   SPID=$!
   up=""
   for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -149,7 +149,7 @@ cp -R "$WORK/ok/app" "$WORK/ok/components" "$WORK/ok/stores" "$WORK/nohttp/"
 rm "$WORK/nohttp/components/RFetch.gshtml"
 rm "$WORK/nohttp/components/RClockAsync.gshtml"
 if "$GWEB" -C "$WORK/nohttp" gen >/dev/null 2>&1; then
-  if [ -e "$WORK/nohttp/.gooseweb/_gw/gwh.js" ]; then bad "gwh.js was written for a site without http"; else ok; fi
+  if [ -e "$WORK/nohttp/.gweb/_gw/gwh.js" ]; then bad "gwh.js was written for a site without http"; else ok; fi
 else
   bad "gweb gen without RFetch"
 fi
@@ -159,33 +159,33 @@ mkdir -p "$WORK/nolife"
 cp -R "$WORK/nohttp/app" "$WORK/nohttp/components" "$WORK/nohttp/stores" "$WORK/nolife/"
 rm "$WORK/nolife/components/RClock.gshtml" "$WORK/nolife/components/RWatch.gshtml" "$WORK/nolife/components/RCartBadge.gshtml" "$WORK/nolife/components/RCartButton.gshtml"
 if "$GWEB" -C "$WORK/nolife" gen >/dev/null 2>&1; then
-  if [ -e "$WORK/nolife/.gooseweb/_gw/gwl.js" ]; then bad "gwl.js was written for a site without lifecycle"; else ok; fi
+  if [ -e "$WORK/nolife/.gweb/_gw/gwl.js" ]; then bad "gwl.js was written for a site without lifecycle"; else ok; fi
 else
   bad "gweb gen without RClock"
 fi
-if [ -e "$WORK/nohttp/.gooseweb/_gw/gwl.js" ]; then ok; else bad "gwl.js is not written for a site with lifecycle"; fi
+if [ -e "$WORK/nohttp/.gweb/_gw/gwl.js" ]; then ok; else bad "gwl.js is not written for a site with lifecycle"; fi
 
 # gwc.js is written only for a site where a component calls a child.
 mkdir -p "$WORK/nokids"
 cp -R "$WORK/nolife/app" "$WORK/nolife/components" "$WORK/nolife/stores" "$WORK/nokids/"
 rm "$WORK/nokids/components/RNest.gshtml" "$WORK/nokids/components/RNestEvent.gshtml"
 if "$GWEB" -C "$WORK/nokids" gen >/dev/null 2>&1; then
-  if [ -e "$WORK/nokids/.gooseweb/_gw/gwc.js" ]; then bad "gwc.js was written for a site without child components"; else ok; fi
+  if [ -e "$WORK/nokids/.gweb/_gw/gwc.js" ]; then bad "gwc.js was written for a site without child components"; else ok; fi
 else
   bad "gweb gen without RNest"
 fi
-if [ -e "$WORK/nolife/.gooseweb/_gw/gwc.js" ]; then ok; else bad "gwc.js is not written for a site with child components"; fi
+if [ -e "$WORK/nolife/.gweb/_gw/gwc.js" ]; then ok; else bad "gwc.js is not written for a site with child components"; fi
 
 # gws.js is written only for a site that has a store; a store is served as /_gw/Name.js.
 mkdir -p "$WORK/nostores"
 cp -R "$WORK/nokids/app" "$WORK/nokids/components" "$WORK/nostores/"
 rm "$WORK/nostores/components/RCartBadge.gshtml" "$WORK/nostores/components/RCartButton.gshtml" 2>/dev/null
 if "$GWEB" -C "$WORK/nostores" gen >/dev/null 2>&1; then
-  if [ -e "$WORK/nostores/.gooseweb/_gw/gws.js" ]; then bad "gws.js was written for a site without stores"; else ok; fi
+  if [ -e "$WORK/nostores/.gweb/_gw/gws.js" ]; then bad "gws.js was written for a site without stores"; else ok; fi
 else
   bad "gweb gen without stores"
 fi
-if [ -e "$WORK/nokids/.gooseweb/_gw/gws.js" ] && [ -e "$WORK/nokids/.gooseweb/_gw/RCart.js" ]; then ok; else bad "gws.js and RCart.js are not written for a site with a store"; fi
+if [ -e "$WORK/nokids/.gweb/_gw/gws.js" ] && [ -e "$WORK/nokids/.gweb/_gw/RCart.js" ]; then ok; else bad "gws.js and RCart.js are not written for a site with a store"; fi
 
 # A store and a component cannot share a name.
 mkdir -p "$WORK/samename/app" "$WORK/samename/stores" "$WORK/samename/components"
@@ -196,21 +196,21 @@ if out=$("$GWEB" -C "$WORK/samename" build 2>&1); then bad "a store and a compon
   case "$out" in *"stores/RCart.gshtml: error: a store and a component cannot have the same name"*) ok ;; *) bad "same name: got $out" ;; esac
 fi
 
-# 3. gweb test leaves .gooseweb/ alone.
+# 3. gweb test leaves .gweb/ alone.
 mkdir -p "$WORK/keep"
 cp -R "$WORK/ok/app" "$WORK/ok/components" "$WORK/ok/stores" "$WORK/keep/"
 if "$GWEB" -C "$WORK/keep" test >/dev/null 2>&1; then
-  if [ -e "$WORK/keep/.gooseweb" ]; then bad "gweb test created .gooseweb/"; else ok; fi
-  if [ -x "$WORK/keep/.gooseweb.test/parity/components_test" ]; then ok; else bad "gweb test did not write .gooseweb.test/parity/components_test"; fi
+  if [ -e "$WORK/keep/.gweb" ]; then bad "gweb test created .gweb/"; else ok; fi
+  if [ -x "$WORK/keep/.gweb.test/parity/components_test" ]; then ok; else bad "gweb test did not write .gweb.test/parity/components_test"; fi
 else
-  bad "gweb test in a project with no .gooseweb/"
+  bad "gweb test in a project with no .gweb/"
 fi
 if "$GWEB" -C "$WORK/keep" build >/dev/null 2>&1; then
-  before=$(cksum "$WORK/keep/.gooseweb/server" "$WORK/keep/.gooseweb/main.goose")
+  before=$(cksum "$WORK/keep/.gweb/server" "$WORK/keep/.gweb/main.goose")
   if "$GWEB" -C "$WORK/keep" test >/dev/null 2>&1; then ok; else bad "second gweb test"; fi
-  after=$(cksum "$WORK/keep/.gooseweb/server" "$WORK/keep/.gooseweb/main.goose")
-  if [ "$before" = "$after" ]; then ok; else bad "gweb test changed .gooseweb/server or main.goose"; fi
-  if [ -x "$WORK/keep/.gooseweb/server" ]; then ok; else bad ".gooseweb/server is not executable after gweb test"; fi
+  after=$(cksum "$WORK/keep/.gweb/server" "$WORK/keep/.gweb/main.goose")
+  if [ "$before" = "$after" ]; then ok; else bad "gweb test changed .gweb/server or main.goose"; fi
+  if [ -x "$WORK/keep/.gweb/server" ]; then ok; else bad ".gweb/server is not executable after gweb test"; fi
 else
   bad "gweb build in the keep project"
 fi

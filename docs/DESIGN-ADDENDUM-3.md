@@ -44,7 +44,7 @@ Done when: editing `page.html` reloads an open page within about a second; a bro
 ## E1. Files, names, embedding
 
 - **Location:** `islands/Name.gshtml` at the project root, flat. `Name` matches `[A-Z][A-Za-z0-9]*` and is not a JS reserved word.
-- **Namespace:** `Name` itself. Goose output is `.gooseweb/Name.goose`, so `page.goose` may write `import TodoBox;` and use `TodoBox::State`.
+- **Namespace:** `Name` itself. Goose output is `.gweb/Name.goose`, so `page.goose` may write `import TodoBox;` and use `TodoBox::State`.
 - **File shape:** line 1 is exactly `<script goose>`; a line that is exactly `</script>` ends the block; markup follows. No `import` or `namespace` inside the block.
 - **Required:** `struct State { … }`. Handlers are functions whose first parameter is `s: State&`. Markup refers to the state as `s`.
 - **Embedding:** `{{island Name(expr)}}` in any `page.html`, `layout.html` or `not-found.html`. `expr` is a Goose expression of type `Name::State`, usually `props.todo_state`. It compiles to `Name::island(out, expr);`. An unknown `Name` is a gen error at that line.
@@ -70,7 +70,7 @@ fn emit_zero(js_out: u8[>..]&)
 
 `gweb.goose` gains `scan_islands()`, `gen_islands()` (called in `gen()` before the templates), a `{{island …}}` case in `compile_template`, and `test_cmd()`.
 
-**Goose output `.gooseweb/Name.goose`**, line-for-line with the source:
+**Goose output `.gweb/Name.goose`**, line-for-line with the source:
 
 | Source line | Output line |
 |---|---|
@@ -108,7 +108,7 @@ fn has(a: const u8[:], b: const u8[:]) -> bool
 - `bind:checked="field"` becomes `{{#if s.field}}checked{{/if}} data-bind="field"`.
 - `field` is a direct `State` field of kind `Int`, `Bool` or `Str`.
 
-**JS output `.gooseweb/_gw/Name.js`:** one module.
+**JS output `.gweb/_gw/Name.js`:** one module.
 
 ```js
 import { island, esc, at, set, rm, blen, cap, idiv, imod } from "./gwi.js";
@@ -119,8 +119,8 @@ island("Name", { render, zero, handlers: { add, toggle }, tests: { test_basic } 
 ```
 
 **Serving:**
-- gweb copies `<goose-web>/client/gwi.js` to `.gooseweb/_gw/gwi.js`, dropping lines that are only a `//` comment and leading indentation.
-- `gen_islands` pushes a `Static` for `/_gw/gwi.js` and each `/_gw/Name.js` (`file` = `.gooseweb/_gw/…`, `ctype` = `text/javascript; charset=utf-8`, the same FNV ETag). `gen_static` embeds them unchanged.
+- gweb copies `<goose-web>/client/gwi.js` to `.gweb/_gw/gwi.js`, dropping lines that are only a `//` comment and leading indentation.
+- `gen_islands` pushes a `Static` for `/_gw/gwi.js` and each `/_gw/Name.js` (`file` = `.gweb/_gw/…`, `ctype` = `text/javascript; charset=utf-8`, the same FNV ETag). `gen_static` embeds them unchanged.
 - One file per island plus the shared runtime; no bundling, no minifier.
 - A `public/_gw/` folder is a gen error.
 
@@ -195,10 +195,10 @@ Start from `e_study/proto/gen/gwi.js`.
 
 ## E5. Parity harness: `gweb test`
 
-- For each island gweb writes `.gooseweb/test/main.goose`: for every `test_*` function, `var s = Name::State { .. }; Name::test_x(s);`, then print `== Name test_x`, the `gw_json` line, the render, and `== end`. A case `zero` (no test function) is always added.
-- Build with `goose build -o .gooseweb/test/islands_test`, run it into `.gooseweb/test/goose.out`.
-- gweb writes `.gooseweb/test/run.mjs`: stub `globalThis.document = { addEventListener() {} }`, import each `../_gw/Name.js`, run `zero()` and each test, then compare the state by deep equality with the parsed Goose JSON and the render byte for byte. It prints the first differing line per case and exits 1 on any difference.
-- gweb runs `node .gooseweb/test/run.mjs`. Without `node` on PATH: `gweb test needs node`.
+- For each island gweb writes `.gweb/test/main.goose`: for every `test_*` function, `var s = Name::State { .. }; Name::test_x(s);`, then print `== Name test_x`, the `gw_json` line, the render, and `== end`. A case `zero` (no test function) is always added.
+- Build with `goose build -o .gweb/test/islands_test`, run it into `.gweb/test/goose.out`.
+- gweb writes `.gweb/test/run.mjs`: stub `globalThis.document = { addEventListener() {} }`, import each `../_gw/Name.js`, run `zero()` and each test, then compare the state by deep equality with the parsed Goose JSON and the render byte for byte. It prints the first differing line per case and exits 1 on any difference.
+- gweb runs `node .gweb/test/run.mjs`. Without `node` on PATH: `gweb test needs node`.
 - goose-web's own suite: `test/islands/*.gshtml`, run by `test/islands.sh`, covering:
   - every statement and expression form;
   - `/` and `%` with each sign combination;
@@ -212,7 +212,7 @@ E counts as done when that suite, `gweb test` in the shop, and the browser test 
 
 ## E6. Phases
 
-1. **Server side.** Scan, split, parser, `.gooseweb/Name.goose`, `{{island}}`, `gw_json`, `gw_check`. Done: the shop's island pages render as static HTML with the JSON block; a type error in a handler or an `on:` call is reported at its `.gshtml` line; unsupported forms give the errors above.
+1. **Server side.** Scan, split, parser, `.gweb/Name.goose`, `{{island}}`, `gw_json`, `gw_check`. Done: the shop's island pages render as static HTML with the JSON block; a type error in a handler or an `on:` call is reported at its `.gshtml` line; unsupported forms give the errors above.
 2. **JS and parity.** JS emitter, `zero`, `gweb test`. Done: `test/islands.sh` and the shop's `gweb test` pass.
 3. **Runtime and serving.** `client/gwi.js`, `/_gw/` statics, events, binding, morph, rollback. Done: the browser test passes and `check_site.py` passes.
 
@@ -317,15 +317,15 @@ where `SRC_HASH` is the FNV-1a hash of `client/gwi.js`. `test/islands.sh` fails 
 
 **How errors reach the browser**
 
-- gweb writes the error text to `.gooseweb.dev/errors.txt` in the project. This folder is separate from `.gooseweb/`, which `gen` wipes.
+- gweb writes the error text to `.gweb.dev/errors.txt` in the project. This folder is separate from `.gweb/`, which `gen` wipes.
 - `cli/gweb.goose`: `err()` and `build()` also append what they print to a new global `var last_errors: u8[>..];` (the rewritten `path:line: error:` text, island translator errors included, capped at 16 KB).
 - In `dev()`:
-  - at start, create `.gooseweb.dev/` and write an empty `errors.txt`;
+  - at start, create `.gweb.dev/` and write an empty `errors.txt`;
   - on a failed build, write `last_errors` to it;
   - on a good build, write it empty before spawning the new server.
-- `gweb new` adds `.gooseweb.dev/` to the scaffold's `.gitignore`, alongside `.gooseweb/`.
+- `gweb new` adds `.gweb.dev/` to the scaffold's `.gitignore`, alongside `.gweb/`.
 
-**Endpoint (this changes section A):** the path stays `/__gweb/id`. The body becomes the id on line 1, then the contents of `.gooseweb.dev/errors.txt` (nothing when the file is empty or missing). Still `text/plain`, `Cache-Control: no-store`, not logged, and only when `cfg.dev_id != 0`.
+**Endpoint (this changes section A):** the path stays `/__gweb/id`. The body becomes the id on line 1, then the contents of `.gweb.dev/errors.txt` (nothing when the file is empty or missing). Still `text/plain`, `Cache-Control: no-store`, not logged, and only when `cfg.dev_id != 0`.
 
 ```goose
 // web.goose
@@ -350,7 +350,7 @@ setInterval(function(){fetch("/__gweb/id",{cache:"no-store"}).then(function(r){r
 
 **Island runtime errors:** `client/gwi.js`, after rolling back a failed handler, also does `dispatchEvent(new CustomEvent("gw:error", { detail: String(err) }))`. In dev the script above shows it; in production nothing listens.
 
-**Production:** no `--dev-id`, so no endpoint, no script, and `.gooseweb.dev/` is never read.
+**Production:** no `--dev-id`, so no endpoint, no script, and `.gweb.dev/` is never read.
 
 **Limit:** if the very first build fails there is no server yet, so the errors are in the terminal only.
 

@@ -32,7 +32,7 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
   # An @call inside an attribute value is not read as attributes (unknown-attribute warning).
   if echo "$out" | grep -q 'unknown attribute'; then bad "@asset in an attribute warns: $out"; else ok; fi
   # SITE_URL, with a trailing slash, makes the @meta() URLs independent of the port.
-  SITE_URL=https://example.com/ "$WORK/ok/.gooseweb/server" --port "$PORT" >/dev/null 2>&1 &
+  SITE_URL=https://example.com/ "$WORK/ok/.gweb/server" --port "$PORT" >/dev/null 2>&1 &
   PID=$!
   got=""
   for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -94,13 +94,13 @@ fi
 # CSS minifier cases, and --no-minify.
 if "$GWEB" test-css >"$WORK/css.out" 2>&1; then ok; else bad "gweb test-css:"; sed 's/^/    /' "$WORK/css.out"; fi
 cp -R "$HERE/templates/site" "$WORK/nm"
-rm -rf "$WORK/nm/.gooseweb"
+rm -rf "$WORK/nm/.gweb"
 "$GWEB" -C "$WORK/nm" gen --no-minify >/dev/null 2>&1
-if [ -d "$WORK/nm/.gooseweb" ] && [ -z "$(ls "$WORK/nm/.gooseweb/_pub" 2>/dev/null)" ] && [ -n "$(ls "$WORK/ok/.gooseweb/_pub" 2>/dev/null)" ]; then ok; else bad "--no-minify did not skip the minified copies, or the default did not write them"; fi
+if [ -d "$WORK/nm/.gweb" ] && [ -z "$(ls "$WORK/nm/.gweb/_pub" 2>/dev/null)" ] && [ -n "$(ls "$WORK/ok/.gweb/_pub" 2>/dev/null)" ]; then ok; else bad "--no-minify did not skip the minified copies, or the default did not write them"; fi
 
 # 2. Expected failures. The page is <p>x</p>, the case on line 2, <p>y</p>.
 cp -R "$HERE/templates/site" "$WORK/f"
-rm -rf "$WORK/f/.gooseweb"
+rm -rf "$WORK/f/.gweb"
 PAGE='<p>x</p>
 %s
 <p>y</p>

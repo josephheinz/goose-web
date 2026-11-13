@@ -2,12 +2,12 @@
 test/*
 !test/*.*
 !test/*/
-.gooseweb/
-.gooseweb.dev/
-.gooseweb.test/
+.gweb/
+.gweb.dev/
+.gweb.test/
 .env*.local
-.gooseweb.lsp/
-.gooseweb.check/
+.gweb.lsp/
+.gweb.check/
 *.o
 *.dSYM/
 *.db-journal

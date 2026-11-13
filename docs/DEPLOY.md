@@ -1,6 +1,6 @@
 # Deploying gweb
 
-An app builds to one native binary, `.gooseweb/server`. It serves plain HTTP, reads a few flags and
+An app builds to one native binary, `.gweb/server`. It serves plain HTTP, reads a few flags and
 environment variables, and writes logs to stdout. Design: [DESIGN-ADDENDUM-16-OPERATIONS.md](DESIGN-ADDENDUM-16-OPERATIONS.md).
 
 ## Build on Linux
@@ -11,7 +11,7 @@ Goose compiler, `gcc`, `libsqlite3-dev` (only when the app uses SQLite) and `git
 ```
 goose build -o gweb cli/gweb.goose        # once, in a gweb checkout
 GOOSE=/path/to/goose gweb build           # in the app
-.gooseweb/server --port 3000
+.gweb/server --port 3000
 ```
 
 Debian and Ubuntu (glibc) are the tested targets. Alpine (musl) should work and is not tested.

@@ -64,7 +64,7 @@ if [ -x "$ROOT/gweb" ]; then
   echo '<p>sse suite</p>' > "$WORK/app/page.html"
   cp "$HERE"/components/RCart*.gshtml "$WORK/components/"
   cp "$HERE"/components/stores/RCart.gshtml "$WORK/stores/"
-  if "$ROOT/gweb" -C "$WORK" gen >"$WORK/gen.log" 2>&1; then GWD="$WORK/.gooseweb/_gw"; else cat "$WORK/gen.log"; fi
+  if "$ROOT/gweb" -C "$WORK" gen >"$WORK/gen.log" 2>&1; then GWD="$WORK/.gweb/_gw"; else cat "$WORK/gen.log"; fi
 fi
 if JSDOM_DIR=$DIR GW_DIR=$GWD node "$HERE/sse_test.mjs"; then ok; else bad "test/sse_test.mjs"; fi
 [ -n "${WORK:-}" ] && rm -rf "$WORK"

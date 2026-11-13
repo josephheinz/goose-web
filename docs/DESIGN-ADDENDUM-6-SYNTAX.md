@@ -283,7 +283,7 @@ A build stops at the first scanner error on a line in a page template (as today)
 - A wrong field (`{ctx.nope}` on line 2) must report `app/page.html:2`.
 
 **Acceptance for the migration (run once by the builder)**
-1. Before touching anything: `gweb gen` in the shop, keep a copy of `.gooseweb/`.
+1. Before touching anything: `gweb gen` in the shop, keep a copy of `.gweb/`.
 2. After the change and the migration: `gweb gen` again; every file must be byte-identical to the copy.
 3. `test/components.sh` passes; `gweb test` passes in the shop.
 4. `check_site.py --components` passes, including the byte-identical `/products/42`.
@@ -315,7 +315,7 @@ Scratchpad: `/private/tmp/claude-501/-Users-joeheinz-Documents/4ae17d8b-d8e8-4e8
 
 **Verified by running the prototype**
 - `goose check` and `goose build` accept `tscan.goose`, `gweb.goose` and `component.goose`.
-- The shop's generated output is byte-identical: all 39 files in `.gooseweb/` (page templates, the three components' Goose, the compact JS) match the old gweb on the old syntax.
+- The shop's generated output is byte-identical: all 39 files in `.gweb/` (page templates, the three components' Goose, the compact JS) match the old gweb on the old syntax.
 - `test/components.sh` on the migrated suite: 33 passed, 0 failed; 36 parity cases pass, pretty and compact.
 - The shop built with the prototype passes `check_site.py --components`, and `/products/42` matches `baseline/products_42.html` byte for byte.
 - `gweb new` then `gweb build` works with the new scaffold, and the page renders.

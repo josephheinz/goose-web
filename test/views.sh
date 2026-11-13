@@ -35,12 +35,12 @@ fi
 if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then ok; else bad "gweb build of the views site"; show "$out"; fi
 
 # 4. Line numbers: the generated file starts with the user's lines.
-gen=$(sed -n '1p' "$WORK/ok/.gooseweb/v_widgets_Hero.goose")
+gen=$(sed -n '1p' "$WORK/ok/.gweb/v_widgets_Hero.goose")
 want=$(sed -n '1p' "$HERE/views/site/views/widgets/Hero.goose")
 case "$gen" in *"$want") ok ;; *) bad "line 1 of v_widgets_Hero.goose is the user's line 1 after the namespace prefix: '$gen'" ;; esac
 n=$(wc -l < "$HERE/views/site/views/widgets/Hero.goose" | tr -d ' ')
-check "$([ "$(sed -n "$((n + 2)),\$p" "$WORK/ok/.gooseweb/v_widgets_Hero.goose" | head -n 1)" = "// gweb: view codec, form and parser (generated)" ] && echo ok)" "the generated code follows the user's last line"
-check "$(grep -q 'v_widgets_Hero.goose	views/widgets/Hero.goose' "$WORK/ok/.gooseweb/map.txt" && grep -q 'v_widgets_Hero_html.goose	views/widgets/Hero.html' "$WORK/ok/.gooseweb/map.txt" && echo ok)" "map.txt maps the generated files to the sources"
+check "$([ "$(sed -n "$((n + 2)),\$p" "$WORK/ok/.gweb/v_widgets_Hero.goose" | head -n 1)" = "// gweb: view codec, form and parser (generated)" ] && echo ok)" "the generated code follows the user's last line"
+check "$(grep -q 'v_widgets_Hero.goose	views/widgets/Hero.goose' "$WORK/ok/.gweb/map.txt" && grep -q 'v_widgets_Hero_html.goose	views/widgets/Hero.html' "$WORK/ok/.gweb/map.txt" && echo ok)" "map.txt maps the generated files to the sources"
 
 # 2. A package's views.
 rm -rf "$WORK/pk"
@@ -129,7 +129,7 @@ else
   bad "gweb test of the variable Msg site failed:"; show "$out"
 fi
 if out=$("$GWEB" -C "$WORK/bm" build 2>&1); then
-  "$WORK/bm/.gooseweb/server" --port "$PORT" >/dev/null 2>&1 &
+  "$WORK/bm/.gweb/server" --port "$PORT" >/dev/null 2>&1 &
   PID=$!
   up=""
   for i in 1 2 3 4 5 6 7 8 9 10; do sleep 0.5; if curl -s -o /dev/null "http://127.0.0.1:$PORT/"; then up=1; break; fi; done

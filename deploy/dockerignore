@@ -1,5 +1,5 @@
 # Copy to .dockerignore. Build output is rebuilt in the image, and may be for another OS.
-.gooseweb*
+.gweb*
 gweb
 data
 *.db

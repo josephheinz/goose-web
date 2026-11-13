@@ -16,12 +16,12 @@ Files in `lib/` and in packages are not checked; use your usual Goose setup
 for them. Components map to the right line, not the exact column.
 
 Start the editor at the project root (the folder with `app/`). The server
-writes `.gooseweb.lsp/` there. Keep it out of git.
+writes `.gweb.lsp/` there. Keep it out of git.
 
 ## How it works
 
-It generates the project into `.gooseweb.lsp/`, starts `goose lsp` with
-`.gooseweb.lsp/main.goose` as its entry file, sends it the generated files
+It generates the project into `.gweb.lsp/`, starts `goose lsp` with
+`.gweb.lsp/main.goose` as its entry file, sends it the generated files
 (unsaved text included), and maps the diagnostics back. Only diagnostics for
 your files are shown. It reruns 250 ms after you stop
 typing.

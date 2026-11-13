@@ -88,7 +88,7 @@ struct AuthConfig { keys: Keys = Keys { .. }, idle: i64 = 86400, max: i64 = 2592
 ```
 
 - A malformed `WEB_SECRET` (a key under 32 or over 64 bytes, more than 4, an empty item) is a startup error and exit 2. The message never prints a key.
-- **Missing secret in development:** `config_from_args` reads `.gooseweb.dev/secret`, or makes it (32 random bytes as 64 hex digits, mode 0600 is not settable from Goose, so it is a dev-only file), so sessions survive `gweb dev` rebuilds.
+- **Missing secret in development:** `config_from_args` reads `.gweb.dev/secret`, or makes it (32 random bytes as 64 hex digits, mode 0600 is not settable from Goose, so it is a dev-only file), so sessions survive `gweb dev` rebuilds.
 - **Missing secret in production:** gweb scans app and lib code and templates for `web::login`, `web::session`, `web::signed_cookie` and `web::set_signed_cookie` (the same text-scan idea as `mentions_csrf`). When any is found, the generated `main` emits, after `config_from_args`: `if cfg.auth.keys.n == 0 { print("goose-web: set WEB_SECRET (32 to 64 bytes; openssl rand -hex 32)"); exit(2); }`. An app that uses none of them starts as before.
 - `WEB_SESSION_IDLE` and `WEB_SESSION_MAX` (seconds) set `idle` and `max`; `WEB_TRUST_PROXY=1` sets `trust_proxy`.
 
@@ -377,7 +377,7 @@ Each step: commit locally, never push, edit only inside the worktree. With no Go
 - **Stateless sessions:** a stolen cookie works until `exp` or a version bump. `HttpOnly`, `SameSite=Lax` and `__Host-` under HTTPS limit theft; the idle window limits the rest.
 - **Rate table eviction** under many source addresses.
 - **Default headers change every response's bytes** (headers only, not bodies; `/products/42` body stays identical).
-- **The `.gooseweb.dev/secret` file** is readable by other local users; it is for development only, and production refuses to start without `WEB_SECRET`.
+- **The `.gweb.dev/secret` file** is readable by other local users; it is for development only, and production refuses to start without `WEB_SECRET`.
 - **Linux:** `getentropy` needs glibc 2.25+ and `<sys/random.h>` there; the platform architect owns Linux builds.
 
 ## Build log

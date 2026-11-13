@@ -8,7 +8,7 @@
 set -eu
 [ $# -eq 0 ] && set -- .
 find "$@" -type f \( -name '*.goose' -o -name '*.html' -o -name '*.gshtml' -o -name '*.md' \) \
-  -not -path '*/.gooseweb*' -not -path '*/.git/*' -print0 |
+  -not -path '*/.gweb*' -not -path '*/.git/*' -print0 |
 xargs -0 perl -pi -e '
   BEGIN {
     %d = (session=>"auth", crypto=>"auth", csrf=>"auth", rate=>"auth", cors=>"auth",

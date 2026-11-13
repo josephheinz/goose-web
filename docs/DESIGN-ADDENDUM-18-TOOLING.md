@@ -49,8 +49,8 @@ Files the server takes: `components/*.gshtml`, `app/**/*.html`, `app/**/*.goose`
 
 1. **Start.** On `initialize` the server records the root folder. It spawns `goose lsp` (`$GOOSE`, else `goose` on `PATH`), initializes it with the same root and `general.positionEncodings: ["utf-8", "utf-16"]`, and runs one `gweb lsp-gen`.
 2. **On open, change or save** of a taken file, after 250 ms of quiet, the server writes the buffer to a temporary file and runs `gweb -C ROOT lsp-gen --overlay SRC TMP`. One run at a time; a change during a run queues one more.
-3. **`gweb lsp-gen`** runs `gen` into `.gooseweb.lsp/` (a sibling, like `.gooseweb.test/`), reading `SRC` from `TMP`. It writes `srcmap.txt` and prints gweb's own errors (and later Addendum 12's warnings) to stderr in the usual `path:line: error: msg` form. With `--check` it also runs `goose check` on `.gooseweb.lsp/main.goose` and prints its errors, mapped to source lines by `rewrite_errors`.
-4. **The proxy.** For each generated file whose source is open, the server sends `didOpen` (first time) or `didChange` (full text) to `goose lsp` with the URI `file://ROOT/.gooseweb.lsp/GEN` and the text read from disk. Each `publishDiagnostics` from `goose lsp` for a generated URI is mapped through `srcmap.txt` to the source URI. Diagnostics for generated files with no open source (`main.goose`) are dropped.
+3. **`gweb lsp-gen`** runs `gen` into `.gweb.lsp/` (a sibling, like `.gweb.test/`), reading `SRC` from `TMP`. It writes `srcmap.txt` and prints gweb's own errors (and later Addendum 12's warnings) to stderr in the usual `path:line: error: msg` form. With `--check` it also runs `goose check` on `.gweb.lsp/main.goose` and prints its errors, mapped to source lines by `rewrite_errors`.
+4. **The proxy.** For each generated file whose source is open, the server sends `didOpen` (first time) or `didChange` (full text) to `goose lsp` with the URI `file://ROOT/.gweb.lsp/GEN` and the text read from disk. Each `publishDiagnostics` from `goose lsp` for a generated URI is mapped through `srcmap.txt` to the source URI. Diagnostics for generated files with no open source (`main.goose`) are dropped.
 5. **Publish.** For each source, the server publishes gweb's stderr diagnostics (whole-line range, line 0 shown on line 1) together with the mapped `goose lsp` ones.
 6. **Fallback.** If `goose lsp` cannot start, exits, or does not answer `initialize` in 10 s, the server runs `gweb lsp-gen --check` on open and save instead, and publishes what it prints. It logs the reason once with `window/logMessage`.
 
@@ -58,7 +58,7 @@ Position encoding: the server offers `utf-16` to the editor (and `utf-8` if the 
 
 ### D4. `gweb check`
 
-`gweb check` generates into `.gooseweb.check/` and runs `goose check`, printing mapped errors; exit 1 on any error. It is `lsp-gen --check` for humans and CI, and it never touches `.gooseweb/`. Addendum 12's `--strict` and `--diagnostics json` apply to it when they land; this addendum adds neither.
+`gweb check` generates into `.gweb.check/` and runs `goose check`, printing mapped errors; exit 1 on any error. It is `lsp-gen --check` for humans and CI, and it never touches `.gweb/`. Addendum 12's `--strict` and `--diagnostics json` apply to it when they land; this addendum adds neither.
 
 ### D5. Stability and semver policy
 
@@ -68,7 +68,7 @@ Written as `docs/site/stability.md`. The rules:
 - **Before 1.0:** a minor release (`0.x.0`) may break; a patch (`0.x.y`) never does. Every break is a CHANGELOG line starting with `Breaking:` and says how to migrate.
 - **From 1.0:** breaking changes only in a major release. A feature is deprecated in a minor release with a gweb warning (the channel from Addendum 12), and it is removed no sooner than the next major.
 - **Stable (the public surface):** the project layout and file names; template syntax; `.gshtml` syntax and the client subset (it may grow, not shrink); the signatures of `load`, `POST`, route methods, `before`, `after`, `handle`, `init`; documented `web::` functions and types; `gweb` commands, flags and environment variables; the `path:line: error: msg` message shape (not its wording); `gw-target`, `gw-key`, the `GW-Fragment` header, the `gw_csrf` cookie and `_csrf` field, and the `/_gw/` URLs.
-- **Not stable:** everything in `.gooseweb*/` (generated code, `map.txt`, `srcmap.txt`), `gweb lsp-gen`, message wording, `gwi.js` internals and size, performance numbers.
+- **Not stable:** everything in `.gweb*/` (generated code, `map.txt`, `srcmap.txt`), `gweb lsp-gen`, message wording, `gwi.js` internals and size, performance numbers.
 - Each release names the Goose compiler version it was tested with.
 - Security fixes go to the latest minor release. After 1.0, also to the last minor of the previous major for six months.
 - **1.0 gate:** Addenda 12 to 18 built, the docs site and tutorial current, and one minor release with no `Breaking:` line.
@@ -111,7 +111,7 @@ josephheinz/goose-widgets@v0.2.0
 1. **Server in Goose, inside `gweb`.** One binary, but it needs a JSON parser and a process multiplexer written in Goose, cannot be tested here, and cannot reach the npm HTML and CSS services later.
 2. **Standard JavaScript source maps (VLQ JSON).** Built for many-to-one generated code. Goose lines are already one-to-one, and VLQ would need an encoder in Goose for no gain.
 3. **Diagnostics from `goose check` only, no `goose lsp`.** Works on save only, and gives no route to hover and completion. Kept as the fallback.
-4. **A `--dry` gen that writes nothing.** The output-folder parameter from Addendum 11 already isolates editor output in `.gooseweb.lsp/`, and `goose lsp` needs the other generated files on disk anyway.
+4. **A `--dry` gen that writes nothing.** The output-folder parameter from Addendum 11 already isolates editor output in `.gweb.lsp/`, and `goose lsp` needs the other generated files on disk anyway.
 5. **A new repo for the docs, or a gweb-rendered site now.** The task puts the docs in goose-web, and gweb has no markdown rendering yet.
 6. **Moving README sections into the docs site now.** Every sibling architect edits `README.md`; moving its sections now would conflict with all of them. The guide pages are short and link to the README for the full rules. The README is cut down to install plus links before 1.0 (Step 8).
 7. **Package components under `@pkg::Name()`.** `@ns::f()` already means a function call. A flat namespace with a clash error is simpler.
@@ -119,7 +119,7 @@ josephheinz/goose-widgets@v0.2.0
 
 ## Risks
 
-- **`goose lsp` (checked with v2026.4).** It accepts unsaved generated text by `didOpen` and `didChange`, but only when `initializationOptions.entryFiles` names `.gooseweb.lsp/main.goose`; without it every import fails. It answers `utf-16` even when `utf-8` is offered, so the server converts. It resolves symlinks, so the server sends real paths. The fallback (D3.6) stays for machines without it.
+- **`goose lsp` (checked with v2026.4).** It accepts unsaved generated text by `didOpen` and `didChange`, but only when `initializationOptions.entryFiles` names `.gweb.lsp/main.goose`; without it every import fails. It answers `utf-16` even when `utf-8` is offered, so the server converts. It resolves symlinks, so the server sends real paths. The fallback (D3.6) stays for machines without it.
 - **Speed.** `lsp-gen` runs a whole `gen` per pause in typing. Fine for small apps; a per-file gen is a later optimisation.
 - **Merge conflicts.** Steps 1, 3 and 6 edit `cli/gweb.goose`, which most sibling architects also edit. Keep edits local to the functions named.
 - **Docs drift** between README and `docs/site/`. Step 8 removes the duplication before 1.0.
@@ -144,25 +144,25 @@ Order: Steps 1, 2, 4 and 5 run in parallel (disjoint files). Step 3 after 1 and 
 - `compile_template`: track the column in the generated line (bytes since the last `\n` in `out`). In `template_tag` and `template_call`, record a segment wherever user text is copied verbatim (D1 list): find where the expression starts in `line` (`at + 1` plus the trimmed offset) and where it lands in `out`. Record a zero-length segment before each markup `out.append("`. Emit one `L` record per line that has segments. `gen_template` writes `file GEN SRC` then the records, only for the attempt that is kept.
 - `copy_prefixed`: `file NS.goose SRC`, then `L 1 1 0:0:0 P:0:N` where `P` is the prefix length and `N` the line's length, and `L i i 0:0:N` for the other lines (or rely on identity; line 1 is required).
 - No change to `component.goose`.
-- **Tests:** `test/srcmap.sh` plus `test/srcmap/` fixture project (a page with `{expr}`, `{#if}`, `{#for}`, `@f(x)`, a component call, a layout, a `page.goose`) and `test/srcmap/expected.txt`. The script runs `gweb -C fixture gen` and diffs `.gooseweb/srcmap.txt` against the expected file. Write `expected.txt` by hand from the rules.
-- **Done:** `gweb gen` writes `srcmap.txt`; no generated `.goose` byte changes (diff a fixture's `.gooseweb/*.goose` before and after); the script passes when a compiler is available.
+- **Tests:** `test/srcmap.sh` plus `test/srcmap/` fixture project (a page with `{expr}`, `{#if}`, `{#for}`, `@f(x)`, a component call, a layout, a `page.goose`) and `test/srcmap/expected.txt`. The script runs `gweb -C fixture gen` and diffs `.gweb/srcmap.txt` against the expected file. Write `expected.txt` by hand from the rules.
+- **Done:** `gweb gen` writes `srcmap.txt`; no generated `.goose` byte changes (diff a fixture's `.gweb/*.goose` before and after); the script passes when a compiler is available.
 
 ### Step 2. The language server (`editor/lsp/server.mjs`)
 
 - One ES module, no dependencies. Exports `parseSrcmap(text)`, `mapPosition(map, genFile, genLine, genByteCol, genText, srcText)`, `byteToUtf16(lineText, byteCol)`, `utf16ToByte`, and `parseGwebDiagnostics(stderrText, root)`. Runs the server when executed directly (`import.meta.url` check).
 - Implements D3 exactly: framing, `initialize`/`initialized`/`shutdown`/`exit`, `textDocument/didOpen|didChange|didSave|didClose` (full sync), debounced `lsp-gen` via `--gweb PATH` (or `$GWEB_BIN`), the child `goose lsp` with request ids, mapping, publishing, the fallback. Clears diagnostics on close.
-- **Tests:** `test/lsp/srcmap_test.mjs` (format parse, exact and clamped columns, zero-length anchors, identity lines, `// gw:line`, past-end lines, UTF-8 to UTF-16 with multibyte text). `test/lsp/proxy_test.mjs` with `test/lsp/fake-gweb.mjs` (writes a fixed `.gooseweb.lsp/` tree and `srcmap.txt` into the root it is given, prints one gweb error on stderr) and `test/lsp/fake-goose.mjs` (answers `goose lsp` with one diagnostic per opened generated file at a known column). It drives `server.mjs` over stdio and checks mapped ranges for a `.gshtml` and a `page.html`, the merged gweb error, clearing on close, and the fallback when the fake is told to exit. `test/lsp.sh` runs both with `node`.
+- **Tests:** `test/lsp/srcmap_test.mjs` (format parse, exact and clamped columns, zero-length anchors, identity lines, `// gw:line`, past-end lines, UTF-8 to UTF-16 with multibyte text). `test/lsp/proxy_test.mjs` with `test/lsp/fake-gweb.mjs` (writes a fixed `.gweb.lsp/` tree and `srcmap.txt` into the root it is given, prints one gweb error on stderr) and `test/lsp/fake-goose.mjs` (answers `goose lsp` with one diagnostic per opened generated file at a known column). It drives `server.mjs` over stdio and checks mapped ranges for a `.gshtml` and a `page.html`, the merged gweb error, clearing on close, and the fallback when the fake is told to exit. `test/lsp.sh` runs both with `node`.
 - **Done:** `test/lsp.sh` passes on this machine.
 
 ### Step 3. `gweb lsp-gen`, `gweb check`, `gweb lsp` (`cli/gweb.goose`)
 
-- `let LSP_DIR = ".gooseweb.lsp"; let CHECK_DIR = ".gooseweb.check";`
+- `let LSP_DIR = ".gweb.lsp"; let CHECK_DIR = ".gweb.check";`
 - Overlay: `var overlay_src`, `overlay_tmp`; `read()` reads `overlay_tmp` when the path equals `overlay_src`.
 - `lsp-gen [--check] [--overlay SRC TMP]`: `gen(true, LSP_DIR)`; with `--check`, `goose check --color never` on `LSP_DIR/main.goose`, output through `rewrite_errors` to stderr. Exit 0 even with errors (the server reads stderr). Not in `usage()`.
 - `check`: `gen(false, CHECK_DIR)` then the same check; exit 1 on any error; prints `gweb: check passed` otherwise.
 - `lsp`: `let LSP_JS = embed_file("../editor/lsp/server.mjs");`, write to the cache path if different, `c_exec` `node FILE --gweb SELF` (the path from `resource_dir`/`args()[0]`).
-- Add `.gooseweb.lsp/` and `.gooseweb.check/` to the `gweb new` `.gitignore` and to `goose-web/.gitignore`. Add `check` and `lsp` to `usage()` and the README command table.
-- **Tests:** extend `test/srcmap.sh`: `lsp-gen --overlay` with a temp file holding a changed page writes the changed text into `.gooseweb.lsp/` and leaves `.gooseweb/` absent; `check` on a fixture with a type error in `page.html` prints `app/page.html:LINE: error:` and exits 1.
+- Add `.gweb.lsp/` and `.gweb.check/` to the `gweb new` `.gitignore` and to `goose-web/.gitignore`. Add `check` and `lsp` to `usage()` and the README command table.
+- **Tests:** extend `test/srcmap.sh`: `lsp-gen --overlay` with a temp file holding a changed page writes the changed text into `.gweb.lsp/` and leaves `.gweb/` absent; `check` on a fixture with a type error in `page.html` prints `app/page.html:LINE: error:` and exits 1.
 - **Done:** the grep rule of Addendum 11 holds for the new constants; tests written; untested without a compiler.
 
 ### Step 4. Documentation site and tutorial (`docs/site/`)

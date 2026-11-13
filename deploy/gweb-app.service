@@ -1,5 +1,5 @@
 # Copy to /etc/systemd/system/gweb-app.service, then:
-#   install the binary:  install -D .gooseweb/server /opt/gweb-app/server
+#   install the binary:  install -D .gweb/server /opt/gweb-app/server
 #   dedicated user:      useradd --system --home-dir /opt/gweb-app --shell /usr/sbin/nologin gweb-app
 #   data directory:      install -d -o gweb-app -g gweb-app /opt/gweb-app/data
 #   systemctl daemon-reload && systemctl enable --now gweb-app

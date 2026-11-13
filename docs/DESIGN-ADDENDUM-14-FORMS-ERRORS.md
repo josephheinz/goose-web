@@ -20,10 +20,10 @@ Facts the design rests on:
 3. **`web::form` splits `req.body` on `&`.** `csrf_ok` reads `_csrf` through it. A multipart post therefore fails CSRF today.
 4. **A crash kills the worker thread, not the request.** The generated `supervisor` respawns a `thread_spawn_contained` worker and prints `why`. The connection that was being served gets no reply, and the dead loop's other connections leak until the client gives up (DESIGN §5 lists this as a risk). There is no per-call `try` in Goose that I can see in any of the three repos, so a crash cannot be caught inside the worker.
 5. **`thread_wait` returns `why`, the abort text.** I could not see whether it carries `file:line`. That decides how good the dev error page is (experiment E1).
-6. **Templates keep line identity** (`.gooseweb/pN_html.goose:N` is `app/.../page.html:N`) and `.gooseweb/map.txt` maps each generated file to its source. The dev server runs from the project folder (`./.gooseweb/server`), so it can read `map.txt` and the sources at run time.
+6. **Templates keep line identity** (`.gweb/pN_html.goose:N` is `app/.../page.html:N`) and `.gweb/map.txt` maps each generated file to its source. The dev server runs from the project folder (`./.gweb/server`), so it can read `map.txt` and the sources at run time.
 7. **`gwi.js` refuses any non-2xx fragment reply** (`if (!r.ok) throw`), and it sends forms as `URLSearchParams`, which drops files. `gwi.min.js` is 3,604 bytes against the 4,096-byte budget.
 8. **Pages already have the shape forms need.** `fn POST(req, ctx) -> Props` renders the same template as `load`, the template sees `req` and `ctx`, and `@ns::f(a)` calls any `fn f(out, a)`.
-9. **gweb already scans user Goose for conventions** (`defines`, `csrf_const`, `mentions_csrf`) and copies `page.goose` / `route.goose` to `.gooseweb/<ns>.goose`. Text appended after the last line keeps every user line number.
+9. **gweb already scans user Goose for conventions** (`defines`, `csrf_const`, `mentions_csrf`) and copies `page.goose` / `route.goose` to `.gweb/<ns>.goose`. Text appended after the last line keeps every user line number.
 10. **No reflection.** Nothing in the repos walks struct fields at run time; `component.goose` parses a Goose subset at build time. A typed decoder must be generated.
 
 Not verified (no `goose` on this machine): everything that needs the compiler. In particular E1 (the content of `why`), E2 (a bounded array of structs, `Upload[..8]`, as a `Ctx` field with a default), E3 (a `@web::f(...)` call inside a start tag), and E4 (`thread_spawn_contained` with a second thread function in the generated `main.goose`). Each build step names the experiment it depends on and the fallback.
@@ -55,7 +55,7 @@ struct SignupForm {
 - The HTML `name` is the Goose field name.
 - Structs in `lib/` get no decoder (lib is symlinked, not copied). A page imports the struct from lib and calls the `web::form_*` helpers itself, or declares the form struct in its own `page.goose`.
 
-**Generated code.** gweb appends to the copied `.gooseweb/<ns>.goose`, after the user's last line:
+**Generated code.** gweb appends to the copied `.gweb/<ns>.goose`, after the user's last line:
 
 ```goose
 // gweb: form decoders (generated)
@@ -168,7 +168,7 @@ enum Event { Request, TooLarge, HeadTooLarge, Unsupported, BadLength, Failed,
 
 ### D7. goose-web turns multipart into a plain form plus files
 
-`Config` gains `max_upload` (default 33,554,432; `--max-upload N`), `spool_over` (65,536; not a flag) and `upload_dir` (`.gooseweb.uploads`; `--upload-dir D`). `run_worker` calls `set_uploads` once, and at start-up deletes files left in `upload_dir` by an earlier run (names starting `gnet-` or `gw-`). One server per upload dir is documented.
+`Config` gains `max_upload` (default 33,554,432; `--max-upload N`), `spool_over` (65,536; not a flag) and `upload_dir` (`.gweb.uploads`; `--upload-dir D`). `run_worker` calls `set_uploads` once, and at start-up deletes files left in `upload_dir` by an earlier run (names starting `gnet-` or `gw-`). One server per upload dir is documented.
 
 `Ctx` gains `spool: u8[..256] = ""` (set by `run_worker` for `Event.Spooled`) and `uploads: Upload[..8]` (E2; fallback: a separate `web::Files` value made in `run_worker` and reached through `ctx.worker`, see step 3).
 
@@ -271,11 +271,11 @@ Thread-safety rests on `thread_wait`: the worker is dead before the supervisor r
 ### D13. The dev error page
 
 In `gweb dev` (`cfg.dev_id != 0`):
-- `ErrorInfo.detail` holds: method and target, the abort text, then for up to 3 `path:line` locations found in it, the source path from `.gooseweb/map.txt` and 5 lines around it with the line marked `>`. Page and layout templates map line for line; component lines go through the `// gw:line` tag as `component_lines_back` does.
+- `ErrorInfo.detail` holds: method and target, the abort text, then for up to 3 `path:line` locations found in it, the source path from `.gweb/map.txt` and 5 lines around it with the line marked `>`. Page and layout templates map line for line; component lines go through the `// gw:line` tag as `component_lines_back` does.
 - The reply carries `<script type="application/json" id="gw-dev-error">"<detail>"</script>` (JSON-escaped and `<`-safe through `json_text`) before the dev script. The dev script reads it on load and shows it in the existing overlay as `server error (click to dismiss)`. A click shows the app's own error page under it.
 - `web::fail` errors fill `detail` with method, target and message only.
 - If E1 shows that `why` has no location in a normal build but has one with `--debug`, `gweb dev` builds with `--debug`. If neither has one, the page shows the abort text and request without source lines, and the CHANGELOG says so.
-- Build errors: `gweb dev` appends the same 5-line excerpt after each `path:line:` error line (at most 5) when it writes `.gooseweb.dev/errors.txt`. The overlay already shows that file.
+- Build errors: `gweb dev` appends the same 5-line excerpt after each `path:line:` error line (at most 5) when it writes `.gweb.dev/errors.txt`. The overlay already shows that file.
 
 In production `detail` is always empty; the abort text goes only to the log line with the error id.
 
@@ -388,7 +388,7 @@ Every step: work only in the named worktree; commit locally, never push. Find `g
 1. **422 or 200 for a form with errors?** Default: 422, with `gwi.js` morphing 422 fragment replies.
 2. **`loading.html` on first page load needs streaming.** Default: v1 shows it only for fragment requests; first-load streaming waits for the streaming work.
 3. **Component error boundaries** wait for Addendum 12. Default: design only (section 6), built after reactivity lands.
-4. **Upload defaults.** Default: 32 MiB per request, spool over 64 KiB, 8 files, temp dir `.gooseweb.uploads/` in the project folder.
+4. **Upload defaults.** Default: 32 MiB per request, spool over 64 KiB, 8 files, temp dir `.gweb.uploads/` in the project folder.
 5. **Text fields are not trimmed.** Default: kept as typed; "Required." checks the trimmed value. Trimming would also trim passwords.
 6. **A crash closes the crashed worker's other keep-alive connections.** Default: yes; the alternative is today's leak.
 7. **`error.html` per folder, rendered in the layouts above it.** Default: yes, nearest wins, like Next.js.
@@ -412,7 +412,7 @@ Builders: Sonnet, medium effort, one step each. The first passes ran without a c
 Older suites still pass: `components.sh` 46/46, `templates.sh` 33/33, `catchall.sh` 50/50, and the cookie, csrf, catch-all and owner tests. I did not run `release_check.sh`.
 
 Experiments:
-- E1: the abort text is `index 5 out of bounds (length 3) (<abs>/.gooseweb/p6_crash.goose:11)`, with and without `--debug`. `gweb dev` keeps a normal build. Integer-overflow aborts were not tried.
+- E1: the abort text is `index 5 out of bounds (length 3) (<abs>/.gweb/p6_crash.goose:11)`, with and without `--debug`. `gweb dev` keeps a normal build. Integer-overflow aborts were not tried.
 - E2 to E4 work as designed: `Upload[..8]` in `Ctx`, `@web::invalid` in a start tag, and a second contained thread function.
 - Benchmark (`ab -k -c 32`, 2 workers, plaintext): about 101k req/s on main and on the branch. The difference is within noise, well under the 2% stop line.
 

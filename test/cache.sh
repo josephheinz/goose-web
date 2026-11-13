@@ -46,7 +46,7 @@ same() { cmp -s "$WORK/$1.b" "$WORK/$2.b"; }
 # 1. The cache.
 cp -R "$HERE/cache/site" "$WORK/ok"
 if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
-  "$WORK/ok/.gooseweb/server" --port "$PORT" --workers 1 >/dev/null 2>&1 &
+  "$WORK/ok/.gweb/server" --port "$PORT" --workers 1 >/dev/null 2>&1 &
   PID=$!
   up=""
   for i in 1 2 3 4 5 6 7 8 9 10; do

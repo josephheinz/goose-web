@@ -31,7 +31,7 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/gweb-ops.XXXXXX")
 PID=""
 HAMMER=""
 TK=0123456789abcdef0123456789abcdef
-SERVER="$WORK/site/.gooseweb/server"
+SERVER="$WORK/site/.gweb/server"
 URL="http://127.0.0.1:$PORT"
 cleanup() {
   [ -n "$HAMMER" ] && kill "$HAMMER" 2>/dev/null
@@ -299,7 +299,7 @@ if "$GWEB" -C "$WORK/new" new starter >/dev/null 2>&1; then
   check "$(cmp -s "$WORK/new/starter/Dockerfile" "$ROOT/deploy/Dockerfile" && echo ok)" "gweb new writes deploy/Dockerfile"
   check "$(cmp -s "$WORK/new/starter/.dockerignore" "$ROOT/deploy/dockerignore" && echo ok)" "gweb new writes deploy/dockerignore as .dockerignore"
   if out=$("$GWEB" -C "$WORK/new/starter" build 2>&1); then
-    "$WORK/new/starter/.gooseweb/server" --port "$PORT" --metrics --workers 1 > "$WORK/starter.log" 2>&1 &
+    "$WORK/new/starter/.gweb/server" --port "$PORT" --metrics --workers 1 > "$WORK/starter.log" 2>&1 &
     PID=$!
     if poll 100 up; then
       req sp GET /

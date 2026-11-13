@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Stand-in for `gweb -C ROOT lsp-gen [--check] [--overlay SRC TMP]`: writes a fixed
-// .gooseweb.lsp/ tree, logs its call to ROOT/.fake-gweb.log, prints canned errors on stderr.
+// .gweb.lsp/ tree, logs its call to ROOT/.fake-gweb.log, prints canned errors on stderr.
 import { mkdirSync, writeFileSync, appendFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -11,7 +11,7 @@ const ov = a.indexOf('--overlay');
 const overlay = ov < 0 ? null : { src: a[ov + 1], text: readFileSync(a[ov + 2], 'utf8') };
 appendFileSync(join(root, '.fake-gweb.log'), JSON.stringify({ check, overlay }) + '\n');
 
-const dir = join(root, '.gooseweb.lsp');
+const dir = join(root, '.gweb.lsp');
 mkdirSync(dir, { recursive: true });
 const files = {
   'main.goose': '// main\n',

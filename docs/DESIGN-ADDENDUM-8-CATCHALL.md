@@ -378,7 +378,7 @@ Code is self-documenting. Write why-comments only. No comment restates code or n
 - Rebuild gweb with `goose build -o gweb cli/gweb.goose`.
 - Checks:
   - The full checks.
-  - Inspect `examples/shop/.gooseweb/main.goose`: the static block comes first, and the arms are unchanged otherwise. Diff it against the previous gen to confirm.
+  - Inspect `examples/shop/.gweb/main.goose`: the static block comes first, and the arms are unchanged otherwise. Diff it against the previous gen to confirm.
 - Commit: "gweb: try public files before routes".
 
 **Step 3: scan and errors (`cli/gweb.goose`).**

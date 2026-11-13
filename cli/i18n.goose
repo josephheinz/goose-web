@@ -1,5 +1,5 @@
 // i18n: the locales/ catalog compiler. gweb passes the files to start and add_file, then calls compile once;
-// it returns the source of .gooseweb/t.goose. Errors are `locales/<file>:LINE: error: MSG` lines.
+// it returns the source of .gweb/t.goose. Errors are `locales/<file>:LINE: error: MSG` lines.
 
 namespace i18n;
 

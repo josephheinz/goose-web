@@ -33,7 +33,7 @@ flowchart LR
 
     gweb["gweb build<br/>(cli/gweb.goose,<br/>cli/component.goose,<br/>cli/tscan.goose)"]
 
-    subgraph Out[".gooseweb/ (generated)"]
+    subgraph Out[".gweb/ (generated)"]
         gen["main.goose, pN.goose,<br/>pN_html.goose, Name.goose"]
         js["_gw/gwi.js, optional gw*.js<br/>_gw/Name.js"]
         bin["server (one native binary)"]
@@ -53,7 +53,7 @@ flowchart LR
 
 1. **Scan** `app/` into a route table. A folder is a URL segment, and `[id]` is
    a parameter. A `page.html` is a page, and a `route.goose` is an API handler.
-2. **Copy** your `.goose` files into `.gooseweb/` with a namespace added on
+2. **Copy** your `.goose` files into `.gweb/` with a namespace added on
    line 1, so error line numbers still match your files.
 3. **Compile each template** (`page.html`, `layout.html`) into Goose. One HTML
    line becomes one Goose line, so a type error in `{p.name}` points at the
@@ -71,7 +71,7 @@ flowchart LR
    section 4. A store (`stores/Name.gshtml`) compiles the same way, without
    props or markup. Components compile in call order, children first.
 5. **Generate views** (`views/<group>/<Name>.goose` and `.html`): the user's code gets a generated codec, form and
-   parser after its last line, the template compiles to `render<Z, D>`, and `.gooseweb/views.goose` is the registry.
+   parser after its last line, the template compiles to `render<Z, D>`, and `.gweb/views.goose` is the registry.
    See the README, section Views.
 6. **Check links**: every `gw-target` must point at a page that has that
    fragment, and a literal `http::get` or `http::post` URL in a component must
@@ -353,7 +353,7 @@ flowchart LR
     edit["You save a file"] --> watch["gweb dev<br/>polls app/, lib/,<br/>components/, public/"]
     watch -->|gen + build| ok{build ok?}
     ok -->|yes| restart["new server,<br/>new build id"]
-    ok -->|no| errs[".gooseweb.dev/errors.txt"]
+    ok -->|no| errs[".gweb.dev/errors.txt"]
     restart --> poll
     errs --> poll
     poll["page script polls<br/>/__gweb/id every 500 ms"] -->|id changed| reload["page reloads"]

@@ -44,7 +44,7 @@ wait_for() {
 
 cp -R "$HERE/push/site" "$WORK/site"
 if out=$("$GWEB" -C "$WORK/site" build 2>&1); then
-  "$WORK/site/.gooseweb/server" --port "$PORT" --workers 2 >/dev/null 2>&1 &
+  "$WORK/site/.gweb/server" --port "$PORT" --workers 2 >/dev/null 2>&1 &
   PID=$!
   up=""
   for i in 1 2 3 4 5 6 7 8 9 10; do

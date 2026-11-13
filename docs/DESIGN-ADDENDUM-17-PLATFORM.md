@@ -190,7 +190,7 @@ fn test_add(t: web::Tester&) {
   `test_send` builds `METHOD target HTTP/1.1` with `Host: test`, a `Cookie` line from the jar, `Content-Type` and `Content-Length` when there is a body, and `t.headers` (then clears them). With `auto_csrf` and a non-GET method, it sends `X-CSRF-Token` with the jar's `gw_csrf` value; when the jar has none, it first puts the fixed token `00000000000000000000000000000000` into the jar. It parses with `http::parse_request`, calls `respond(req, 0, -1, cfg, res, D)` with `default_config()` and `workers = 1`, copies `S(i)` into `res.body` for a static file, and empties the body for HEAD. It then updates the jar from the `Set-Cookie` lines: `Max-Age=0` removes a cookie, others replace it by name. A failed check prints `FAIL <test>: <what>` and counts.
 
 **gweb, in `cli/gweb.goose`:**
-- `gen_main` splits into the shared body and a tail. The server tail is today's text. The test tail (`gen_test_main(tests)`) is used only by `gweb test`, written to `.gooseweb.test/routes_main.goose`, so the `embed_file("../…")` paths stay correct (Addendum 11).
+- `gen_main` splits into the shared body and a tail. The server tail is today's text. The test tail (`gen_test_main(tests)`) is used only by `gweb test`, written to `.gweb.test/routes_main.goose`, so the `embed_file("../…")` paths stay correct (Addendum 11).
 - Each `tests/<name>.goose` (name `[a-z][a-z0-9_]*`) is copied through `copy_prefixed` as namespace `t_<name>`, mapped in `map.txt` so errors point at `tests/<name>.goose:LINE`. gweb collects each line that starts with `fn test_` and reads the name up to `(`.
 - The test main defines `fn site::get`, `head`, `delete`, `post_form`, `post_json`, `put_json`, `patch_json` and `request(t, method, target, body, content_type)`, each calling `web::test_send(t, ..., dispatch, static_bytes)`, the same trick as `fn state::ask`.
 - With `app/state.goose`, the test main defines `fn state::ask` as a direct call: it encodes the message with `to_bytes`, decodes it with `from_bytes`, calls `state::handle`, and round-trips the reply the same way. It runs on `main`, where the state lives, so it needs no channel. `state::init()` runs first when it exists.
@@ -229,7 +229,7 @@ stock = Only {n:int} left
 - `key[cat]` gives plural forms, with `cat` one of `zero`, `one`, `two`, `few`, `many`, `other`. The default locale must give `[other]`. The selector is always the argument `count`, which is an `i64`.
 - Arguments are ordered by first appearance in the default locale's file, `count` first for a plural key.
 
-**Generated `.gooseweb/t.goose`** (namespace `t`, imported by every template and page through `add_default_imports`):
+**Generated `.gweb/t.goose`** (namespace `t`, imported by every template and page through `add_default_imports`):
 
 ```goose
 let TAGS = ["en", "de"];                                     // index 0 is the default
@@ -327,7 +327,7 @@ In a template: `<html lang="{t::tag(ctx)}">` and `<p>{t::cart_items(ctx, p.n)}</
   2. The state counter increments across two tests (the state is shared).
   3. `failing` exits 1 and prints `FAIL t_bad::test_x`.
   4. A type error in a test file is reported at `tests/<name>.goose:LINE`.
-  5. `.gooseweb/` is untouched (as in Addendum 11).
+  5. `.gweb/` is untouched (as in Addendum 11).
 - Done: `routes.sh`, `components.sh` and `templates.sh` pass, or the step is marked untested.
 
 **Step I1 (goose-web): i18n runtime.**
@@ -374,7 +374,7 @@ No Goose compiler exists on this machine (`$GOOSE` unset, none on `PATH`, the Ad
 **Review fixes by the architect:**
 - `test_send` compared a payload enum with `!=`; it now uses `match`.
 - `header_of` now answers `Content-Type` from `res.content_type`, which is not in `res.headers`.
-- `gweb test` writes `.gooseweb.test/site.goose` (`namespace site;`), so `fn site::get` has a namespace to define into. That namespace mirrors `state`, which exists as a file.
+- `gweb test` writes `.gweb.test/site.goose` (`namespace site;`), so `fn site::get` has a namespace to define into. That namespace mirrors `state`, which exists as a file.
 - The generated test main's Tester is named `gw_t`, so it cannot shadow the `t` i18n namespace.
 
 **Builder choices accepted beyond the design:**

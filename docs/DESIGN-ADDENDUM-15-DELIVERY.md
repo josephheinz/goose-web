@@ -181,7 +181,7 @@ Not verified, because no `goose` compiler is on this machine: everything that ne
 ### 5.2 `gweb export`
 
 **Choice.**
-- `gweb export [-o DIR]` (default `out/`) runs a build, then `.gooseweb/server --export DIR`. `--export DIR` is a new `Config` flag. When it is set, the generated `main` exports and exits; it starts no workers and opens no socket.
+- `gweb export [-o DIR]` (default `out/`) runs a build, then `.gweb/server --export DIR`. `--export DIR` is a new `Config` flag. When it is set, the generated `main` exports and exits; it starts no workers and opens no socket.
 - It writes:
   - Every page with no dynamic segment, plus each path returned by `fn static_paths() -> u8[..1024][>..]` in a `page.goose` (dynamic pages without that function are skipped and listed). Each is rendered in process through `dispatch` with a synthetic `GET <path> HTTP/1.1\r\nHost: localhost\r\n\r\n`, and written as `DIR/index.html` for `/`, and `DIR/<path>.html` otherwise.
   - Every static file at its plain and hashed URL.

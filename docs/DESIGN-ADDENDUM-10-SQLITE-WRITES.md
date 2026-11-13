@@ -248,7 +248,7 @@ Common settings:
 - From goose-web, with `GOOSE` set: `test/components.sh` 41, `test/templates.sh` 33, `test/fragments.sh` 69, `cookie_test` 59.
 - goose-net `test_net` 142.
 - `test/release_check.sh` passes.
-- In `$LAB/examples/shop`: `../../goose-web/gweb build`, start `.gooseweb/server --port 3300`, then run `python3 $LAB/goose-bench/shop/check_site.py http://localhost:3300 --components --cookies --fragments` (plus `--writes` from step 2.4 on). It must print PASS, which includes `/products/42` against `baseline/products_42.html`.
+- In `$LAB/examples/shop`: `../../goose-web/gweb build`, start `.gweb/server --port 3300`, then run `python3 $LAB/goose-bench/shop/check_site.py http://localhost:3300 --components --cookies --fragments` (plus `--writes` from step 2.4 on). It must print PASS, which includes `/products/42` against `baseline/products_42.html`.
 
 ### Phase 0: baseline and experiment (no commit)
 
@@ -380,7 +380,7 @@ The `--writes` block, inside the regions above:
 - A cross-site POST to `/db/todos` is refused, the same as `/fragments`.
 
 `check_persist.py` (new). Its argument is the shop folder. It:
-1. Starts `.gooseweb/server --port 3301` with `SHOP_APP_DB` pointing into a fresh temporary folder.
+1. Starts `.gweb/server --port 3301` with `SHOP_APP_DB` pointing into a fresh temporary folder.
 2. POSTs `{"title": "survives"}`.
 3. Kills the server with SIGKILL.
 4. Checks that bytes 18–19 of the file header are `02 02` (WAL).

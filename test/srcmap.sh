@@ -3,12 +3,12 @@
 #
 #   test/srcmap.sh
 #
-# gweb gen on test/srcmap must write .gooseweb/srcmap.txt equal to
+# gweb gen on test/srcmap must write .gweb/srcmap.txt equal to
 # test/srcmap/expected.txt, which is worked out by hand from the D1 rules.
 # Only gen runs, so no Goose compiler is needed beside gweb itself.
 #
-# Step 3: lsp-gen --overlay reads the changed page from a temp file into .gooseweb.lsp/ and
-# leaves .gooseweb/ alone; check and lsp-gen on a page.html with a type error (needs goose).
+# Step 3: lsp-gen --overlay reads the changed page from a temp file into .gweb.lsp/ and
+# leaves .gweb/ alone; check and lsp-gen on a page.html with a type error (needs goose).
 #
 # Needs gweb built beside this folder (goose build -o gweb cli/gweb.goose).
 set -u
@@ -25,9 +25,9 @@ bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 cp -R "$HERE/srcmap" "$WORK/site"
 rm -f "$WORK/site/expected.txt"
 if out=$("$GWEB" -C "$WORK/site" gen 2>&1); then
-  if [ ! -f "$WORK/site/.gooseweb/srcmap.txt" ]; then
-    bad "gweb gen wrote no .gooseweb/srcmap.txt"
-  elif diff_out=$(diff "$HERE/srcmap/expected.txt" "$WORK/site/.gooseweb/srcmap.txt"); then
+  if [ ! -f "$WORK/site/.gweb/srcmap.txt" ]; then
+    bad "gweb gen wrote no .gweb/srcmap.txt"
+  elif diff_out=$(diff "$HERE/srcmap/expected.txt" "$WORK/site/.gweb/srcmap.txt"); then
     ok
   else
     bad "srcmap.txt differs from expected.txt (< expected, > got)"
@@ -38,16 +38,16 @@ else
   echo "$out"
 fi
 
-# lsp-gen --overlay: the buffer text lands in .gooseweb.lsp/, and .gooseweb/ stays absent.
+# lsp-gen --overlay: the buffer text lands in .gweb.lsp/, and .gweb/ stays absent.
 cp -R "$HERE/srcmap" "$WORK/lsp"
 rm -f "$WORK/lsp/expected.txt"
 printf '<h1>OVERLAY-MARK</h1>\n' > "$WORK/overlay.html"
 if "$GWEB" -C "$WORK/lsp" lsp-gen --overlay app/page.html "$WORK/overlay.html" >/dev/null 2>&1; then
-  if ! grep -rq OVERLAY-MARK "$WORK/lsp/.gooseweb.lsp"; then
-    bad "lsp-gen --overlay: changed text missing from .gooseweb.lsp/"
-  elif [ -e "$WORK/lsp/.gooseweb" ]; then
-    bad "lsp-gen wrote .gooseweb/"
-  elif [ ! -f "$WORK/lsp/.gooseweb.lsp/srcmap.txt" ]; then
+  if ! grep -rq OVERLAY-MARK "$WORK/lsp/.gweb.lsp"; then
+    bad "lsp-gen --overlay: changed text missing from .gweb.lsp/"
+  elif [ -e "$WORK/lsp/.gweb" ]; then
+    bad "lsp-gen wrote .gweb/"
+  elif [ ! -f "$WORK/lsp/.gweb.lsp/srcmap.txt" ]; then
     bad "lsp-gen wrote no srcmap.txt"
   else
     ok
@@ -68,8 +68,8 @@ if command -v "${GOOSE:-goose}" >/dev/null 2>&1; then
   elif ! echo "$out" | grep -q '^app/page\.html:[0-9][0-9]*: error:'; then
     bad "check printed no app/page.html:LINE: error:"
     echo "$out"
-  elif [ -e "$WORK/bad/.gooseweb" ]; then
-    bad "check wrote .gooseweb/"
+  elif [ -e "$WORK/bad/.gweb" ]; then
+    bad "check wrote .gweb/"
   else
     ok
   fi

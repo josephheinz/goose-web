@@ -51,7 +51,7 @@ substring() {
 # 1. The site.
 cp -R "$HERE/fragments/site" "$WORK/ok"
 if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
-  "$WORK/ok/.gooseweb/server" --port "$PORT" --dev-id 5 >/dev/null 2>&1 &
+  "$WORK/ok/.gweb/server" --port "$PORT" --dev-id 5 >/dev/null 2>&1 &
   PID=$!
   up=""
   for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -147,14 +147,14 @@ check "$([ "$(status nosse)" = 404 ] && echo ok)" "a site without gw-sse does no
     check "$([ "$(status tk8)" = 200 ] && body_has tk8 'saved' && echo ok)" "POST /save with the cookie and header: 200"
     req tk9 POST /webhook -H 'Sec-Fetch-Site: cross-site'
     check "$([ "$(status tk9)" = 200 ] && body_has tk9 'hook' && echo ok)" "POST /webhook (const CSRF = false) with no token, cross-site: 200"
-    check "$(grep -qF '::CSRF && !gweb::csrf_ok(r, res)' "$WORK/ok/.gooseweb/main.goose" && echo ok)" "the generated main checks the CSRF constant"
+    check "$(grep -qF '::CSRF && !gweb::csrf_ok(r, res)' "$WORK/ok/.gweb/main.goose" && echo ok)" "the generated main checks the CSRF constant"
   fi
   kill "$PID" 2>/dev/null
   wait "$PID" 2>/dev/null
   PID=""
   # A page with no fragment generates what it did before fragments.
-  if cmp -s "$WORK/ok/.gooseweb/p5_plain_html.goose" "$HERE/fragments/expect_p5_plain_html.goose"; then ok
-  else bad "p5_plain_html.goose differs from the stored copy:"; diff "$HERE/fragments/expect_p5_plain_html.goose" "$WORK/ok/.gooseweb/p5_plain_html.goose" | sed 's/^/    /'; fi
+  if cmp -s "$WORK/ok/.gweb/p5_plain_html.goose" "$HERE/fragments/expect_p5_plain_html.goose"; then ok
+  else bad "p5_plain_html.goose differs from the stored copy:"; diff "$HERE/fragments/expect_p5_plain_html.goose" "$WORK/ok/.gweb/p5_plain_html.goose" | sed 's/^/    /'; fi
 else
   bad "gweb build of the site"; echo "$out"
 fi
@@ -163,7 +163,7 @@ fi
 cp -R "$HERE/fragments/boost" "$WORK/boost"
 if out=$("$GWEB" -C "$WORK/boost" build 2>&1); then
   BPORT=$((PORT + 1))
-  "$WORK/boost/.gooseweb/server" --port "$BPORT" >/dev/null 2>&1 &
+  "$WORK/boost/.gweb/server" --port "$BPORT" >/dev/null 2>&1 &
   PID=$!
   URL="http://127.0.0.1:$BPORT"
   up=""
@@ -197,7 +197,7 @@ fi
 cp -R "$HERE/fragments/trans" "$WORK/trans"
 if out=$("$GWEB" -C "$WORK/trans" build 2>&1); then
   TPORT=$((PORT + 2))
-  "$WORK/trans/.gooseweb/server" --port "$TPORT" >/dev/null 2>&1 &
+  "$WORK/trans/.gweb/server" --port "$TPORT" >/dev/null 2>&1 &
   PID=$!
   URL="http://127.0.0.1:$TPORT"
   up=""
@@ -229,7 +229,7 @@ fi
 cp -R "$HERE/fragments/sse" "$WORK/sse"
 if out=$("$GWEB" -C "$WORK/sse" build 2>&1); then
   EPORT=$((PORT + 3))
-  "$WORK/sse/.gooseweb/server" --port "$EPORT" >/dev/null 2>&1 &
+  "$WORK/sse/.gweb/server" --port "$EPORT" >/dev/null 2>&1 &
   PID=$!
   URL="http://127.0.0.1:$EPORT"
   up=""
@@ -259,7 +259,7 @@ fi
 
 # 2. Expected failures. The page is <p>x</p>, the case on line 2, <p>y</p>.
 cp -R "$HERE/fragments/site" "$WORK/f"
-rm -rf "$WORK/f/.gooseweb"
+rm -rf "$WORK/f/.gweb"
 PAGE='<p>x</p>
 %s
 <p>y</p>

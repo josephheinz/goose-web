@@ -35,7 +35,7 @@ Each release names the Goose compiler version it was tested with.
 
 ## What is not stable
 
-- Everything in `.gooseweb*/`: generated code and `map.txt`.
+- Everything in `.gweb*/`: generated code and `map.txt`.
 - Message wording.
 - The internals and size of `gwi.js`.
 - Performance numbers.

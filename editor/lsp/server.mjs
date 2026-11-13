@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const LSP_DIR = '.gooseweb.lsp';
+export const LSP_DIR = '.gweb.lsp';
 
 // ---- framing ----------------------------------------------------------------------------
 

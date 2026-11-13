@@ -7,7 +7,7 @@
 # 2. The owner state is shared: the later counter tests see the earlier POSTs.
 # 3. test/routes/failing exits 1 and names its failing test.
 # 4. A type error in a test file is reported at tests/<name>.goose:LINE, and a bad file name is refused.
-# 5. gweb test leaves .gooseweb/ alone: the built server and main.goose keep their checksums.
+# 5. gweb test leaves .gweb/ alone: the built server and main.goose keep their checksums.
 #
 # Needs gweb built beside this folder (goose build -o gweb cli/gweb.goose). Starts no server.
 set -u
@@ -53,7 +53,7 @@ if out=$("$GWEB" -C "$WORK/typo" test 2>&1); then
 else
   case "$out" in *"$want"*) ok ;; *) bad "wanted '$want' in:"; show "$out" ;; esac
   # Instantiation traces may name the generated main; the copied test file must not appear.
-  case "$out" in *".gooseweb.test/t_"*) bad "the copied test file's path leaked into the errors:"; show "$out" ;; *) ok ;; esac
+  case "$out" in *".gweb.test/t_"*) bad "the copied test file's path leaked into the errors:"; show "$out" ;; *) ok ;; esac
 fi
 cp -R "$HERE/routes/site" "$WORK/name"
 cp "$WORK/name/tests/basic.goose" "$WORK/name/tests/Bad-Name.goose"
@@ -64,15 +64,15 @@ else
   case "$out" in *"$want"*) ok ;; *) bad "wanted '$want' in:"; show "$out" ;; esac
 fi
 
-# 5. .gooseweb/ is untouched.
+# 5. .gweb/ is untouched.
 cp -R "$HERE/routes/site" "$WORK/keep"
 if "$GWEB" -C "$WORK/keep" build >/dev/null 2>&1; then
-  before=$(cksum "$WORK/keep/.gooseweb/server" "$WORK/keep/.gooseweb/main.goose" "$WORK/keep/.gooseweb/map.txt")
+  before=$(cksum "$WORK/keep/.gweb/server" "$WORK/keep/.gweb/main.goose" "$WORK/keep/.gweb/map.txt")
   if "$GWEB" -C "$WORK/keep" test >/dev/null 2>&1; then ok; else bad "gweb test in the built project"; fi
-  after=$(cksum "$WORK/keep/.gooseweb/server" "$WORK/keep/.gooseweb/main.goose" "$WORK/keep/.gooseweb/map.txt")
-  if [ "$before" = "$after" ]; then ok; else bad "gweb test changed .gooseweb/"; fi
-  if [ -x "$WORK/keep/.gooseweb/server" ]; then ok; else bad ".gooseweb/server is not executable after gweb test"; fi
-  if [ -x "$WORK/keep/.gooseweb.test/routes_test" ]; then ok; else bad "no .gooseweb.test/routes_test"; fi
+  after=$(cksum "$WORK/keep/.gweb/server" "$WORK/keep/.gweb/main.goose" "$WORK/keep/.gweb/map.txt")
+  if [ "$before" = "$after" ]; then ok; else bad "gweb test changed .gweb/"; fi
+  if [ -x "$WORK/keep/.gweb/server" ]; then ok; else bad ".gweb/server is not executable after gweb test"; fi
+  if [ -x "$WORK/keep/.gweb.test/routes_test" ]; then ok; else bad "no .gweb.test/routes_test"; fi
 else
   bad "gweb build of the site"
 fi

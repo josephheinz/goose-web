@@ -50,8 +50,8 @@ for want in '/admin  ' '/admin/users' '/admin/x.css'; do
   case "$routes" in *"$want"*) ok ;; *) bad "gweb routes lacks '$want':"; echo "$routes" | sed 's/^/    /' ;; esac
 done
 if out=$("$GWEB" -C "$WORK/ok/app" gen 2>&1); then
-  check "$([ -L "$WORK/ok/app/.gooseweb/admin" ] && [ -f "$WORK/ok/app/.gooseweb/admin/users.goose" ] && [ -f "$WORK/ok/app/.gooseweb/Badge.goose" ] && echo ok)" \
-    "gweb gen: .gooseweb/admin links the package lib and Badge.goose exists"
+  check "$([ -L "$WORK/ok/app/.gweb/admin" ] && [ -f "$WORK/ok/app/.gweb/admin/users.goose" ] && [ -f "$WORK/ok/app/.gweb/Badge.goose" ] && echo ok)" \
+    "gweb gen: .gweb/admin links the package lib and Badge.goose exists"
 else
   bad "gweb gen of the project"; echo "$out"
 fi
@@ -64,7 +64,7 @@ if [ -z "$goose" ]; then
   echo "SKIP build and server checks: no goose compiler (set GOOSE or put goose on PATH)"
 else
   if out=$("$GWEB" -C "$WORK/ok/app" build 2>&1); then
-    "$WORK/ok/app/.gooseweb/server" --port "$PORT" >/dev/null 2>&1 &
+    "$WORK/ok/app/.gweb/server" --port "$PORT" >/dev/null 2>&1 &
     PID=$!
     up=""
     for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -165,7 +165,7 @@ routes=$("$GWEB" -C "$WORK/rev/app" routes 2>&1)
 case "$routes" in *'/admin/shop/orders'*) ok ;; *) bad "rev: reversed lines: gweb routes lacks /admin/shop/orders"; echo "$routes" | sed 's/^/    /' ;; esac
 if [ -n "$goose" ]; then
   if out=$("$GWEB" -C "$WORK/nest/app" build 2>&1); then
-    "$WORK/nest/app/.gooseweb/server" --port "$PORT" >/dev/null 2>&1 &
+    "$WORK/nest/app/.gweb/server" --port "$PORT" >/dev/null 2>&1 &
     PID=$!
     up=""
     for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -238,7 +238,7 @@ if (cd "$GITBASE/src" && git init -q -b main && git add -A && git -c maintenance
   done
   check "$([ -f "$GWEB_PKG_CACHE"/url/*/gweb.package ] && echo ok)" "url source: the repo was cloned into the cache under url/"
   if out=$("$GWEB" -C "$WORK/url/app" gen 2>&1); then
-    check "$([ -L "$WORK/url/app/.gooseweb/admin" ] && [ -f "$WORK/url/app/.gooseweb/Badge.goose" ] && echo ok)" "url source: gweb gen links the package lib and its component"
+    check "$([ -L "$WORK/url/app/.gweb/admin" ] && [ -f "$WORK/url/app/.gweb/Badge.goose" ] && echo ok)" "url source: gweb gen links the package lib and its component"
   else
     bad "url source: gweb gen"; echo "$out" | sed 's/^/    /'
   fi

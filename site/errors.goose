@@ -133,7 +133,7 @@ fn path_stop(c: u8) -> bool {
         || c == '<' || c == '>' || c == '[' || c == ']' || c == ',' || c == '=';
 }
 
-// The source file of a generated file name in .gooseweb/map.txt ("gen.goose<TAB>source"); "" when absent.
+// The source file of a generated file name in .gweb/map.txt ("gen.goose<TAB>source"); "" when absent.
 fn map_source(map: const u8[:], base: const u8[:]) -> const u8[:] {
     for line in split_lines(map, '\n') {
         let name, path, ok = split_once(line, '\t');
@@ -153,7 +153,7 @@ fn add_excerpt(d: u8[>..]&, gen_path: const u8[:], gen_line: i64, map: const u8[
     if mapped.len > 0 {
         src.append(mapped);
     } else {
-        let lib = find(gen_path, ".gooseweb/lib/");
+        let lib = find(gen_path, ".gweb/lib/");
         if lib < 0 { return false; }
         src.append("lib/");
         src.append(gen_path[lib + 14..]);
@@ -162,7 +162,7 @@ fn add_excerpt(d: u8[>..]&, gen_path: const u8[:], gen_line: i64, map: const u8[
     if starts_with(src, "components/") {
         line = -1;
         var g: u8[>..] = [];
-        format(g, ".gooseweb/", base);
+        format(g, ".gweb/", base);
         var code: u8[>..] = [];
         if read_file(g, code) {
             let ls = split_lines(code, '\n');
@@ -228,7 +228,7 @@ fn dev_detail(e: ErrorInfo&, req: const http::Request&, abort_text: const u8[:])
     if abort_text.len > 0 {
         format(d, "\n", abort_text, "\n");
         var map: u8[>..] = [];
-        if read_file(".gooseweb/map.txt", map) { add_excerpts(d, abort_text, map); }
+        if read_file(".gweb/map.txt", map) { add_excerpts(d, abort_text, map); }
     } else if e.message.len > 0 {
         format(d, "\n", e.message, "\n");
     }

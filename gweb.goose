@@ -450,7 +450,7 @@ fn default_workers() -> i64 {
 fn default_config() -> Config {
     Config { port: 3000, host: "0.0.0.0", workers: default_workers(), log: false,
              idle_ms: 5000, max_body: 1048576, dev_id: 0,
-             max_upload: 33554432, spool_over: 65536, upload_dir: ".gooseweb.uploads",
+             max_upload: 33554432, spool_over: 65536, upload_dir: ".gweb.uploads",
              auth: AuthConfig { .. }, security_headers: true, hsts: 0, csp: 0, export_dir: "",
              drain_ms: 10000, drain_delay_ms: 0, log_format: "text", log_level: "info",
              metrics: false, job_runners: 1, job_queue: 10000, job_attempts: 5, schedule: true, probe: false }
@@ -801,11 +801,11 @@ fn parse_secret(text: const u8[:], keys: Keys&, err: u8[>..]&) -> bool {
     return keys.n > 0;
 }
 
-// gweb dev only: a stable key in .gooseweb.dev/secret keeps sessions alive across rebuilds. 32 random bytes as 64 hex digits.
+// gweb dev only: a stable key in .gweb.dev/secret keeps sessions alive across rebuilds. 32 random bytes as 64 hex digits.
 fn dev_secret(keys: Keys&, err: u8[>..]&) -> bool {
     var text: u8[>..] = [];
     var ignored: u8[>..] = [];
-    if read_file(".gooseweb.dev/secret", text) && parse_secret(text, keys, ignored) { return true; }
+    if read_file(".gweb.dev/secret", text) && parse_secret(text, keys, ignored) { return true; }
     var raw: u8[..32] = [0; 32];
     if c_entropy(raw) == 0 { format(err, "gweb: cannot read system entropy for the dev secret"); return false; }
     var hex: u8[>..] = [];
@@ -813,8 +813,8 @@ fn dev_secret(keys: Keys&, err: u8[>..]&) -> bool {
         hex.push(HEX_LOWER[(b >> 4) as i64]);
         hex.push(HEX_LOWER[(b & 15) as i64]);
     }
-    make_dir(".gooseweb.dev");
-    write_file(".gooseweb.dev/secret", hex);   // a write failure only costs session persistence across restarts
+    make_dir(".gweb.dev");
+    write_file(".gweb.dev/secret", hex);   // a write failure only costs session persistence across restarts
     return parse_secret(hex, keys, err);
 }
 
@@ -1044,8 +1044,8 @@ fn dev_status(res: http::Response&, dev_id: i64) {
     var errs: u8[>..] = [];
     var warns: u8[>..] = [];
     res.body.push('\n');
-    if read_file(".gooseweb.dev/errors.txt", errs) && errs.len > 0 { res.body.append(errs); }
-    if read_file(".gooseweb.dev/warnings.txt", warns) && warns.len > 0 {
+    if read_file(".gweb.dev/errors.txt", errs) && errs.len > 0 { res.body.append(errs); }
+    if read_file(".gweb.dev/warnings.txt", warns) && warns.len > 0 {
         res.body.append("\x0c");
         res.body.append(warns);
     }

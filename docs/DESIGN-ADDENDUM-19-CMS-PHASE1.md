@@ -43,7 +43,7 @@ checks), `test/cache.sh` and `test/cache_test.c` (epoch), `test/sitemap.sh` (mul
 - **Folders.** `markdown.goose` and `views.goose` are `site/markdown.goose` and `site/views.goose` (import
   `gweb.site.markdown`, `gweb.site.views`): they belong with `meta`, `template`, `sitemap` and `i18n`, the modules that
   serve page content. `cli/views.goose` is the generator and `cli/structs.goose` the shared scanner. The generated registry is
-  `.gooseweb/views.goose`, `import views;`.
+  `.gweb/views.goose`, `import views;`.
 - **`g_meta(i)` returns `gweb::ViewMeta` by value** (flat, about 12 KB), not a reference, so it needs no static storage.
   It is built from literals that gweb read from the source (`LABEL`, `ICON`, `UI`, the fields, the slots). `UI`, `LABEL`,
   `ICON` and `RENAMED` must therefore be string literals; gweb says so at the line. `CHILDREN`, `ROOT_OK`, `IN_NAV` and

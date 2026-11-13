@@ -110,10 +110,10 @@ var srcmap_text: u8[>..];
 var gen_root: u8[>..];
 var minify = false;                    // gweb build, start and gen turn it on; dev and test leave it off
 // gweb test must never touch BUILD_DIR: a built server or a running gweb dev depends on it.
-let TEST_DIR = ".gooseweb.test";
-let BUILD_DIR = ".gooseweb";
-let LSP_DIR = ".gooseweb.lsp";
-let CHECK_DIR = ".gooseweb.check";
+let TEST_DIR = ".gweb.test";
+let BUILD_DIR = ".gweb";
+let LSP_DIR = ".gweb.lsp";
+let CHECK_DIR = ".gweb.check";
 var overlay_src: u8[>..];              // lsp-gen --overlay: this source is read from overlay_tmp instead
 var overlay_tmp: u8[>..];
 var start_cwd: u8[>..];                // the folder gweb started in, before any -C
@@ -125,7 +125,7 @@ var component_reactive: i64[>..<];     // 1 for a component with @ declarations 
 var component_props: u8[>..];          // `Name\tprop\tdefault source\n` for each @prop of each reactive component
 var component_errors = 0;              // translator errors of this gen; the build still runs goose
 var uses_fragments = false;
-var has_locales = false;              // locales/ exists: .gooseweb/t.goose is generated
+var has_locales = false;              // locales/ exists: .gweb/t.goose is generated
 var locale_notes: u8[>..];             // the 'lacks' lines, printed after a successful build
 var locale_count = 0;
 var uses_boost = false;               // a layout or page has <body gw-boost> (serves gwn.js)
@@ -1216,7 +1216,7 @@ fn read_checked(src: const u8[:], code: u8[>..]&) -> bool {
     return true;
 }
 
-// Writes .gooseweb/NS.goose: the namespace and any wanted imports on line 1 (the user's imports are not repeated), the
+// Writes .gweb/NS.goose: the namespace and any wanted imports on line 1 (the user's imports are not repeated), the
 // user's code, then extra (generated code). On line 1, so the user's line numbers stay the same.
 fn write_prefixed(src: const u8[:], ns: const u8[:], code: const u8[:], extra: const u8[:], wanted: const u8[:]) {
     var out: u8[>..] = [];
@@ -2726,7 +2726,7 @@ fn seg_count(rel: const u8[:]) -> i64 {
     return n;
 }
 
-// Writes .gooseweb/t.goose from locales/; errors stop the build.
+// Writes .gweb/t.goose from locales/; errors stop the build.
 fn gen_locales() {
     has_locales = true;
     var names: u8[>..] = [];
@@ -4366,7 +4366,7 @@ fn build(debug: bool, dev: bool) -> bool {
     var pages = 0;
     for d in dirs { if d.route { routes += 1; } if d.page_html { pages += 1; } }
     var msg: u8[>..] = [];
-    format(msg, "gweb: built .gooseweb/server: ", routes, " routes, ", pages, " pages, ", statics.len, " static files (",
+    format(msg, "gweb: built .gweb/server: ", routes, " routes, ", pages, " pages, ", statics.len, " static files (",
            ((clock() - t0) * 10.0) as i64 as f64 / 10.0, " s)");
     if warnings > 0 { format(msg, " (", warnings, " warnings)"); }
     msg.push('\n');
@@ -4930,7 +4930,7 @@ fn print_routes() {
 
 fn server_cmd(extra: u8[:][:], dev: bool) -> u8[>..] {
     var cmd: u8[>..] = [];
-    cmd.append("./.gooseweb/server");
+    cmd.append("./.gweb/server");
     if dev {
         var has_workers = false;
         var has_port = false;
@@ -5017,13 +5017,13 @@ fn excerpts(text: const u8[:]) -> u8[>..] {
 }
 
 fn write_dev_errors(text: const u8[:]) {
-    make_dir(".gooseweb.dev");
-    write_file(".gooseweb.dev/errors.txt", text);
+    make_dir(".gweb.dev");
+    write_file(".gweb.dev/errors.txt", text);
 }
 
 fn write_dev_warnings(text: const u8[:]) {
-    make_dir(".gooseweb.dev");
-    write_file(".gooseweb.dev/warnings.txt", text);
+    make_dir(".gweb.dev");
+    write_file(".gweb.dev/warnings.txt", text);
 }
 
 fn dev(extra: u8[:][:]) {
@@ -5148,7 +5148,7 @@ fn GET(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
 <p>No page at {req.path}.</p>
 
 """],
-        [".gitignore", ".gooseweb/\n.gooseweb.dev/\n.gooseweb.test/\n.gooseweb.lsp/\n.gooseweb.check/\n.env*.local\n"],
+        [".gitignore", ".gweb/\n.gweb.dev/\n.gweb.test/\n.gweb.lsp/\n.gweb.check/\n.gweb.uploads/\n.env*.local\n"],
         ["Dockerfile", DOCKERFILE],
         [".dockerignore", DOCKERIGNORE],
         ["public/site.css", """
@@ -5186,8 +5186,8 @@ fn usage() {
     write_stderr("""
 usage: gweb [-C dir] <command>
   new <dir>         make a starter project
-  gen               write .gooseweb/ only
-  build [--debug]   gen, then goose build to .gooseweb/server
+  gen               write .gweb/ only
+  build [--debug]   gen, then goose build to .gweb/server
                     gen, build, start and test also take --strict (warnings fail the run)
                     and --diagnostics json (stderr as JSON Lines)
   start [flags]     build, then run the server (flags go to it: --port N --workers N --log ...)
@@ -5196,7 +5196,7 @@ usage: gweb [-C dir] <command>
   dev [flags]       build, run on port 60053 (unless --port), and rebuild on every change under app/, lib/, public/, components/, locales/, stores/
   routes            print the route table
   version           print the version and the package sources a build declares
-  check             generate into .gooseweb.check/ and run goose check; errors name .gshtml and page.html lines
+  check             generate into .gweb.check/ and run goose check; errors name .gshtml and page.html lines
   lsp               run the language server (needs node)
   test              component test_* functions as Goose and as JavaScript (they must match), then tests/*.goose route tests
 
@@ -5223,7 +5223,7 @@ fn main() {
     if cmd == "gen" {
         parse_flags(rest, false);
         if !gen(false, BUILD_DIR) || component_errors > 0 { exit(1); }
-        write_stdout("gweb: wrote .gooseweb/\n");
+        write_stdout("gweb: wrote .gweb/\n");
         if !strict_ok() { exit(1); }
         return;
     }
@@ -5237,7 +5237,7 @@ fn main() {
         parse_flags(rest, false);
         if !build(false, false) || !strict_ok() { exit(1); }
         c_exec(server_cmd(rest, false));
-        write_stderr("gweb: could not start .gooseweb/server\n");
+        write_stderr("gweb: could not start .gweb/server\n");
         exit(1);
     }
     if cmd == "export" {
@@ -5251,10 +5251,10 @@ fn main() {
         }
         if !build(false, false) { exit(1); }
         var cmd: u8[>..] = [];
-        cmd.append("./.gooseweb/server --export ");
+        cmd.append("./.gweb/server --export ");
         shq(cmd, dir);
         c_exec(cmd);
-        write_stderr("gweb: could not start .gooseweb/server\n");
+        write_stderr("gweb: could not start .gweb/server\n");
         exit(1);
     }
     if cmd == "dev" { minify = false; dev(rest); return; }
