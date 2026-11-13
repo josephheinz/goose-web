@@ -23,7 +23,7 @@ A linked `gweb` uses its checkout as the `web` package, and a `goose-net` or
 `goose-sqlite` checkout beside it. A copied `gweb` declares the tagged
 releases from GitHub, and the compiler fetches them on the first build.
 `gweb version` prints the version and the three sources it declares.
-Set `GWEB_WEB`, `GWEB_NET` or `GWEB_SQLITE` to a path or a git source with
+Set `GWEB_SRC`, `GWEB_NET` or `GWEB_SQLITE` to a path or a git source with
 `@ref` to override one.
 
 To run this package's tests from a clone, clone goose-net beside it
@@ -266,7 +266,7 @@ built `.gooseweb/server` and a running `gweb dev` are untouched.
 **Tests of this package.** `test/components.sh` (parity fixtures in `test/components/`, `Fail*` per error,
 `Warn*` per warning), `test/runtime.sh` (minified modules are current and under their size ceilings, then the
 jsdom suites: `test/morph.sh`, `test/reactive.sh`, navigation, transitions, server push). jsdom installs into
-`~/.cache/goose-web-test` on first run.
+`~/.cache/gweb-test` on first run.
 
 **Maintainers.** After editing a `client/gw*.js` file, run `client/build.sh` (esbuild 0.28.2 through `npx`, or
 `ESBUILD=/path/to/esbuild`); it writes `gw*.min.js` with the source's FNV-1a hash in its banner.
@@ -320,7 +320,7 @@ Warning codes:
 | `state-unused` | a `@state` nothing reads |
 
 `gweb` finds the compiler in `$GOOSE`, else `goose` on `PATH`, and finds this
-package beside its own binary (or `$GOOSE_WEB_HOME`). A checkout older than
+package beside its own binary (or `$GWEB_HOME`). A checkout older than
 the binary, or newer, stops with "rebuild gweb". Build `gweb` with:
 
 ```
@@ -336,7 +336,7 @@ with `at /prefix` to mount its routes. See [docs/site/packages.md](docs/site/pac
 ## How it runs
 
 - The default is min(performance cores, 4) workers; `--workers N` or
-  `WEB_WORKERS` override it. On the test Mac, more workers only helped
+  `GWEB_WORKERS` override it. On the test Mac, more workers only helped
   routes that do real work.
 - One listening socket; each worker thread runs its own goose-net poll loop.
   With several workers each takes one new connection per wake, so bursts
@@ -349,7 +349,7 @@ with `at /prefix` to mount its routes. See [docs/site/packages.md](docs/site/pac
   socketpair each (`src/owner.c`), with a 5 s reply timeout.
 - Pages render on every request into one buffer (unless `REVALIDATE`, below); static files go out
   from the binary's data with `writev`, without a copy.
-- goose-web speaks plain HTTP/1.1. For TLS, HTTP/2 and compression run it behind Caddy or
+- gweb speaks plain HTTP/1.1. For TLS, HTTP/2 and compression run it behind Caddy or
   nginx: see [docs/DEPLOY-PROXY.md](docs/DEPLOY-PROXY.md).
 
 ## Operations
@@ -423,7 +423,7 @@ A layout can read a cookie without a loader: `<body class="{gweb::cookie_or(req,
 `CookieOptions` has `path` (`/`), `domain` (none, this host only), `max_age`
 (-1: until the browser closes), `secure` (false), `http_only` (true) and
 `same_site` (`SameSite.Lax`, `Strict` or `None`). `SameSite.None` always writes
-`Secure`. `secure` defaults to false because goose-web serves plain HTTP; set it
+`Secure`. `secure` defaults to false because gweb serves plain HTTP; set it
 when the site is behind TLS.
 
 `set_cookie` returns false and sets nothing when the name is not an RFC 6265
@@ -471,7 +471,7 @@ secret, one token for the browser session.
   3-D Secure return). A route that opts out must not trust cookies for authority. Pages have no opt-out.
 - Behind a proxy that sends `X-Forwarded-Proto: https` the cookie is `__Host-gw_csrf` with `Secure`,
   and a plain `gw_csrf` cookie is ignored.
-- `gweb::login` rotates the token. The token itself needs no `WEB_SECRET`.
+- `gweb::login` rotates the token. The token itself needs no `GWEB_SECRET`.
 
 ## Config and secrets
 
@@ -482,25 +482,25 @@ under `gweb dev` and `production` otherwise. Lines are `NAME=value`; `#` starts 
 
 ```
 # .env.local   (git-ignored)
-WEB_SECRET=3f1c...64 hex digits...   # openssl rand -hex 32
+GWEB_SECRET=3f1c...64 hex digits...   # openssl rand -hex 32
 ```
 
-- `WEB_SECRET` is 1 to 4 comma-separated keys of 32 to 64 bytes. The first signs, all verify, so
+- `GWEB_SECRET` is 1 to 4 comma-separated keys of 32 to 64 bytes. The first signs, all verify, so
   you rotate by putting the new key first. Put it in `.env*.local` (git-ignored by `gweb new`) or the
   real environment, never in a committed `.env`.
 - `gweb dev` makes a throwaway key in `.gooseweb.dev/secret` when none is set. Production refuses to
-  start without `WEB_SECRET` when the app uses sessions or signed cookies.
+  start without `GWEB_SECRET` when the app uses sessions or signed cookies.
 - Read your own settings with `gweb::env_str`, `env_int`, `env_bool` and `env_required`. An
   optional `app/config.goose` with `fn check() -> bool` runs before the server listens; false exits 2.
-- `WEB_SESSION_IDLE` and `WEB_SESSION_MAX` are seconds (defaults 86400 and 2592000).
-  `WEB_TRUST_PROXY=1` makes `client_ip` read the last `X-Forwarded-For` item; leave it off unless a
+- `GWEB_SESSION_IDLE` and `GWEB_SESSION_MAX` are seconds (defaults 86400 and 2592000).
+  `GWEB_TRUST_PROXY=1` makes `client_ip` read the last `X-Forwarded-For` item; leave it off unless a
   proxy you run sets that header, or clients can pick their own address.
 
 ## Sessions and login
 
 A session is a signed cookie, `gw_session`: user id, your version number, times and up to 256 bytes
 of data. It is **signed, not encrypted**: the user can read it, so keep secrets out of it. It needs
-`WEB_SECRET`. Nothing reads it until you call `gweb::session`.
+`GWEB_SECRET`. Nothing reads it until you call `gweb::session`.
 
 ```goose
 // app/login/submit/route.goose
@@ -544,7 +544,7 @@ if !gweb::rate_limit_key(ctx, res, "login-user", username, 5, 60) { return; } //
 
 A refusal has already written `429`, `Retry-After` and the body, so you just return. The table is
 process-wide, shared by all workers, and lost on restart. It is a speed bump, not a firewall: an
-attacker with many addresses can evict entries. See `WEB_TRUST_PROXY` above for `client_ip`.
+attacker with many addresses can evict entries. See `GWEB_TRUST_PROXY` above for `client_ip`.
 
 ## CORS
 
@@ -566,10 +566,10 @@ fn before(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) -> b
 ## Security headers and CSP
 
 Every response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`
-and `X-Frame-Options: SAMEORIGIN`. `WEB_SECURITY_HEADERS=0` turns them off; a handler can set
-`ctx.default_headers = false`. `WEB_HSTS=<seconds>` adds `Strict-Transport-Security`.
+and `X-Frame-Options: SAMEORIGIN`. `GWEB_SECURITY_HEADERS=0` turns them off; a handler can set
+`ctx.default_headers = false`. `GWEB_HSTS=<seconds>` adds `Strict-Transport-Security`.
 
-CSP is opt-in: `WEB_CSP=1` (or `--csp`), or `report-only` to watch without blocking, or
+CSP is opt-in: `GWEB_CSP=1` (or `--csp`), or `report-only` to watch without blocking, or
 `gweb::csp_begin(ctx)` in one subtree's `before`. HTML replies get
 `script-src 'self' 'nonce-N'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'`.
 

@@ -1,4 +1,4 @@
-// goose-web typed fetch for components (http::get, http::post), imported by a component module as ./gwh.js.
+// gweb typed fetch for components (http::get, http::post), imported by a component module as ./gwh.js.
 // client/gwh.min.js is this file minified by client/build.sh.
 
 // d(value, "") returns the checked value or throws the path of the first mismatch; no d ignores the body.

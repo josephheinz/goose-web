@@ -1,4 +1,4 @@
-// goose-web shared stores (Addendum 12 section 7.7): the module /_gw/Name.js of a store exports store(...).
+// gweb shared stores (Addendum 12 section 7.7): the module /_gw/Name.js of a store exports store(...).
 // client/gws.min.js is this file minified by client/build.sh.
 import { defs, run, state } from "./gwi.js";
 

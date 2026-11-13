@@ -309,7 +309,7 @@ fn session_tests() {
     var nk = ctx_with("", "");
     var nres = http::new_response();
     check(!gweb::login_at(req, nk, nres, 1, 1, gweb::LoginOptions { .. }, NOW), "login without a key");
-    check_eq(nres.body, "{\"error\":\"WEB_SECRET is not set\"}", "login 500 body");
+    check_eq(nres.body, "{\"error\":\"GWEB_SECRET is not set\"}", "login 500 body");
     check(nk.set_cookies.len == 0, "no cookie without a key");
 
     // two logins never share a sid

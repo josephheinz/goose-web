@@ -31,13 +31,13 @@ gweb version                 the version and the package sources
 ## Rules
 
 - `gweb` finds the compiler in `$GOOSE`, else `goose` on `PATH`.
-- It finds the `web` package beside its own binary, or in `$GOOSE_WEB_HOME`.
+- It finds the `web` package beside its own binary, or in `$GWEB_HOME`.
   A checkout older or newer than the binary stops with "rebuild gweb".
-- `GWEB_WEB`, `GWEB_NET` and `GWEB_SQLITE` override a package source.
+- `GWEB_SRC`, `GWEB_NET` and `GWEB_SQLITE` override a package source.
 - Generated files go in `.gooseweb/`, `.gooseweb.dev/`, `.gooseweb.test/`, `.gooseweb.check/` and `.gooseweb.lsp/`.
   Keep them out of git. They are not part of any stable interface.
 - Packages are listed in `gweb.packages`. See [Packages](packages.md).
-- `WEB_WORKERS` sets the worker count. The default is the lesser of the
+- `GWEB_WORKERS` sets the worker count. The default is the lesser of the
   performance cores and 4.
 
 Full reference: [README](../../README.md#commands).

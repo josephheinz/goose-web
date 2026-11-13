@@ -1,4 +1,4 @@
-// goose-web event modifiers, imported by components whose markup has on:EVENT.MOD (Addendum 12, 7.2b).
+// gweb event modifiers, imported by components whose markup has on:EVENT.MOD (Addendum 12, 7.2b).
 // client/gwm.min.js is this file minified by client/build.sh.
 import { hooks } from "./gwi.js";
 

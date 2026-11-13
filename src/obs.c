@@ -281,7 +281,7 @@ static app_t *app_get(gweb_bytes name, int gauge) {
             if (cur >= APP_MAX) {
                 pthread_mutex_unlock(&app_mu);
                 if (!atomic_exchange(&app_warned, 1))
-                    fprintf(stderr, "goose-web: more than %d app metric names; ignoring \"%.*s\" and any new ones\n", APP_MAX, (int)n, s);
+                    fprintf(stderr, "gweb: more than %d app metric names; ignoring \"%.*s\" and any new ones\n", APP_MAX, (int)n, s);
                 return NULL;
             }
             memcpy(app_tab[cur].name, s, n);

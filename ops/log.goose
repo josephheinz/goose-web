@@ -164,11 +164,11 @@ fn ops_init(cfg: const Config&, routes_nl: const u8[:]) {
     log_configure(level_from_name(cfg.log_level), cfg.log_format == "json");
     if cfg.metrics { c_metrics_init(cfg.workers as i32, routes_nl); }
     let t = c_otel_start_from_env();
-    if t == 1 { log_message(Level.Info, "goose-web: tracing on"); }
-    else if t == 2 { log_message(Level.Warn, "goose-web: tracing is off: the OTLP endpoint is not usable"); }
+    if t == 1 { log_message(Level.Info, "gweb: tracing on"); }
+    else if t == 2 { log_message(Level.Warn, "gweb: tracing is off: the OTLP endpoint is not usable"); }
 }
 
 // Call in main when the server has stopped: sends the queued spans, waiting up to 2 seconds.
 fn ops_shutdown() {
-    if c_otel_flush(2000) == 0 { log_message(Level.Warn, "goose-web: tracing export did not finish in 2 s"); }
+    if c_otel_flush(2000) == 0 { log_message(Level.Warn, "gweb: tracing export did not finish in 2 s"); }
 }

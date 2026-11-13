@@ -1,4 +1,4 @@
-// goose-web child components, imported by modules that call @Child(...) (Addendum 12 section 7.5).
+// gweb child components, imported by modules that call @Child(...) (Addendum 12 section 7.5).
 // client/gwc.min.js is this file minified by client/build.sh.
 import { defs, esc, hooks, run, state } from "./gwi.js";
 

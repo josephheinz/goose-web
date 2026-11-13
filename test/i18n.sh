@@ -1,5 +1,5 @@
 #!/bin/sh
-# goose-web's i18n suite: the locales/ catalog compiler and the generated t:: module.
+# gweb's i18n suite: the locales/ catalog compiler and the generated t:: module.
 #
 #   GOOSE=/path/to/goose test/i18n.sh
 #

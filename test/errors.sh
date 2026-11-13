@@ -1,5 +1,5 @@
 #!/bin/sh
-# goose-web's error pages and crash replies suite (DESIGN-ADDENDUM-14, D10 to D13, step 5).
+# gweb's error pages and crash replies suite (DESIGN-ADDENDUM-14, D10 to D13, step 5).
 #
 #   GOOSE=/path/to/goose test/errors.sh
 #
@@ -54,7 +54,7 @@ body_id() {
 }
 # logged ID STATUS METHOD TARGET: the server log has the error line for that id.
 logged() {
-  grep -qE "goose-web: error $1: $2 $3 $4: " "$LOG"
+  grep -qE "gweb: error $1: $2 $3 $4: " "$LOG"
 }
 
 start_server() {
@@ -91,7 +91,7 @@ else
   check "$(body_has f '<h1 id="root-error">503 Down for maintenance.</h1>' && body_has f 'id="root-layout"' && ! body_has f 'id="crashed"' && echo ok)" "/fail: root error.html with err.status and err.message, inside the root layout, not crashed"
   check "$(has_header f 'content-type: text/html' && echo ok)" "/fail: HTML"
   id=$(body_id f)
-  check "$([ -n "$id" ] && logged "$id" 503 GET /fail && grep -qF 'Down for maintenance.' "$LOG" && echo ok)" "/fail: the log line goose-web: error <id>: 503 GET /fail: <message> has the page's id"
+  check "$([ -n "$id" ] && logged "$id" 503 GET /fail && grep -qF 'Down for maintenance.' "$LOG" && echo ok)" "/fail: the log line gweb: error <id>: 503 GET /fail: <message> has the page's id"
   check "$(! body_has f 'gw-dev-error' && ! body_has f '__gweb/id' && echo ok)" "/fail: no dev detail and no dev script without --dev-id"
 
   # A crash: 500, Connection: close, the next request works.
@@ -100,7 +100,7 @@ else
   check "$(body_has c '<h1 id="root-error">500 Internal Server Error</h1>' && body_has c 'id="root-layout"' && body_has c 'id="crashed"' && echo ok)" "/crash: root error.html, crashed, inside the root layout"
   id=$(body_id c)
   check "$([ -n "$id" ] && logged "$id" 500 GET /crash && echo ok)" "/crash: the log line has the page's id"
-  check "$(grep -q 'goose-web: worker 0 stopped' "$LOG" && echo ok)" "/crash: the supervisor logged the stop"
+  check "$(grep -q 'gweb: worker 0 stopped' "$LOG" && echo ok)" "/crash: the supervisor logged the stop"
   check "$(! body_has c 'gw-dev-error' && echo ok)" "/crash: no detail in production"
   check "$(! body_has c 'index' && ! body_has c 'out of bounds' && echo ok)" "/crash: the abort text is not in the page"
   req home GET /

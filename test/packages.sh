@@ -1,5 +1,5 @@
 #!/bin/sh
-# goose-web's package suite (DESIGN-ADDENDUM-18, D6 and Step 6).
+# gweb's package suite (DESIGN-ADDENDUM-18, D6 and Step 6).
 #
 #   GOOSE=/path/to/goose test/packages.sh
 #

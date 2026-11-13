@@ -106,7 +106,7 @@ fn csp_tests() {
     gweb::apply_security(ctx, res4, cfg);
     check(find(res4.headers, "Content-Security-Policy-Report-Only: script-src 'self' 'nonce-") >= 0, "report-only name");
 
-    // csp_begin with WEB_CSP off enforces
+    // csp_begin with GWEB_CSP off enforces
     var off = gweb::default_config();
     var ctx5 = gweb::new_ctx(0, -1);
     check(gweb::csp_begin(ctx5), "csp_begin");

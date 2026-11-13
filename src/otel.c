@@ -421,7 +421,7 @@ static void send_spans(const export_cfg *c, const span_rec *recs, int n) {
     jbuf b = {0};
     jstr(&b, "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":");
     jquote(&b, c->service, strlen(c->service));
-    jstr(&b, "}}]},\"scopeSpans\":[{\"scope\":{\"name\":\"goose-web\"},\"spans\":[");
+    jstr(&b, "}}]},\"scopeSpans\":[{\"scope\":{\"name\":\"gweb\"},\"spans\":[");
     for (int i = 0; i < n; i++) {
         if (i) jput(&b, ",", 1);
         span_json(&b, &recs[i]);
@@ -590,7 +590,7 @@ static int parse_url(const char *url, export_cfg *c) {
 }
 
 static void warn(const char *msg, const char *url) {
-    fprintf(stderr, "goose-web: tracing disabled: %s%s%s\n", msg, url ? ": " : "", url ? url : "");
+    fprintf(stderr, "gweb: tracing disabled: %s%s%s\n", msg, url ? ": " : "", url ? url : "");
 }
 
 /* 0 off, 1 on, 2 refused (not plain http). */
@@ -639,7 +639,7 @@ int32_t gweb_otel_start_from_env(void) {
         return 2;
     }
     const char *svc = getenv("OTEL_SERVICE_NAME");
-    snprintf(c->service, sizeof c->service, "%s", svc && *svc ? svc : "goose-web");
+    snprintf(c->service, sizeof c->service, "%s", svc && *svc ? svc : "gweb");
     parse_headers(getenv("OTEL_EXPORTER_OTLP_HEADERS"), c->headers, sizeof c->headers);
 
     pthread_mutex_lock(&mu);

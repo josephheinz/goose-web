@@ -1,5 +1,5 @@
 // Operations helpers (DESIGN-ADDENDUM-16), without sockets: log line shapes, request ids, route names, flags.
-// Run it with PORT, WEB_WORKERS and the GWEB_* variables unset.
+// Run it with PORT, GWEB_WORKERS and the GWEB_* variables unset.
 //   goose build test/ops_unit.goose && test/ops_unit
 import gweb from "..";
 import gweb.ops.log;

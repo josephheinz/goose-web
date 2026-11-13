@@ -1,4 +1,4 @@
-// goose-web fragments (gw-target), served as /_gw/gwf.js on pages that use them; imports gwi.js.
+// gweb fragments (gw-target), served as /_gw/gwf.js on pages that use them; imports gwi.js.
 // client/gwf.min.js is this file minified by client/build.sh.
 
 import { swap, oops } from "./gwi.js";

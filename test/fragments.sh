@@ -1,5 +1,5 @@
 #!/bin/sh
-# goose-web's fragment suite (DESIGN-ADDENDUM-4, section 10).
+# gweb's fragment suite (DESIGN-ADDENDUM-4, section 10).
 #
 #   GOOSE=/path/to/goose test/fragments.sh
 #

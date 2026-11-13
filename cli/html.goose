@@ -12,7 +12,7 @@ let GLOBAL = ["accesskey", "anchor", "autocapitalize", "autocorrect", "autofocus
               "itemprop", "itemref", "itemscope", "itemtype", "lang", "nonce", "part", "popover", "role", "slot",
               "spellcheck", "style", "tabindex", "title", "translate", "writingsuggestions"];
 
-// goose-web's own attributes.
+// gweb's own attributes.
 let GW = ["gw-key", "gw-target", "gw-boost", "gw-enter", "gw-leave", "gw-sse"];
 
 // `tag,tag: attribute attribute ...`. An element that is not listed takes the global attributes only.

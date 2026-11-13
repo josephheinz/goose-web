@@ -1,5 +1,5 @@
 #!/bin/sh
-# goose-web's page-template suite (DESIGN-ADDENDUM-6, section 8).
+# gweb's page-template suite (DESIGN-ADDENDUM-6, section 8).
 #
 #   GOOSE=/path/to/goose test/templates.sh
 #

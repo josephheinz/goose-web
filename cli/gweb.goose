@@ -1,4 +1,4 @@
-// gweb: the goose-web command line.
+// gweb: the gweb command line.
 //
 //   gweb [-C dir] new <dir>
 //   gweb [-C dir] gen [--no-minify]
@@ -980,7 +980,7 @@ fn scan_components_in(dir: const u8[:], found: Comp[>..<]&) {
 fn scan_components() {
     component_names.clear();
     component_paths.clear();
-    if is_dir("public/_gw") { err("public/_gw", 0, "/_gw/ is goose-web's component folder; rename this folder"); }
+    if is_dir("public/_gw") { err("public/_gw", 0, "/_gw/ is gweb's component folder; rename this folder"); }
     var found: Comp[>..<] = [];
     scan_components_in("components", found);
     for pk in pkgs {
@@ -3052,12 +3052,12 @@ fn gen_hub_thread(m: u8[>..]&) {
         m.append("            Binary => { socket::message(ctx, id, topic, msg, true); },\n");
     }
     if socket_close { m.append("            Close => { socket::close(ctx, id, topic); },\n"); }
-    m.append("            Failed => { print(\"goose-web: the hub stopped\"); return; },\n            _ => {},\n        }\n    }\n}\n\n");
+    m.append("            Failed => { print(\"gweb: the hub stopped\"); return; },\n            _ => {},\n        }\n    }\n}\n\n");
     m.append("""
 thread_fn hub_supervisor(cfg: gweb::Config, owner_fd: i32) {
     var why: u8[>..] = [];
     while !thread_wait(thread_spawn_contained(hub_thread, cfg, owner_fd), why) {
-        print("goose-web: the hub thread stopped: ", why, "; restarting it");
+        print("gweb: the hub thread stopped: ", why, "; restarting it");
         why.clear();
     }
 }
@@ -3152,7 +3152,7 @@ thread_fn job_supervisor(slot: i64, owner_fd: i32, cfg: gweb::Config, chans: gwe
 // thread runs.
 fn gen_main_fn(m: u8[>..]&) {
     m.append("\nfn main() {\n    var cfg = gweb::config_from_args();\n");
-    if uses_keys { m.append("    if cfg.auth.keys.n == 0 { print(\"goose-web: set WEB_SECRET (32 to 64 bytes; openssl rand -hex 32)\"); exit(2); }\n"); }
+    if uses_keys { m.append("    if cfg.auth.keys.n == 0 { print(\"gweb: set GWEB_SECRET (32 to 64 bytes; openssl rand -hex 32)\"); exit(2); }\n"); }
     if has_config { m.append("    if !config::check() { exit(2); }\n"); }
     // Export renders in process: no socket and no workers, but pages that ask the state owner still need it.
     if has_state {
@@ -3167,7 +3167,7 @@ fn gen_main_fn(m: u8[>..]&) {
     m.append("    net::stop_on_signals(cfg.drain_delay_ms, cfg.drain_ms);\n");
     m.append("""
     let server, inherited = net::listen_inherited(cfg.port, cfg.host, 1024);
-    guard server.ok() else { print("goose-web: cannot listen on port ", cfg.port, ": ", net::last_error()); exit(1); }
+    guard server.ok() else { print("gweb: cannot listen on port ", cfg.port, ": ", net::last_error()); exit(1); }
     gweb::ops_init(cfg, ROUTES);
     gweb::inflight_init(cfg.workers, cfg.dev_id != 0);
 """);
@@ -3208,7 +3208,7 @@ fn gen_main_fn(m: u8[>..]&) {
     net::enable_handoff(server, argv);
     net::ready();
     var up: u8[>..] = [];
-    format(up, "goose-web: http://localhost:", cfg.port, " (", cfg.workers, " workers)");
+    format(up, "gweb: http://localhost:", cfg.port, " (", cfg.workers, " workers)");
     gweb::log_message(gweb::Level.Info, up);
 """);
     if has_state { m.append("    gweb::owner_loop<state::Msg, state::Reply>(chans, state::handle);\n"); }
@@ -3219,7 +3219,7 @@ fn gen_main_fn(m: u8[>..]&) {
     let dropped = gweb::jobs_queued();
     if dropped > 0 {
         var msg: u8[>..] = [];
-        format(msg, "goose-web: stopped with ", dropped, " queued jobs dropped");
+        format(msg, "gweb: stopped with ", dropped, " queued jobs dropped");
         gweb::log_message(gweb::Level.Warn, msg);
     }
 """);
@@ -3318,7 +3318,7 @@ thread_fn supervisor(slot: i64, server: net::Socket, owner_fd: i32, cfg: gweb::C
     var why: u8[>..] = [];
     while !thread_wait(thread_spawn_contained(worker, slot, server, owner_fd, cfg), why) {
         var msg: u8[>..] = [];
-        format(msg, "goose-web: worker ", slot, " stopped: ", why, if net::stopping() { "" } else { "; restarting it" });
+        format(msg, "gweb: worker ", slot, " stopped: ", why, if net::stopping() { "" } else { "; restarting it" });
         gweb::log_message(gweb::Level.Error, msg);
         if gweb::inflight_pending(slot) {
             gweb::inflight_set_why(slot, why);
@@ -3402,7 +3402,7 @@ fn gen_test_main() -> u8[>..] {
 
 fn goose_web_home() -> u8[>..] {
     var h: u8[>..] = [];
-    if env("GOOSE_WEB_HOME", h) && h.len > 0 {
+    if env("GWEB_HOME", h) && h.len > 0 {
         while h.len > 1 && h[h.len - 1] == '/' { h.pop(); }
         return h;
     }
@@ -3415,10 +3415,10 @@ fn goose_web_home() -> u8[>..] {
     return h;
 }
 
-// Precedence: $GWEB_WEB, $GWEB_NET or $GWEB_SQLITE, then the checkout and its siblings, then the pin.
+// Precedence: $GWEB_SRC, $GWEB_NET or $GWEB_SQLITE, then the checkout and its siblings, then the pin.
 fn pkg_source(which: i32) -> u8[>..] {
     var s: u8[>..] = [];
-    let var_name = if which == 0 { "GWEB_WEB" } else if which == 1 { "GWEB_NET" } else { "GWEB_SQLITE" };
+    let var_name = if which == 0 { "GWEB_SRC" } else if which == 1 { "GWEB_NET" } else { "GWEB_SQLITE" };
     if env(var_name, s) && s.len > 0 { return s; }
     s.clear();
     let home = goose_web_home();
@@ -4982,7 +4982,7 @@ fn scaffold(dir: const u8[:]) {
 
 """],
         ["app/page.html", """
-<h1>goose-web</h1>
+<h1>gweb</h1>
 <p>Edit <code>app/page.html</code>. Worker {ctx.worker} rendered this page.</p>
 
 """],

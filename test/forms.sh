@@ -1,5 +1,5 @@
 #!/bin/sh
-# goose-web's forms and uploads suite (DESIGN-ADDENDUM-14, step 4).
+# gweb's forms and uploads suite (DESIGN-ADDENDUM-14, step 4).
 #
 #   GOOSE=/path/to/goose test/forms.sh
 #
@@ -14,10 +14,10 @@
 # Needs curl, python3 and gweb built beside this folder (goose build -o gweb
 # cli/gweb.goose).
 #
-# Layout: gweb finds goose-net as <goose-web>/../goose-net (or $GWEB_NET). From a
+# Layout: gweb finds goose-net as <gweb>/../goose-net (or $GWEB_NET). From a
 # git worktree, that sibling is the main goose-net checkout, not the goose-net
 # worktree that has the spool API (set_uploads, Event.Spooled). Run this suite
-# with GOOSE_WEB_HOME pointing at this checkout and GWEB_NET at the goose-net
+# with GWEB_HOME pointing at this checkout and GWEB_NET at the goose-net
 # checkout that has the spool API, or check both out side by side.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)

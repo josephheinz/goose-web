@@ -1,5 +1,5 @@
 #!/bin/sh
-# goose-web's source-map suite (DESIGN-ADDENDUM-18, D1).
+# gweb's source-map suite (DESIGN-ADDENDUM-18, D1).
 #
 #   test/srcmap.sh
 #

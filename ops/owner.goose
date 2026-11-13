@@ -55,7 +55,7 @@ fn owner_loop<M, R, H>(c: Channels) {
         buf.clear();
         let i = c_owner_next(c.handle, buf);
         if i == -3 { return; }
-        if i < 0 { log_message(Level.Error, "goose-web: state channel failed"); return; }
+        if i < 0 { log_message(Level.Error, "gweb: state channel failed"); return; }
         let ms, ok = from_bytes<M[>..]>(buf);
         if !ok { continue; }   // the worker times out
         var replies: R[>..] = [];

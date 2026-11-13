@@ -1,5 +1,5 @@
 #!/bin/sh
-# goose-web's component suite (DESIGN-ADDENDUM-3, E5).
+# gweb's component suite (DESIGN-ADDENDUM-3, E5).
 #
 #   GOOSE=/path/to/goose test/components.sh
 #

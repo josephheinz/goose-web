@@ -2,7 +2,7 @@
 
 ## Versions
 
-goose-web, goose-net and goose-sqlite release together with one version.
+gweb, goose-net and goose-sqlite release together with one version.
 `gweb` pins that tag of the other two. This holds through 1.x.
 
 Each release names the Goose compiler version it was tested with.

@@ -3,9 +3,9 @@
 #
 #   GOOSE_URL=<Linux goose release tarball> test/linux.sh
 #
-# 1. Copies goose-web, goose-net and goose-sqlite into a container, builds gweb, runs the C tests of both
+# 1. Copies gweb, goose-net and goose-sqlite into a container, builds gweb, runs the C tests of both
 #    repos, the Goose tests and every suite (components, templates, fragments, catchall, morph, ops).
-# 2. Builds a starter site with deploy/Dockerfile (goose-web and the packages come from local git
+# 2. Builds a starter site with deploy/Dockerfile (gweb and the packages come from local git
 #    repos, not GitHub), starts it, waits for the HEALTHCHECK, and stops it with SIGTERM.
 #
 # Needs docker, git and curl on this machine. The sibling repos are ../goose-net and ../goose-sqlite
@@ -47,7 +47,7 @@ copy_repo() {
   (cd "$1" && git ls-files -co --exclude-standard -z | tar -c --null -T -) | tar -x -C "$2"
 }
 mkdir -p "$WORK/ctx"
-copy_repo "$ROOT" "$WORK/ctx/goose-web"
+copy_repo "$ROOT" "$WORK/ctx/gweb"
 copy_repo "$NET_DIR" "$WORK/ctx/goose-net"
 copy_repo "$SQLITE_DIR" "$WORK/ctx/goose-sqlite"
 
@@ -84,14 +84,14 @@ goose_test() {   # dir file
   (cd "$1" && "$GOOSE" build -o "/tmp/$2" "test/$2.goose" && "/tmp/$2")
 }
 echo "== $(uname -sm), $(cc --version | head -n 1), $(ldd --version 2>&1 | head -n 1)"
-cd /lab/goose-web
+cd /lab/gweb
 step "gweb build" "$GOOSE" build -o gweb cli/gweb.goose
 step "C tests (goose-net)" sh -c 'cd /lab/goose-net && sh test/c/run.sh'
-step "C tests (goose-web)" sh -c 'cd /lab/goose-web && sh test/c/run.sh'
+step "C tests (gweb)" sh -c 'cd /lab/gweb && sh test/c/run.sh'
 step test_net goose_test /lab/goose-net test_net
 step test_sqlite goose_test /lab/goose-sqlite test_sqlite
 for t in owner_test cookie_test csrf_test catchall_test; do
-  step "$t" goose_test /lab/goose-web "$t"
+  step "$t" goose_test /lab/gweb "$t"
 done
 step components sh test/components.sh
 step templates sh test/templates.sh
@@ -119,7 +119,7 @@ fi
 # GWEB_* sources instead, in the build stage only.
 VERSION=$(tr -d '[:space:]' < "$ROOT/VERSION")
 mkdir -p "$WORK/site/_repos"
-for name in goose-web goose-net goose-sqlite; do
+for name in gweb goose-net goose-sqlite; do
   (
     cd "$WORK/ctx/$name"
     git init -q -b main
@@ -133,12 +133,12 @@ done
 [ -f "$WORK/site/.dockerignore" ] || cp "$ROOT/deploy/dockerignore" "$WORK/site/.dockerignore"
 awk '{ print } /^FROM .* AS build$/ {
   print "COPY _repos /repos"
-  print "ENV GWEB_WEB=file:///repos/goose-web.git@v'"$VERSION"' GWEB_NET=file:///repos/goose-net.git@v'"$VERSION"' GWEB_SQLITE=file:///repos/goose-sqlite.git@v'"$VERSION"'"
+  print "ENV GWEB_SRC=file:///repos/gweb.git@v'"$VERSION"' GWEB_NET=file:///repos/goose-net.git@v'"$VERSION"' GWEB_SQLITE=file:///repos/goose-sqlite.git@v'"$VERSION"'"
 }' "$WORK/site/Dockerfile" > "$WORK/site/Dockerfile.test"
 
 echo "linux.sh: building the app image"
 if ! docker build -f "$WORK/site/Dockerfile.test" --build-arg "GOOSE_URL=$GOOSE_URL" \
-      --build-arg "GWEB_REF=v$VERSION" --build-arg "GWEB_REPO=file:///repos/goose-web.git" \
+      --build-arg "GWEB_REF=v$VERSION" --build-arg "GWEB_REPO=file:///repos/gweb.git" \
       -t "$APP" "$WORK/site" >"$WORK/image.out" 2>&1; then
   echo "FAIL app image build"; tail -n 30 "$WORK/image.out"; exit 1
 fi

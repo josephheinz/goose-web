@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.0 (unreleased)
+
+- Breaking: environment variables are `GWEB_*`: `GWEB_SECRET`, `GWEB_CSP`, `GWEB_WORKERS`, `GWEB_TRUST_PROXY`, `GWEB_HSTS`, `GWEB_SESSION_IDLE`, `GWEB_SESSION_MAX`, `GWEB_SECURITY_HEADERS`. The server refuses to start while an old `WEB_*` name is set. `sh tools/migrate-v0.5.sh` renames them in `.env` files, units and Dockerfiles.
+- Breaking: `GOOSE_WEB_HOME` is `GWEB_HOME`, and `GWEB_WEB` is `GWEB_SRC`.
+- Server log lines start with `gweb:` (was `goose-web:`).
+
 ## v0.4.0
 
 Breaking: the package is `gweb` and its modules are in folders. `sh tools/migrate-v0.4.sh` in an app rewrites its imports and calls.

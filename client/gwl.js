@@ -1,4 +1,4 @@
-// goose-web lifecycle for components with @watch, @mount, @unmount or @every, imported by their modules as ./gwl.js.
+// gweb lifecycle for components with @watch, @mount, @unmount or @every, imported by their modules as ./gwl.js.
 // client/gwl.min.js is this file minified by client/build.sh.
 import { defs, hooks, run, state } from "./gwi.js";
 

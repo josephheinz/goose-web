@@ -1,6 +1,6 @@
 #!/bin/sh
 # Regenerates every client/NAME.min.js from client/NAME.js for each client/gw*.js
-# (DESIGN-ADDENDUM-3 follow-up 1, DESIGN-ADDENDUM-12 section 9). For goose-web
+# (DESIGN-ADDENDUM-3 follow-up 1, DESIGN-ADDENDUM-12 section 9). For gweb
 # maintainers: needs node and npx. The banner `/* NAME HASH */` carries the FNV-1a
 # hash of the source, so test/runtime.sh can tell when a minified file is stale.
 # ESBUILD may name a local esbuild 0.28.2 binary.

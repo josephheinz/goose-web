@@ -1,4 +1,4 @@
-// A hand-written dispatcher on the goose-web runtime (no gweb), for testing.
+// A hand-written dispatcher on the gweb runtime (no gweb), for testing.
 // It has the shape gweb generates: dispatch, then finish.
 //   goose build test/manual.goose && test/manual --port 3101 --workers 4 --log
 import gweb from "..";

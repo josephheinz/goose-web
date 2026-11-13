@@ -1,5 +1,5 @@
 #!/bin/sh
-# goose-web's streaming, SSE and WebSocket suite (DESIGN-ADDENDUM-15, sections 6 and 7).
+# gweb's streaming, SSE and WebSocket suite (DESIGN-ADDENDUM-15, sections 6 and 7).
 #
 #   GOOSE=/path/to/goose test/push.sh
 #

@@ -1,4 +1,4 @@
-// .env loading, typed env helpers and WEB_SECRET parsing (DESIGN-ADDENDUM-13, D2). No sockets, never exits.
+// .env loading, typed env helpers and GWEB_SECRET parsing (DESIGN-ADDENDUM-13, D2). No sockets, never exits.
 //   goose build test/env_test.goose && test/env_test
 // Fixture files go in a temp folder that is passed by path; every case uses its own variable names because the
 // environment cannot be unset from Goose.
@@ -221,12 +221,12 @@ fn test_secret() {
     format(five, k32, ",", k32, ",", k32, ",", k32, ",", k32);
     var bad3: u8[>..] = [];
     check(!gweb::parse_secret(five, keys, bad3), "five keys refused");
-    check_eq(bad3, "WEB_SECRET: more than 4 keys", "five keys message");
+    check_eq(bad3, "GWEB_SECRET: more than 4 keys", "five keys message");
     var empty_item: u8[>..] = [];
     format(empty_item, k32, ",,", k32);
     var bad4: u8[>..] = [];
     check(!gweb::parse_secret(empty_item, keys, bad4), "empty item refused");
-    check_eq(bad4, "WEB_SECRET: key 2 is empty", "empty item message");
+    check_eq(bad4, "GWEB_SECRET: key 2 is empty", "empty item message");
     var trailing: u8[>..] = [];
     format(trailing, k32, ",");
     var bad5: u8[>..] = [];

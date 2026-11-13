@@ -1,4 +1,4 @@
-# Deploying goose-web
+# Deploying gweb
 
 An app builds to one native binary, `.gooseweb/server`. It serves plain HTTP, reads a few flags and
 environment variables, and writes logs to stdout. Design: [DESIGN-ADDENDUM-16-OPERATIONS.md](DESIGN-ADDENDUM-16-OPERATIONS.md).
@@ -9,7 +9,7 @@ Goose builds a native binary on the machine it runs on, so build on Linux for Li
 Goose compiler, `gcc`, `libsqlite3-dev` (only when the app uses SQLite) and `git`.
 
 ```
-goose build -o gweb cli/gweb.goose        # once, in a goose-web checkout
+goose build -o gweb cli/gweb.goose        # once, in a gweb checkout
 GOOSE=/path/to/goose gweb build           # in the app
 .gooseweb/server --port 3000
 ```
@@ -66,7 +66,7 @@ The unit's hardening options keep `fork`/`exec` (the reload) and the data direct
 
 ## Reverse proxy
 
-**TLS is not served by goose-web and is not covered here.** It is the subject of
+**TLS is not served by gweb and is not covered here.** It is the subject of
 [Addendum 15](DESIGN-ADDENDUM-15-DELIVERY.md) (delivery). Until then, terminate TLS at a proxy and pass
 `X-Forwarded-Proto` (the CSRF cookie becomes `__Host-gw_csrf` with `Secure` behind `https`).
 
@@ -143,7 +143,7 @@ logs.
 
 - Only `http://` endpoints. There is no TLS client: run an OpenTelemetry Collector on the same host or as a sidecar
   and let it forward over TLS. An `https://` endpoint logs one warning and turns export off.
-- `OTEL_SERVICE_NAME` (default `goose-web`), `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_TRACES_SAMPLER=always_off`,
+- `OTEL_SERVICE_NAME` (default `gweb`), `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_TRACES_SAMPLER=always_off`,
   `OTEL_TRACES_SAMPLER_ARG` (ratio for new traces, default 1.0).
 - App spans: `let s = gweb::span(ctx, "charge card"); ... gweb::span_end(ctx, s);`. For an outgoing call,
   `gweb::traceparent(ctx, out)` formats the header.
@@ -217,7 +217,7 @@ Flags win over environment variables.
 | Flag | Env | Default |
 |---|---|---|
 | `--port N` | `PORT` | 3000 |
-| `--workers N` | `WEB_WORKERS` | min(performance cores, 4) |
+| `--workers N` | `GWEB_WORKERS` | min(performance cores, 4) |
 | `--log` | | off |
 | `--log-format text\|json` | `GWEB_LOG_FORMAT` | text |
 | `--log-level L` | `GWEB_LOG_LEVEL` | info |

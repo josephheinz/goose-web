@@ -1,5 +1,5 @@
 #!/bin/sh
-# goose-web's sitemap suite (DESIGN-ADDENDUM-15, section 4).
+# gweb's sitemap suite (DESIGN-ADDENDUM-15, section 4).
 #
 #   GOOSE=/path/to/goose test/sitemap.sh
 #

@@ -19,6 +19,7 @@ const PASSWORD_MAX = 1024;
 
 let HASH_PREFIX = "$pbkdf2-sha256$";
 // Any fixed 16 bytes; password_verify hashes against it when there is nothing to compare with.
+// The "goose-web" labels below predate the rename to gweb. Changing them would void every session and signed cookie.
 let DUMMY_SALT = "goose-web-dummy!";
 
 // Unix seconds; the internal functions below take `now` so tests can fix the clock.
@@ -224,7 +225,7 @@ fn fail_login(res: http::Response&, msg: const u8[:]) -> bool {
 // Rotates the sid and the CSRF token. False after writing a 500.
 fn login_at(req: const http::Request&, ctx: Ctx&, res: http::Response&, uid: i64, ver: i64, opts: LoginOptions, now: i64) -> bool {
     no_store(res);
-    if ctx.auth.keys.n == 0 { return fail_login(res, "WEB_SECRET is not set"); }
+    if ctx.auth.keys.n == 0 { return fail_login(res, "GWEB_SECRET is not set"); }
     // The cookie parser accepts digits only, so a negative id would make a session that never loads.
     if uid < 0 || ver < 0 { return fail_login(res, "session unavailable"); }
     var raw: u8[..16] = [0; 16];

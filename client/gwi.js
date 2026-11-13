@@ -1,4 +1,4 @@
-// goose-web component runtime, served as /_gw/gwi.js; every /_gw/Name.js imports it.
+// gweb component runtime, served as /_gw/gwi.js; every /_gw/Name.js imports it.
 // client/gwi.min.js is this file minified by client/build.sh.
 
 const D = document;

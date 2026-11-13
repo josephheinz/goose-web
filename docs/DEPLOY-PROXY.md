@@ -1,6 +1,6 @@
 # Deploying behind a reverse proxy
 
-goose-web speaks plain HTTP/1.1. It has no TLS and no HTTP/2. In production, run it
+gweb speaks plain HTTP/1.1. It has no TLS and no HTTP/2. In production, run it
 on loopback behind Caddy or nginx on the same host:
 
 ```
@@ -92,7 +92,7 @@ server {
 
 The proxy does not compress a response that already has `Content-Encoding`, so the
 build-time `.gz` variants of static files go through as they are. HTML and JSON are
-compressed by the proxy, not by goose-web.
+compressed by the proxy, not by gweb.
 
 ## Not covered
 

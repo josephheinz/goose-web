@@ -274,7 +274,7 @@ static void test_export(void) {
                     "header:x-api-key=abc d,x", "header:authorization=Bearer t0k", "header:connection=close",
                     "resourceSpans.0.resource.attributes.0.key=service.name",
                     "resourceSpans.0.resource.attributes.0.value.stringValue=shop \"api\"",
-                    "resourceSpans.0.scopeSpans.0.scope.name=goose-web"));
+                    "resourceSpans.0.scopeSpans.0.scope.name=gweb"));
     const char *sp = "resourceSpans.0.scopeSpans.0.spans.";
     char a[8][256];
     snprintf(a[0], 256, "%s0.traceId=%s", sp, TRACE);

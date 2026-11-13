@@ -1,4 +1,4 @@
-/* Transport between goose-web workers and the state owner. One AF_UNIX socketpair per worker;
+/* Transport between gweb workers and the state owner. One AF_UNIX socketpair per worker;
    a frame is a 4-byte little-endian length and the payload. */
 #include "goose.h"
 

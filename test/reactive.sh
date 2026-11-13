@@ -1,5 +1,5 @@
 #!/bin/sh
-# goose-web's reactive runtime suite (DESIGN-ADDENDUM-12, steps 3 and 5): client/gwi.js's run/T/A/B against jsdom.
+# gweb's reactive runtime suite (DESIGN-ADDENDUM-12, steps 3 and 5): client/gwi.js's run/T/A/B against jsdom.
 #
 #   test/reactive.sh
 #

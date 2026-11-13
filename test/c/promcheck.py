@@ -1,4 +1,4 @@
-"""Checks a file against the Prometheus text exposition format (the subset goose-web emits)."""
+"""Checks a file against the Prometheus text exposition format (the subset gweb emits)."""
 import re
 import sys
 

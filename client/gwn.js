@@ -1,4 +1,4 @@
-// goose-web client navigation (<body gw-boost>), served as /_gw/gwn.js on sites that use it; imports gwi.js.
+// gweb client navigation (<body gw-boost>), served as /_gw/gwn.js on sites that use it; imports gwi.js.
 // client/gwn.min.js is this file minified by client/build.sh.
 // A boosted link fetches the page with GW-Nav: 1 and morphs <body> (attributes too), sets the title, imports module
 // scripts not loaded yet and pushes history. A component root with the same gw-key and name on both pages is kept

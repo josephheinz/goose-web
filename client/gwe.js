@@ -1,4 +1,4 @@
-// goose-web server push (gw-sse="/url"), served as /_gw/gwe.js on sites that use it; imports gwi.js and gws.js.
+// gweb server push (gw-sse="/url"), served as /_gw/gwe.js on sites that use it; imports gwi.js and gws.js.
 // client/gwe.min.js is this file minified by client/build.sh.
 // One EventSource per distinct URL, opened on load and for gw-sse elements added later (hooks.a). Events (SSE):
 //   event: fragment   data: NAME\nHTML   first line the target id, the rest HTML (may span lines): morphs #NAME

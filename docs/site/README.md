@@ -1,6 +1,6 @@
-# goose-web docs
+# gweb docs
 
-goose-web is a web framework for [Goose](https://aardappel.github.io/goose/).
+gweb is a web framework for [Goose](https://aardappel.github.io/goose/).
 Folders under `app/` are routes. `gweb` turns a project into one native
 binary.
 

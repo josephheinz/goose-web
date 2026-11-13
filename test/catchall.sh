@@ -1,5 +1,5 @@
 #!/bin/sh
-# goose-web's catch-all suite (DESIGN-ADDENDUM-8, section 10).
+# gweb's catch-all suite (DESIGN-ADDENDUM-8, section 10).
 #
 #   GOOSE=/path/to/goose test/catchall.sh
 #

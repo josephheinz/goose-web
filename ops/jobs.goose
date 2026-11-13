@@ -102,7 +102,7 @@ fn job_done(slot: i64, ok: bool, ctx: Ctx&) {
 fn job_abandon(slot: i64, why: const u8[:]) {
     let had = c_jobs_abandon(slot as i32) != 0;
     var msg: u8[>..] = [];
-    format(msg, "goose-web: job runner ", slot, " aborted: ", why);
+    format(msg, "gweb: job runner ", slot, " aborted: ", why);
     if had { msg.append("; its job will be tried again"); }
     log_message(Level.Error, msg);
 }
@@ -110,7 +110,7 @@ fn job_abandon(slot: i64, why: const u8[:]) {
 fn schedule_refused(s: Schedules&, name: const u8[:], what: const u8[:]) -> bool {
     s.bad += 1;
     var msg: u8[>..] = [];
-    format(msg, "goose-web: schedule \"", name, "\": ", what);
+    format(msg, "gweb: schedule \"", name, "\": ", what);
     log_message(Level.Error, msg);
     return false;
 }

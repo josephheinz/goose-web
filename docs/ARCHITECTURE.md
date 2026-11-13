@@ -1,12 +1,12 @@
-# goose-web architecture
+# gweb architecture
 
-How a goose-web app is built, how the server answers a request, and what the
+How a gweb app is built, how the server answers a request, and what the
 browser runtime `gwi.min.js` does. The design records are `DESIGN.md` and
 `DESIGN-ADDENDUM-1.md` to `-12-REACTIVITY.md`; this file explains the result.
 
 ## 1. The big picture
 
-goose-web renders every page on the server, in compiled Goose. The browser gets
+gweb renders every page on the server, in compiled Goose. The browser gets
 finished HTML. JavaScript is optional and small, and it does two jobs:
 
 - **Components** (`components/Name.gshtml`): UI state that lives in the
@@ -151,7 +151,7 @@ flowchart TB
   statements.
 - **Cookies.** `gweb::cookie_or(req, name, fallback)` reads a cookie.
   `ctx` setters queue `Set-Cookie` headers, and `run_worker` applies them.
-- **Sessions and security.** `config_from_args` loads `.env` files and `WEB_SECRET` into `Config`, and
+- **Sessions and security.** `config_from_args` loads `.env` files and `GWEB_SECRET` into `Config`, and
   `run_worker` copies the keys into `Ctx`. A session is a signed cookie that handlers load on demand.
   A GCRA rate table in C is shared by all workers behind one mutex. `run_worker` adds three security
   headers to every response, and a CSP nonce when CSP is on.

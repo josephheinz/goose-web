@@ -1,5 +1,5 @@
 #!/bin/sh
-# goose-web's route test suite: gweb test runs tests/*.goose.
+# gweb's route test suite: gweb test runs tests/*.goose.
 #
 #   GOOSE=/path/to/goose test/routes.sh
 #

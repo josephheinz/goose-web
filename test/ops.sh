@@ -1,5 +1,5 @@
 #!/bin/sh
-# goose-web's operations suite (DESIGN-ADDENDUM-16, step B6).
+# gweb's operations suite (DESIGN-ADDENDUM-16, step B6).
 #
 #   GOOSE=/path/to/goose test/ops.sh          (PORT=3996 by default)
 #

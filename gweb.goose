@@ -1,4 +1,4 @@
-// web: the runtime of goose-web, a Next.js-like framework on goose-net.
+// web: the runtime of gweb, a Next.js-like framework on goose-net.
 // `gweb` generates the root file whose dispatcher calls the user's routes, pages and middleware.
 
 namespace gweb;
@@ -485,11 +485,11 @@ fn probe(port: i64) -> i64 {
     return if ok && http::code(status) == 200 { 0 } else { 1 };
 }
 
-// Reads the flags in the usage line below and the environment, after loading the .env files: PORT, WEB_WORKERS,
-// WEB_SECRET, WEB_SESSION_IDLE, WEB_SESSION_MAX, WEB_TRUST_PROXY, WEB_SECURITY_HEADERS, WEB_HSTS, WEB_CSP,
+// Reads the flags in the usage line below and the environment, after loading the .env files: PORT, GWEB_WORKERS,
+// GWEB_SECRET, GWEB_SESSION_IDLE, GWEB_SESSION_MAX, GWEB_TRUST_PROXY, GWEB_SECURITY_HEADERS, GWEB_HSTS, GWEB_CSP,
 // GWEB_DRAIN_MS, GWEB_DRAIN_DELAY_MS, GWEB_LOG_FORMAT, GWEB_LOG_LEVEL, GWEB_METRICS=1, GWEB_JOB_RUNNERS,
 // GWEB_SCHEDULE=0 (flags win). a[0] is the program name. Exits with 2 on a bad flag, .env file, secret,
-// session lifetime, WEB_HSTS or WEB_CSP.
+// session lifetime, GWEB_HSTS or GWEB_CSP.
 fn config_from(a: (const u8[:])[:]) -> Config {
     var cfg = default_config();
     var envname: u8[>..] = [];
@@ -502,7 +502,7 @@ fn config_from(a: (const u8[:])[:]) -> Config {
     var e: u8[>..] = [];
     if env("PORT", e) { let p, ok = parse_int(trim(e)); if ok { cfg.port = p; } }
     e.clear();
-    if env("WEB_WORKERS", e) { let w, ok = parse_int(trim(e)); if ok && w > 0 { cfg.workers = w; } }
+    if env("GWEB_WORKERS", e) { let w, ok = parse_int(trim(e)); if ok && w > 0 { cfg.workers = w; } }
     var csp_flag = false;
     let drain, has_drain = env_int("GWEB_DRAIN_MS");
     if has_drain && drain >= 0 { cfg.drain_ms = drain; }
@@ -551,24 +551,39 @@ fn config_from(a: (const u8[:])[:]) -> Config {
         print("flags: --port N --host H --workers N --log --idle-ms N --max-body N --max-upload N --upload-dir D --csp --export DIR --drain-ms N --drain-delay-ms N --log-format text|json --log-level debug|info|warn|error --metrics --no-schedule --job-runners N --job-queue N --job-attempts N --probe (--dev-id N: gweb dev only)");
         exit(2);
     }
+    old_env_names();
     var secret_err: u8[>..] = [];
     e.clear();
-    if env("WEB_SECRET", e) && trim(e).len > 0 {
+    if env("GWEB_SECRET", e) && trim(e).len > 0 {
         if !parse_secret(e, cfg.auth.keys, secret_err) { print(secret_err); exit(2); }
     } else if cfg.dev_id != 0 {
         if !dev_secret(cfg.auth.keys, secret_err) { print(secret_err); exit(2); }
     }
-    cfg.auth.idle = env_positive("WEB_SESSION_IDLE", cfg.auth.idle);
-    cfg.auth.max = env_positive("WEB_SESSION_MAX", cfg.auth.max);
-    cfg.auth.trust_proxy = env_bool("WEB_TRUST_PROXY", false);
-    cfg.security_headers = env_bool("WEB_SECURITY_HEADERS", true);
-    cfg.hsts = env_nonneg("WEB_HSTS", 0);
-    cfg.csp = env_csp("WEB_CSP");
+    cfg.auth.idle = env_positive("GWEB_SESSION_IDLE", cfg.auth.idle);
+    cfg.auth.max = env_positive("GWEB_SESSION_MAX", cfg.auth.max);
+    cfg.auth.trust_proxy = env_bool("GWEB_TRUST_PROXY", false);
+    cfg.security_headers = env_bool("GWEB_SECURITY_HEADERS", true);
+    cfg.hsts = env_nonneg("GWEB_HSTS", 0);
+    cfg.csp = env_csp("GWEB_CSP");
     if csp_flag { cfg.csp = 1; }
     return cfg;
 }
 
 // ---------------------------------------------------------------- secrets and env (DESIGN-ADDENDUM-13)
+
+// v0.5 renamed WEB_* to GWEB_*. An old name still set would be ignored, which could drop a secret or a CSP, so the
+// server refuses to start and names the new one.
+let OLD_ENV = ["WEB_SECRET", "WEB_CSP", "WEB_WORKERS", "WEB_TRUST_PROXY", "WEB_HSTS", "WEB_SESSION_IDLE",
+               "WEB_SECURITY_HEADERS", "WEB_SESSION_MAX"];
+
+fn old_env_names() {
+    var bad = false;
+    for name in OLD_ENV {
+        var v: u8[>..] = [];
+        if env(name, v) { print("gweb: ", name, " is now G", name, "; rename it (in .env files too)"); bad = true; }
+    }
+    if bad { exit(2); }
+}
 
 // Fills buf from the OS; 1 on success, 0 when refused (more than 256 bytes).
 extern fn c_entropy(buf: u8[:]) -> i32 = "gweb_entropy";
@@ -770,15 +785,15 @@ fn load_env_files(envname: const u8[:], err: u8[>..]&) -> bool {
 
 // ---- secrets
 
-// Parses WEB_SECRET: 1 to 4 comma-separated keys of 32 to 64 bytes. False, with err set, otherwise; err never holds key bytes.
+// Parses GWEB_SECRET: 1 to 4 comma-separated keys of 32 to 64 bytes. False, with err set, otherwise; err never holds key bytes.
 fn parse_secret(text: const u8[:], keys: Keys&, err: u8[>..]&) -> bool {
     keys.n = 0;
     for item, i in split_on(trim(text), ',') {
         let k = trim(item);
-        if i >= 4 { format(err, "WEB_SECRET: more than 4 keys"); keys.n = 0; return false; }
-        if k.len == 0 { format(err, "WEB_SECRET: key ", i + 1, " is empty"); keys.n = 0; return false; }
-        if k.len < 32 { format(err, "WEB_SECRET: key ", i + 1, " is shorter than 32 bytes"); keys.n = 0; return false; }
-        if k.len > 64 { format(err, "WEB_SECRET: key ", i + 1, " is longer than 64 bytes"); keys.n = 0; return false; }
+        if i >= 4 { format(err, "GWEB_SECRET: more than 4 keys"); keys.n = 0; return false; }
+        if k.len == 0 { format(err, "GWEB_SECRET: key ", i + 1, " is empty"); keys.n = 0; return false; }
+        if k.len < 32 { format(err, "GWEB_SECRET: key ", i + 1, " is shorter than 32 bytes"); keys.n = 0; return false; }
+        if k.len > 64 { format(err, "GWEB_SECRET: key ", i + 1, " is longer than 64 bytes"); keys.n = 0; return false; }
         keys.k[i].clear();
         keys.k[i].append(k);
         keys.n = i + 1;
@@ -792,7 +807,7 @@ fn dev_secret(keys: Keys&, err: u8[>..]&) -> bool {
     var ignored: u8[>..] = [];
     if read_file(".gooseweb.dev/secret", text) && parse_secret(text, keys, ignored) { return true; }
     var raw: u8[..32] = [0; 32];
-    if c_entropy(raw) == 0 { format(err, "goose-web: cannot read system entropy for the dev secret"); return false; }
+    if c_entropy(raw) == 0 { format(err, "gweb: cannot read system entropy for the dev secret"); return false; }
     var hex: u8[>..] = [];
     for b in raw {
         hex.push(HEX_LOWER[(b >> 4) as i64]);
@@ -816,7 +831,7 @@ fn make_nonce(ctx: Ctx&) -> bool {
     return true;
 }
 
-// For a subtree's `before`: turns the CSP on for this request even when WEB_CSP is off.
+// For a subtree's `before`: turns the CSP on for this request even when GWEB_CSP is off.
 fn csp_begin(ctx: Ctx&) -> bool { return make_nonce(ctx); }
 
 // Appends the default security headers, HSTS and CSP; false, with a bare 500, when they do not fit beside res.headers.
@@ -829,7 +844,7 @@ fn apply_security(ctx: Ctx&, res: http::Response&, cfg: const Config&) -> bool {
     }
     if cfg.hsts > 0 { format(hdrs, "Strict-Transport-Security: max-age=", cfg.hsts, "; includeSubDomains\r\n"); }
     if ctx.nonce.len > 0 && starts_with(res.content_type, "text/html") {
-        // csp_begin with WEB_CSP off asks for enforcement.
+        // csp_begin with GWEB_CSP off asks for enforcement.
         hdrs.append(if cfg.csp == 2 { "Content-Security-Policy-Report-Only: " } else { "Content-Security-Policy: " });
         format(hdrs, "script-src 'self' 'nonce-", ctx.nonce, "'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'\r\n");
     }

@@ -1,12 +1,12 @@
 #!/bin/sh
-# goose-web's auth and security suite (DESIGN-ADDENDUM-13, step 6).
+# gweb's auth and security suite (DESIGN-ADDENDUM-13, step 6).
 #
 #   GOOSE=/path/to/goose test/auth.sh
 #
 # test/auth/site is built and started with --dev-id 5 (so the environment is
-# "development" and .env.development supplies WEB_SECRET); curl checks the login
+# "development" and .env.development supplies GWEB_SECRET); curl checks the login
 # flow with a cookie jar, the default headers, CSP, CORS and the rate limit.
-# Last, the production build without WEB_SECRET must refuse to start.
+# Last, the production build without GWEB_SECRET must refuse to start.
 #
 # Needs curl and python3, and gweb built beside this folder (goose build -o gweb
 # cli/gweb.goose).
@@ -145,24 +145,24 @@ else
 fi
 
 # 2. CSP is opt-in.
-if ! start WEB_CSP=1; then
-  bad "the server with WEB_CSP=1 did not answer on port $PORT"
+if ! start GWEB_CSP=1; then
+  bad "the server with GWEB_CSP=1 did not answer on port $PORT"
 else
   req cs GET /
   # The nonce is case-sensitive, so it is read from the raw headers, not the lower-cased copy.
   NONCE=$(tr -d '\r' < "$WORK/cs.h.raw" | sed -n "s/^[Cc]ontent-[Ss]ecurity-[Pp]olicy: .*'nonce-\([A-Za-z0-9_-]*\)'.*/\1/p" | head -n 1)
-  check "$([ "${#NONCE}" = 22 ] && grep -qF "script-src 'self' 'nonce-$NONCE'" "$WORK/cs.h.raw" && echo ok)" "WEB_CSP=1: a CSP header with a 22-byte nonce"
-  check "$([ -n "$NONCE" ] && [ "$(grep -oF "<script nonce=\"$NONCE\">" "$WORK/cs.b" | wc -l | tr -d ' ')" -ge 2 ] && echo ok)" "WEB_CSP=1: the page script and the dev script carry the nonce"
+  check "$([ "${#NONCE}" = 22 ] && grep -qF "script-src 'self' 'nonce-$NONCE'" "$WORK/cs.h.raw" && echo ok)" "GWEB_CSP=1: a CSP header with a 22-byte nonce"
+  check "$([ -n "$NONCE" ] && [ "$(grep -oF "<script nonce=\"$NONCE\">" "$WORK/cs.b" | wc -l | tr -d ' ')" -ge 2 ] && echo ok)" "GWEB_CSP=1: the page script and the dev script carry the nonce"
   stop
 fi
 
-# 3. Production without WEB_SECRET refuses to start.
+# 3. Production without GWEB_SECRET refuses to start.
 cp -R "$WORK/ok" "$WORK/prod"
 rm -f "$WORK/prod/.env.development" "$WORK/prod/.env.local" "$WORK/prod/.env.production.local" "$WORK/prod/.env.production"
 rm -rf "$WORK/prod/.gooseweb.dev"
-out=$(cd "$WORK/prod" && env -u WEB_SECRET GWEB_ENV=production ./.gooseweb/server --port "$PORT" 2>&1)
+out=$(cd "$WORK/prod" && env -u GWEB_SECRET GWEB_ENV=production ./.gooseweb/server --port "$PORT" 2>&1)
 code=$?
-check "$([ "$code" = 2 ] && case "$out" in (*"set WEB_SECRET"*) echo ok ;; esac)" "production without WEB_SECRET: exit 2 and the message, got $code '$out'"
+check "$([ "$code" = 2 ] && case "$out" in (*"set GWEB_SECRET"*) echo ok ;; esac)" "production without GWEB_SECRET: exit 2 and the message, got $code '$out'"
 
 echo "auth.sh: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

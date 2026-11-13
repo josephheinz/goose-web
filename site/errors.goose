@@ -66,9 +66,9 @@ fn new_error(status: i64, message: const u8[:], crashed: bool) -> ErrorInfo {
     return e;
 }
 
-// goose-web: error <id>: <status> <method> <target>: <text>
+// gweb: error <id>: <status> <method> <target>: <text>
 fn log_error(e: const ErrorInfo&, req: const http::Request&, text: const u8[:]) {
-    print("goose-web: error ", e.id, ": ", e.status, " ", req.method_text, " ", req.target, ": ", text);
+    print("gweb: error ", e.id, ": ", e.status, " ", req.method_text, " ", req.target, ": ", text);
 }
 
 // ---------------------------------------------------------------- replies

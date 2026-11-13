@@ -1,5 +1,5 @@
 #!/bin/sh
-# goose-web's page cache and export suite (DESIGN-ADDENDUM-15, section 5).
+# gweb's page cache and export suite (DESIGN-ADDENDUM-15, section 5).
 #
 #   GOOSE=/path/to/goose test/cache.sh
 #

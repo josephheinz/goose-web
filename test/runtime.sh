@@ -1,5 +1,5 @@
 #!/bin/sh
-# goose-web's client runtime suite (DESIGN-ADDENDUM-12, section 9). Node only.
+# gweb's client runtime suite (DESIGN-ADDENDUM-12, section 9). Node only.
 #
 #   test/runtime.sh
 #
