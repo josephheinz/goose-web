@@ -6,7 +6,7 @@
 # 1. Each client/*.min.js carries the FNV-1a hash of its source in its banner
 #    (client/build.sh writes it), so a stale minified file fails.
 # 2. Each existing .min.js is under its byte ceiling.
-# 3. test/morph.sh, test/reactive.sh and test/nav_test.mjs (client navigation) and test/transition_test.mjs and test/sse_test.mjs pass.
+# 3. test/morph.sh, test/reactive.sh and test/nav_test.mjs (client navigation) and test/transition_test.mjs, test/morph_export_test.mjs and test/sse_test.mjs pass.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(dirname "$HERE")
@@ -55,6 +55,7 @@ if sh "$HERE/reactive.sh"; then ok; else bad "test/reactive.sh"; fi
 . "$HERE/jsdom_dir.sh"
 if JSDOM_DIR=$DIR node "$HERE/nav_test.mjs"; then ok; else bad "test/nav_test.mjs"; fi
 if JSDOM_DIR=$DIR node "$HERE/transition_test.mjs"; then ok; else bad "test/transition_test.mjs"; fi
+if JSDOM_DIR=$DIR node "$HERE/morph_export_test.mjs"; then ok; else bad "test/morph_export_test.mjs"; fi
 # sse_test.mjs runs its store cases on the compiled RCart store when there is a ./gweb to generate it.
 GWD=""
 if [ -x "$ROOT/gweb" ]; then

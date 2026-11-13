@@ -205,3 +205,5 @@ function listen(type) {
     m[0] && hooks.m ? hooks.m(e, m, el, bound, go, name) : go(el && name, bound);
   }, true);
 }
+
+export { morph };
