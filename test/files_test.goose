@@ -86,6 +86,57 @@ fn main() {
     let r5, ok5 = fetch("GET", "If-None-Match: *\r\n", "hello.txt", PLAIN);
     check(r5.status == http::Status.NotModified, "If-None-Match *: 304");
 
+    // Last-Modified, and If-Modified-Since when there is no If-None-Match.
+    let lm = header_value(r1, "Last-Modified");
+    check(lm.len == 29 && lm[3] == ',' && ends_with(lm, " GMT"), "Last-Modified is an HTTP date");
+    var ims: u8[>..] = [];
+    format(ims, "If-Modified-Since: ", lm, "\r\n");
+    let r6, ok6 = fetch("GET", ims, "hello.txt", PLAIN);
+    check(ok6 && r6.status == http::Status.NotModified && r6.body.len == 0, "If-Modified-Since the same time: 304");
+    check_eq(header_value(r6, "Last-Modified"), lm, "304 keeps Last-Modified");
+    let r7, ok7 = fetch("GET", "If-Modified-Since: Thu, 01 Jan 1970 00:00:01 GMT\r\n", "hello.txt", PLAIN);
+    check(r7.status == http::Status.Ok && r7.body == "hello file", "If-Modified-Since long ago: 200");
+    let r8, ok8 = fetch("GET", "If-Modified-Since: Fri, 31 Dec 9999 23:59:59 GMT\r\n", "hello.txt", PLAIN);
+    check(r8.status == http::Status.NotModified, "If-Modified-Since far in the future: 304");
+    let r9, ok9 = fetch("GET", "If-Modified-Since: yesterday\r\n", "hello.txt", PLAIN);
+    check(r9.status == http::Status.Ok, "an unparseable If-Modified-Since is ignored");
+    var both: u8[>..] = [];
+    format(both, "If-None-Match: \"other\"\r\nIf-Modified-Since: ", lm, "\r\n");
+    let r10, ok10 = fetch("GET", both, "hello.txt", PLAIN);
+    check(r10.status == http::Status.Ok, "If-None-Match that fails wins over a fresh If-Modified-Since");
+    let rh2, okh2 = fetch("HEAD", ims, "hello.txt", PLAIN);
+    check(rh2.status == http::Status.NotModified, "HEAD with If-Modified-Since: 304");
+
+    // The date helpers: known dates, both ways.
+    var dt: u8[>..] = [];
+    gweb::_http_date(dt, 784111777);
+    check_eq(dt, "Sun, 06 Nov 1994 08:49:37 GMT", "_http_date of the RFC example");
+    dt.clear();
+    gweb::_http_date(dt, 0);
+    check_eq(dt, "Thu, 01 Jan 1970 00:00:00 GMT", "_http_date of the epoch");
+    dt.clear();
+    gweb::_http_date(dt, 951782400);
+    check_eq(dt, "Tue, 29 Feb 2000 00:00:00 GMT", "_http_date on a leap day");
+    dt.clear();
+    gweb::_http_date(dt, 4102444799);
+    check_eq(dt, "Thu, 31 Dec 2099 23:59:59 GMT", "_http_date at the end of 2099");
+    let p1, pok1 = gweb::_parse_http_date("Sun, 06 Nov 1994 08:49:37 GMT");
+    check(pok1 && p1 == 784111777, "_parse_http_date of the RFC example");
+    let p2, pok2 = gweb::_parse_http_date("Tue, 29 Feb 2000 00:00:00 GMT");
+    check(pok2 && p2 == 951782400, "_parse_http_date on a leap day");
+    let p3, pok3 = gweb::_parse_http_date("Sunday, 06-Nov-94 08:49:37 GMT");
+    check(!pok3, "the obsolete formats are not parsed");
+    let p4, pok4 = gweb::_parse_http_date("Sun, 06 Nov 1994 08:49:37 UTC");
+    check(!pok4, "only GMT");
+    let p5, pok5 = gweb::_parse_http_date("Sun, 06 Xyz 1994 08:49:37 GMT");
+    check(!pok5, "an unknown month");
+    for t in [0, 86399, 86400, 951782400, 1700000000, 2000000000, 4102444799] {
+        var d: u8[>..] = [];
+        gweb::_http_date(d, t);
+        let back, bok = gweb::_parse_http_date(d);
+        check(bok && back == t, "the date round trip");
+    }
+
     // HEAD: the head of a GET (the server drops the body; Content-Length comes from res.body).
     let rh, okh = fetch("HEAD", "", "hello.txt", PLAIN);
     check(okh && rh.status == http::Status.Ok && rh.body.len == 10, "HEAD: 200 with the length");

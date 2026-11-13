@@ -1,5 +1,5 @@
 // Part of gweb. Import with `import gweb.http.files;`.
-// Serves a file from disk under a root: Content-Type from the extension, ETag and 304, HEAD, and a stream for big files.
+// Serves a file from disk under a root: Content-Type from the extension, ETag, Last-Modified and 304, HEAD, and a stream for big files.
 
 namespace gweb;
 
@@ -22,6 +22,78 @@ struct FileOptions {
     filename: u8[..200] = "",        // the name Content-Disposition shows; "" is the file's own name
     content_type: u8[..120] = "",    // "" is chosen from the extension
     stream_over: i64 = 1048576,      // files above this many bytes are streamed in windows, not read into memory
+}
+
+// ---------------------------------------------------------------- HTTP dates
+
+let HTTP_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+let HTTP_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+fn _pad2(out: u8[>..]&, n: i64) { out.push('0' + (n / 10) as u8); out.push('0' + (n % 10) as u8); }
+
+// Appends secs (Unix time, 0 or more) as an HTTP date: Sun, 06 Nov 1994 08:49:37 GMT.
+fn _http_date(out: u8[>..]&, secs: i64) {
+    let t = max(secs, 0);
+    let days = t / 86400;
+    let rem = t % 86400;
+    // Howard Hinnant's civil_from_days.
+    let z = days + 719468;
+    let era = z / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + (if month <= 2 { 1 } else { 0 });
+    out.append(HTTP_DAYS[(days + 4) % 7]);
+    out.append(", ");
+    _pad2(out, day);
+    out.push(' ');
+    out.append(HTTP_MONTHS[month - 1]);
+    out.push(' ');
+    format(out, year);
+    out.push(' ');
+    _pad2(out, rem / 3600);
+    out.push(':');
+    _pad2(out, (rem % 3600) / 60);
+    out.push(':');
+    _pad2(out, rem % 60);
+    out.append(" GMT");
+}
+
+fn _two_digits(s: const u8[:], at: i64) -> i64 {
+    if s[at] < '0' || s[at] > '9' || s[at + 1] < '0' || s[at + 1] > '9' { return -1; }
+    return ((s[at] - 48) as i64) * 10 + (s[at + 1] - 48);
+}
+
+// Unix seconds for an IMF-fixdate (Sun, 06 Nov 1994 08:49:37 GMT) from 1970 on; false for anything else, which a
+// conditional request then ignores.
+fn _parse_http_date(text: const u8[:]) -> i64, bool {
+    let s = trim(text);
+    if s.len != 29 || s[3] != ',' || s[4] != ' ' || s[7] != ' ' || s[11] != ' ' || s[16] != ' ' || s[19] != ':' || s[22] != ':' || s[25] != ' ' { return 0, false; }
+    if s[26..] != "GMT" { return 0, false; }
+    var known = false;
+    for d in HTTP_DAYS { if s[..3] == d { known = true; } }
+    let day = _two_digits(s, 5);
+    var month = 0;
+    for m, i in HTTP_MONTHS { if s[8..11] == m { month = i + 1; } }
+    let y1 = _two_digits(s, 12);
+    let y2 = _two_digits(s, 14);
+    let hh = _two_digits(s, 17);
+    let mm = _two_digits(s, 20);
+    let ss = _two_digits(s, 23);
+    if !known || day < 1 || day > 31 || month == 0 || y1 < 0 || y2 < 0 || hh < 0 || hh > 23 || mm < 0 || mm > 59 || ss < 0 || ss > 60 { return 0, false; }
+    let year = y1 * 100 + y2;
+    if year < 1970 { return 0, false; }
+    // days_from_civil
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y / 400;
+    let yoe = y - era * 400;
+    let doy = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    return days * 86400 + hh * 3600 + mm * 60 + ss, true;
 }
 
 // The Content-Type for a file name, by extension; application/octet-stream when unknown.
@@ -115,11 +187,12 @@ fn _file_miss(res: http::Response&) -> bool {
 }
 
 // Sends root/rel. rel is a decoded relative path, such as the tail of a catch-all: `gweb::path_decode(rel, gweb::param(ctx, "path"))`.
-// The reply is 200 with the bytes, 304 when If-None-Match matches the ETag, or (for HEAD) the head alone. The ETag is made of the file's
-// size and modification time, so no content is read to answer 304.
+// The reply is 200 with the bytes, 304 when If-None-Match matches the ETag (or, with no If-None-Match, when If-Modified-Since is
+// not older than the file), or (for HEAD) the head alone. The ETag is made of the file's size and modification time, so no content
+// is read to answer 304. Every reply carries Last-Modified.
 // Returns false after setting a plain 404 when rel is unsafe (see file_path_ok), names nothing, is not a regular file, or resolves
 // outside root (a symlink out of it); the caller may replace that reply. A file above opts.stream_over is sent in windows through
-// a stream, and a HEAD for it has a chunked head without a Content-Length.
+// a stream; a HEAD for it sends the head with its Content-Length and reads nothing.
 fn send_file(req: const http::Request&, ctx: Ctx&, res: http::Response&, root: const u8[:], rel: const u8[:], opts: const FileOptions&) -> bool {
     if !file_path_ok(rel) { return _file_miss(res); }
     var size: i64 = 0;
@@ -132,6 +205,9 @@ fn send_file(req: const http::Request&, ctx: Ctx&, res: http::Response&, root: c
     if opts.content_type.len > 0 { ctype.append(opts.content_type); } else { ctype.append(mime_type(rel)); }
     let name = _file_base(rel);
     http::set_header(res, "ETag", etag);
+    var modified: u8[>..] = [];
+    _http_date(modified, mtime / 1000000000);
+    http::set_header(res, "Last-Modified", modified);
     http::set_header(res, "Cache-Control", if opts.immutable { "public, max-age=31536000, immutable" } else { "public, max-age=0, must-revalidate" });
     if starts_with(ctype, "text/html") || starts_with(ctype, "image/svg") {
         http::set_header(res, "Content-Security-Policy", "sandbox");   // an uploaded page or SVG must not run scripts on this origin
@@ -141,8 +217,16 @@ fn send_file(req: const http::Request&, ctx: Ctx&, res: http::Response&, root: c
         _file_disposition(cd, if opts.download { "attachment" } else { "inline" }, if opts.filename.len > 0 { opts.filename } else { name });
         http::set_header(res, "Content-Disposition", cd);
     }
+    // If-None-Match decides alone when it is present; If-Modified-Since only without it (RFC 9110, section 13.2.2).
     let inm, has = http::header(req, "if-none-match");
-    if has && (find(inm, etag) >= 0 || trim(inm) == "*") {
+    let ims, has_ims = http::header(req, "if-modified-since");
+    var fresh = false;
+    if has { fresh = find(inm, etag) >= 0 || trim(inm) == "*"; }
+    else if has_ims {
+        let since, ims_ok = _parse_http_date(ims);
+        fresh = ims_ok && mtime / 1000000000 <= since;
+    }
+    if fresh {
         c_file_close(fd);
         res.status = http::Status.NotModified;
         res.content_type.clear();
@@ -163,6 +247,16 @@ fn send_file(req: const http::Request&, ctx: Ctx&, res: http::Response&, root: c
         }
         c_file_close(fd);
         if off != size { return _file_miss(res); }
+        return true;
+    }
+    if req.method == http::Method.Head {
+        // The head alone, with the length the body would have. stream_begin cannot do this: its head is always chunked.
+        c_file_close(fd);
+        if !_apply_cookies(ctx, res) { return true; }
+        format(res.headers, "Content-Type: ", ctype, "\r\nContent-Length: ", size, "\r\n");
+        res.content_type.clear();
+        ctx.streamed = true;
+        ctx.stream_ended = http::send_head(net::Socket { fd: ctx.conn_fd }, res, if http::wants_keep_alive(req) { "keep-alive" } else { "close" });
         return true;
     }
     var s = stream_begin(req, ctx, res);

@@ -284,6 +284,14 @@ req bg2 GET a.test /media/m1/big.bin -H "If-None-Match: $BETAG"
 check "$([ "$(status bg2)" = 304 ] && echo ok)" "the big file: 304 on a matching ETag, nothing streamed"
 req bg3 HEAD a.test /media/m1/big.bin
 check "$([ "$(status bg3)" = 200 ] && [ ! -s "$WORK/bg3.b" ] && echo ok)" "the big file: HEAD is 200 with no body"
+check "$([ "$(header bg3 content-length)" = 3145728 ] && ! has_header bg3 'transfer-encoding' && [ "$(header bg3 etag)" = "$BETAG" ] && echo ok)" "the big file: HEAD sends Content-Length 3145728, no chunked head, the same ETag"
+BMOD=$(sed -n 's/^last-modified: //p' "$WORK/bg.h" | head -n 1)
+check "$([ -n "$BMOD" ] && [ "$(header bg3 last-modified)" = "$BMOD" ] && echo ok)" "the big file: Last-Modified on GET and HEAD alike"
+req bg4 GET a.test /media/m1/big.bin -H "If-Modified-Since: $BMOD"
+check "$([ "$(status bg4)" = 304 ] && [ ! -s "$WORK/bg4.b" ] && echo ok)" "the big file: 304 on If-Modified-Since, nothing streamed"
+req bg5 HEAD a.test /media/m1/big.bin
+req bg6 HEAD a.test /media/m1/big.bin -H 'Connection: keep-alive'
+check "$([ "$(status bg6)" = 200 ] && [ "$(header bg6 content-length)" = 3145728 ] && echo ok)" "the big file: a second HEAD answers too"
 req am GET a.test /media/m1/up.txt
 check "$([ "$(status am)" = 200 ] && echo ok)" "the server still answers after the streamed and refused requests"
 
