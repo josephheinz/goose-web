@@ -36,7 +36,7 @@ fn worker_end(c: Channels, i: i64) -> i32 {
 // channel or a reply that does not verify.
 fn owner_call_fd<M, R>(fd: i32, msg: M) -> R, bool {
     var one: M[>..] = [];
-    one.push(msg);
+    one.push(copy(msg));
     var bytes: u8[>..] = [];
     to_bytes(one, bytes);
     if fd < 0 || c_send_frame(fd, bytes) == 0 { return R { .. }, false; }

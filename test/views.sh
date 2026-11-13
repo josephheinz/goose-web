@@ -11,11 +11,13 @@
 #
 # Needs gweb built beside this folder (goose build -o gweb cli/gweb.goose). Starts no server.
 set -u
+PORT=${PORT:-4106}
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(dirname "$HERE")
 GWEB="$ROOT/gweb"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/gweb-views.XXXXXX")
-trap 'rm -rf "$WORK"' EXIT
+PID=""
+trap '[ -n "$PID" ] && kill "$PID" 2>/dev/null; rm -rf "$WORK"' EXIT
 pass=0
 fail=0
 ok() { pass=$((pass + 1)); }
@@ -117,6 +119,29 @@ if out=$("$GWEB" -C "$WORK/rp" test 2>&1); then
   case "$out" in *"ok t_reserved::test_reserved_prefixes"*) ok ;; *) bad "reserved_prefixes test did not run:"; show "$out" ;; esac
 else
   bad "gweb test of the reserved prefixes failed:"; show "$out"
+fi
+
+# 6. A state Msg with a variable-size payload (const VARIABLE_MSG = true;, E4): 250,000 bytes through the owner, twice.
+cp -R "$HERE/views/bigmsg" "$WORK/bm"
+if out=$("$GWEB" -C "$WORK/bm" test 2>&1); then
+  case "$out" in *"ok t_save::test_variable_message"*) ok ;; *) bad "variable Msg in gweb test:"; show "$out" ;; esac
+else
+  bad "gweb test of the variable Msg site failed:"; show "$out"
+fi
+if out=$("$GWEB" -C "$WORK/bm" build 2>&1); then
+  "$WORK/bm/.gooseweb/server" --port "$PORT" >/dev/null 2>&1 &
+  PID=$!
+  up=""
+  for i in 1 2 3 4 5 6 7 8 9 10; do sleep 0.5; if curl -s -o /dev/null "http://127.0.0.1:$PORT/"; then up=1; break; fi; done
+  if [ -z "$up" ]; then bad "the variable Msg server did not answer on port $PORT"; else
+    head -c 250000 /dev/zero | tr '\0' a > "$WORK/big.txt"
+    r1=$(curl -s -X POST --data-binary @"$WORK/big.txt" -H 'Content-Type: text/plain' "http://127.0.0.1:$PORT/save")
+    r2=$(curl -s -X POST --data-binary @"$WORK/big.txt" -H 'Content-Type: text/plain' "http://127.0.0.1:$PORT/save")
+    check "$([ "$r1" = "ok=true n=250000 total=250000 saves=1" ] && [ "$r2" = "ok=true n=250000 total=500000 saves=2" ] && echo ok)" "250,000 bytes through the owner twice: '$r1' '$r2'"
+  fi
+  kill "$PID" 2>/dev/null; wait "$PID" 2>/dev/null; PID=""
+else
+  bad "gweb build of the variable Msg site"; show "$out"
 fi
 
 echo "views.sh: $pass of $((pass + fail)) checks passed"

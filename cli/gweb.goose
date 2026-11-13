@@ -98,6 +98,7 @@ var socket_message = false;
 var socket_close = false;
 var uses_hub = false;                  // socket.goose, or a file under app/ or lib/ calls gweb::subscribe( or gweb::websocket(
 var has_state_shutdown = false;
+var msg_variable = false;             // state.goose declares const VARIABLE_MSG = true;: Msg has a variable-size payload and is used as Msg..
 var has_jobs = false;
 var has_jobs_schedule = false;
 var has_not_found = false;
@@ -3227,7 +3228,7 @@ fn gen_main_fn(m: u8[>..]&) {
         if has_state_init { m.append("        state::init();\n"); }
         m.append("        let chans = gweb::owner_channels(1);\n");
         m.append("        thread_spawn(export_thread, gweb::worker_end(chans, 0), cfg);\n");
-        m.append("        gweb::owner_loop<state::Msg, state::Reply>(chans, state::handle);\n        return;\n    }\n");
+        format(m, "        gweb::owner_loop<", msg_ty(), ", state::Reply>(chans, state::handle);\n        return;\n    }\n");
     } else {
         m.append("    if cfg.export_dir.len > 0 { exit(if run_export(cfg.export_dir, -1) { 0 } else { 1 }); }\n");
     }
@@ -3278,7 +3279,7 @@ fn gen_main_fn(m: u8[>..]&) {
     format(up, "gweb: http://localhost:", cfg.port, " (", cfg.workers, " workers)");
     gweb::log_message(gweb::Level.Info, up);
 """);
-    if has_state { m.append("    gweb::owner_loop<state::Msg, state::Reply>(chans, state::handle);\n"); }
+    if has_state { format(m, "    gweb::owner_loop<", msg_ty(), ", state::Reply>(chans, state::handle);\n"); }
     m.append("    for id in ids { thread_wait(id); }\n");
     if has_jobs {
         m.append("""
@@ -3326,8 +3327,8 @@ fn gen_main_body(m: u8[>..]&, test: bool) {
         m.append("import state;\n");
         if test { gen_test_ask(m); }
         else {
-            m.append("fn state::ask(ctx: const gweb::Ctx&, msg: state::Msg) -> state::Reply, bool {\n");
-            m.append("    return gweb::owner_call_fd<state::Msg, state::Reply>(ctx.owner_fd, msg);\n}\n");
+            format(m, "fn state::ask(ctx: const gweb::Ctx&, msg: ", msg_ty(), ") -> state::Reply, bool {\n");
+            format(m, "    return gweb::owner_call_fd<", msg_ty(), ", state::Reply>(ctx.owner_fd, ", if msg_variable { "copy(msg)" } else { "msg" }, ");\n}\n");
         }
     }
     m.append("\n");
@@ -3415,12 +3416,16 @@ thread_fn supervisor(slot: i64, server: net::Socket, owner_fd: i32, cfg: gweb::C
 }
 
 
+// The type of state.goose's Msg as the generated code writes it: Msg.. (variable mode) for const VARIABLE_MSG = true;
+// (DESIGN-ADDENDUM-19, E4). Then handle takes `msg: const Msg..&` and a payload array is passed as copy(x).
+fn msg_ty() -> const u8[:] { return if msg_variable { "state::Msg.." } else { "state::Msg" }; }
+
 // state::ask without a channel: the same encode and decode as the owner transport, then a direct call on main.
 fn gen_test_ask(m: u8[>..]&) {
-    m.append("fn state::ask(ctx: const gweb::Ctx&, msg: state::Msg) -> state::Reply, bool {\n");
-    m.append("    var one: state::Msg[>..] = [];\n    one.push(msg);\n");
+    format(m, "fn state::ask(ctx: const gweb::Ctx&, msg: ", msg_ty(), ") -> state::Reply, bool {\n");
+    format(m, "    var one: ", msg_ty(), "[>..] = [];\n    one.push(copy(msg));\n");
     m.append("    var bytes: u8[>..] = [];\n    to_bytes(one, bytes);\n");
-    m.append("    let ms, mok = from_bytes<state::Msg[>..]>(bytes);\n");
+    format(m, "    let ms, mok = from_bytes<", msg_ty(), "[>..]>(bytes);\n");
     m.append("    if !mok { return state::Reply { .. }, false; }\n");
     m.append("    var replies: state::Reply[>..] = [];\n");
     m.append("    for m in ms { replies.push(state::handle(m)); }\n");
@@ -4146,6 +4151,8 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
         if copy_prefixed("app/state.goose", "state", code) {
             has_state_init = defines(code, "init");
             has_state_shutdown = defines(code, "shutdown");
+            msg_variable = false;
+            for line in split(code, '\n') { if starts_with(trim_start(line), "const VARIABLE_MSG = true;") { msg_variable = true; } }
             for name in ["handle"] { if !defines(code, name) { err("app/state.goose", 0, "state.goose needs fn handle(msg: const Msg&) -> Reply"); } }
             if find(code, "enum Msg") < 0 && find(code, "struct Msg") < 0 { err("app/state.goose", 0, "state.goose needs a type named Msg"); }
             if find(code, "struct Reply") < 0 && find(code, "enum Reply") < 0 { err("app/state.goose", 0, "state.goose needs a type named Reply"); }
