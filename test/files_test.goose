@@ -115,6 +115,12 @@ fn main() {
     named.filename.append("résumé \"v2\".txt");
     let rm, okm = fetch("GET", "", "hello.txt", named);
     check_eq(header_value(rm, "Content-Disposition"), "attachment; filename=\"r__sum__ _v2_.txt\"; filename*=UTF-8''r%C3%A9sum%C3%A9%20%22v2%22.txt", "named download: ASCII fallback and filename*");
+    var crlf = PLAIN;
+    crlf.download = true;
+    crlf.filename.append("a\r\nSet-Cookie: x=1.txt");
+    let rcr, okcr = fetch("GET", "", "hello.txt", crlf);
+    check(okcr && find(rcr.headers, "\r\nSet-Cookie") < 0, "a newline in the download name cannot start a header");
+    check_eq(header_value(rcr, "Content-Disposition"), "attachment; filename=\"a__Set-Cookie: x=1.txt\"; filename*=UTF-8''aSet-Cookie%3A%20x%3D1.txt", "control bytes are dropped or replaced");
     var inl = PLAIN;
     inl.filename.append("x.txt");
     let rl, okl = fetch("GET", "", "hello.txt", inl);
