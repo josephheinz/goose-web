@@ -8,8 +8,10 @@
 # 2. With a Goose compiler: the project is built and started; curl checks the package page inside the
 #    project's root layout, the package route, the public file and the project page's package component.
 # 3. Each error, in its own copy, must fail gweb gen with its message.
+# 4. Nested mounts: a package inside another's mount, in either line order, with a local folder.
+# 5. A git source by URL (file:// and https://) is cloned into the package cache once and used from there.
 #
-# Needs curl, and gweb built beside this folder (goose build -o gweb cli/gweb.goose).
+# Needs curl and git, and gweb built beside this folder (goose build -o gweb cli/gweb.goose).
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(dirname "$HERE")
@@ -219,6 +221,46 @@ cp -R "$HERE/packages/inner" "$WORK/local/app/admin/shop"
 expect_ok local
 routes=$("$GWEB" -C "$WORK/local/app" routes 2>&1)
 case "$routes" in *'/admin/shop/orders'*) ok ;; *) bad "local: a package inside the project folder: routes lacks /admin/shop/orders" ;; esac
+
+
+# 5. A git source by URL: file:///path/to/repo.git@tag (and https://host/path@tag), cloned into the package cache.
+GITBASE="$WORK/gitpkgs"
+mkdir -p "$GITBASE/src"
+cp -R "$HERE/packages/pkg/." "$GITBASE/src/"
+if (cd "$GITBASE/src" && git init -q -b main && git add -A && git -c maintenance.auto=false -c gc.auto=0 -c user.name=t -c user.email=t@localhost commit -q -m pkg && git tag v1) \
+   && git clone -q --bare "$GITBASE/src" "$GITBASE/pkg.git"; then
+  export GWEB_PKG_CACHE="$WORK/pkgcache"
+  fresh url
+  printf '# a package from a repo by URL\nfile://%s/pkg.git@v1 at /admin\n' "$GITBASE" > "$WORK/url/app/gweb.packages"
+  routes=$("$GWEB" -C "$WORK/url/app" routes 2>&1)
+  for want in '/admin  ' '/admin/users' '/admin/x.css'; do
+    case "$routes" in *"$want"*) ok ;; *) bad "url source: gweb routes lacks '$want':"; echo "$routes" | sed 's/^/    /' ;; esac
+  done
+  check "$([ -f "$GWEB_PKG_CACHE"/url/*/gweb.package ] && echo ok)" "url source: the repo was cloned into the cache under url/"
+  if out=$("$GWEB" -C "$WORK/url/app" gen 2>&1); then
+    check "$([ -L "$WORK/url/app/.gooseweb/admin" ] && [ -f "$WORK/url/app/.gooseweb/Badge.goose" ] && echo ok)" "url source: gweb gen links the package lib and its component"
+  else
+    bad "url source: gweb gen"; echo "$out" | sed 's/^/    /'
+  fi
+  # A cached tag is never fetched again: with the repo gone, the cache serves it.
+  rm -rf "$GITBASE/pkg.git"
+  if out=$("$GWEB" -C "$WORK/url/app" gen 2>&1); then ok; else bad "url source: the cached tag was fetched again"; echo "$out" | sed 's/^/    /'; fi
+  # Errors.
+  expect_url_fail() {
+    fresh urlbad
+    printf '%s\n' "$1" > "$WORK/urlbad/app/gweb.packages"
+    if out=$("$GWEB" -C "$WORK/urlbad/app" gen 2>&1); then bad "'$1': gweb gen succeeded"; else
+      case "$out" in *"$2"*) ok ;; *) bad "'$1': wanted '$2', got:"; echo "$out" | sed 's/^/    /' ;; esac
+    fi
+  }
+  expect_url_fail 'file:///no/such/repo.git@v1 at /admin' 'git clone failed'
+  expect_url_fail 'file:///tmp/../etc/x.git@v1 at /admin' 'a URL source is file:///path/to/repo@tag or https://host/path@tag'
+  expect_url_fail 'file:///tmp/a$b.git@v1 at /admin' 'a URL source is file:///path/to/repo@tag or https://host/path@tag'
+  expect_url_fail 'file:///tmp/x.git@-v1 at /admin' 'a URL source is file:///path/to/repo@tag or https://host/path@tag'
+  expect_url_fail 'file:///tmp/x.git@v1/x at /admin' 'a URL source is file:///path/to/repo@tag or https://host/path@tag'
+else
+  bad "git: could not make the package repo"
+fi
 
 echo "packages.sh: $pass of $((pass + fail)) checks passed"
 [ "$fail" -eq 0 ]

@@ -494,12 +494,29 @@ fn url_of(out: u8[>..]&, rel: const u8[:]) { out.push('/'); out.append(rel); }
 let PKG_LIST = "gweb.packages";
 let PKG_RESERVED = ["lib", "std", "os", "gweb", "web", "net", "sqlite", "main", "state"];
 
-// owner/repo@tag: one '/', an '@' after it, and not a path.
+// A URL source: file:///abs/path or https://host/path, then @tag.
+fn is_url_source(src: const u8[:]) -> bool {
+    return (starts_with(src, "file://") || starts_with(src, "https://")) && rfind(src, "@") > 0;
+}
+
+// owner/repo@tag: one '/', an '@' after it, and not a path; or a URL source (file:// or https://, then @tag).
 fn is_git_source(src: const u8[:]) -> bool {
+    if is_url_source(src) { return true; }
     if src.len == 0 || src[0] == '.' || src[0] == '/' || find(src, "@") < 0 { return false; }
     var slashes = 0;
     for c in src { if c == '/' { slashes += 1; } }
     return slashes == 1;
+}
+
+// The characters of a URL source's address: no space, quote or shell character, and no `..` segment.
+fn url_part_ok(s: const u8[:]) -> bool {
+    if s.len == 0 { return false; }
+    for c in s {
+        let ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-' || c == '+' || c == '~' || c == '/' || c == ':';
+        if !ok { return false; }
+    }
+    for seg in split(s, '/') { if seg == ".." { return false; } }
+    return true;
 }
 
 fn git_part_ok(s: const u8[:], plus: bool) -> bool {
@@ -524,19 +541,42 @@ fn mount_ok(prefix: const u8[:]) -> bool {
     return true;
 }
 
-// Clones owner/repo@tag into the cache when it is not there; never updates a cached tag. dir gets the folder.
+// Clones owner/repo@tag (from GitHub) or URL@tag (file:// or https://) into the cache when it is not there; never updates a
+// cached tag. dir gets the folder. A URL source is cached under url/, its slashes written %2F.
 fn fetch_git(line: i64, src: const u8[:], dir: u8[>..]&) -> bool {
-    let slash = find(src, "/");
-    let at = find(src, "@");
     var m: u8[>..] = [];
-    if at < slash { format(m, src, ": a git source is owner/repo@tag"); err(PKG_LIST, line, m); return false; }
-    let owner = src[..slash];
-    let repo = src[slash + 1..at];
-    let tag = src[at + 1..];
-    if !git_part_ok(owner, false) || !git_part_ok(repo, false) || !git_part_ok(tag, true) {
-        format(m, src, ": a git source is owner/repo@tag, with letters, digits, . _ - in each part");
-        err(PKG_LIST, line, m);
-        return false;
+    var url: u8[>..] = [];
+    var tag: u8[>..] = [];
+    var owner: u8[>..] = [];
+    var rel: u8[>..] = [];   // the folder's path under the cache
+    if is_url_source(src) {
+        let at = rfind(src, "@");
+        let addr = src[..at];
+        tag.append(src[at + 1..]);
+        if !url_part_ok(addr[find(addr, "://") + 3..]) || !git_part_ok(tag, true) {
+            format(m, src, ": a URL source is file:///path/to/repo@tag or https://host/path@tag, with letters, digits, . _ - + ~ / : in the address");
+            err(PKG_LIST, line, m);
+            return false;
+        }
+        url.append(addr);
+        owner.append("url");
+        rel.append("url/");
+        for c in src { if c == '/' { rel.append("%2F"); } else { rel.push(c); } }
+    } else {
+        let slash = find(src, "/");
+        let at = find(src, "@");
+        if at < slash { format(m, src, ": a git source is owner/repo@tag"); err(PKG_LIST, line, m); return false; }
+        let o = src[..slash];
+        let repo = src[slash + 1..at];
+        tag.append(src[at + 1..]);
+        if !git_part_ok(o, false) || !git_part_ok(repo, false) || !git_part_ok(tag, true) {
+            format(m, src, ": a git source is owner/repo@tag, with letters, digits, . _ - in each part");
+            err(PKG_LIST, line, m);
+            return false;
+        }
+        owner.append(o);
+        format(url, "https://github.com/", o, "/", repo);
+        rel.append(src);
     }
     var cache: u8[>..] = [];
     var v: u8[>..] = [];
@@ -545,7 +585,7 @@ fn fetch_git(line: i64, src: const u8[:], dir: u8[>..]&) -> bool {
     else if env("HOME", home) && home.len > 0 { format(cache, home, "/.cache/gweb/pkgs"); }
     else { err(PKG_LIST, line, "set HOME or GWEB_PKG_CACHE to fetch git packages"); return false; }
     while cache.len > 1 && cache[cache.len - 1] == '/' { cache.pop(); }
-    format(dir, cache, "/", src);
+    format(dir, cache, "/", rel);
     if is_dir(dir) { return true; }
     var parent: u8[>..] = [];
     format(parent, cache, "/", owner);
@@ -556,8 +596,6 @@ fn fetch_git(line: i64, src: const u8[:], dir: u8[>..]&) -> bool {
     c_run(cmd, out);
     cmd.clear();
     out.clear();
-    var url: u8[>..] = [];
-    format(url, "https://github.com/", owner, "/", repo);
     cmd.append("git clone --depth 1 --branch ");
     shq(cmd, tag);
     cmd.push(' ');
