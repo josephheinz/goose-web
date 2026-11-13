@@ -32,6 +32,9 @@ fn dispatch(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) ->
         http::text(res, http::Status.Ok, "cleared");
     } else if p == "/who" {
         http::text(res, http::Status.Ok, gweb::cookie_or(req, "k", "none"));
+    } else if p == "/host" {
+        let v, has = http::header(req, "host");
+        http::text(res, http::Status.Ok, if has { v } else { "none" });
     } else if p == "/xtest" {
         let v, has = http::header(req, "x-test");
         http::text(res, http::Status.Ok, if has { v } else { "none" });
@@ -110,6 +113,15 @@ fn main() {
     check_eq(send(t, "GET", "/xtest", "").body, "one", "extra header sent");
     check(t.headers.len == 0, "headers cleared");
     check_eq(send(t, "GET", "/xtest", "").body, "none", "extra header not sent twice");
+
+    // t.host is the Host header of every request
+    check_eq(send(t, "GET", "/host", "").body, "test", "the default Host is test");
+    t.host.clear();
+    t.host.append("a.example");
+    check_eq(send(t, "GET", "/host", "").body, "a.example", "t.host sets the Host header");
+    check_eq(send(t, "POST", "/host", "x=1").body, "a.example", "and it holds for the next request too");
+    t.host.clear();
+    t.host.append("test");
 
     // static index
     let rst = send(t, "GET", "/static", "");

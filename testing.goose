@@ -10,10 +10,11 @@ import gweb;
 let TEST_CSRF = "00000000000000000000000000000000";
 let FORM_HEX = "0123456789ABCDEF";
 
-// headers: extra lines for the next request only. cookies: the jar, "name=value; name=value".
+// headers: extra lines for the next request only. cookies: the jar, "name=value; name=value". host: the Host header of
+// every request ("test"), for an app that serves several hosts.
 struct Tester { failures: i64 = 0, checks: i64 = 0, name: u8[..128] = "",
                 auto_csrf: bool = true, headers: u8[..2048] = "",
-                cookies: u8[..4096] = "" }
+                cookies: u8[..4096] = "", host: u8[..128] = "test" }
 
 // The value of a jar cookie; "" when absent.
 fn jar_get(t: const Tester&, name: const u8[:]) -> const u8[:], bool {
@@ -84,7 +85,7 @@ fn test_send<D, S>(t: Tester&, method: const u8[:], target: const u8[:], body: c
         if !has { jar_put(t, "gw_csrf", TEST_CSRF, true); }
     }
     var raw: u8[>..] = [];
-    format(raw, method, " ", target, " HTTP/1.1\r\nHost: test\r\n");
+    format(raw, method, " ", target, " HTTP/1.1\r\nHost: ", t.host, "\r\n");
     if t.cookies.len > 0 { format(raw, "Cookie: ", t.cookies, "\r\n"); }
     if t.auto_csrf && method != "GET" {
         let tok, has = jar_get(t, "gw_csrf");
