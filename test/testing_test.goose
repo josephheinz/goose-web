@@ -39,7 +39,7 @@ fn dispatch(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) ->
         let v, has = http::header(req, "x-test");
         http::text(res, http::Status.Ok, if has { v } else { "none" });
     } else if p == "/guard" {
-        if !gweb::_csrf_ok(req, res) { return -1; }
+        if !gweb::_csrf_ok(req, ctx, res) { return -1; }
         http::text(res, http::Status.Ok, "guarded");
     } else if p == "/static" {
         return 0;

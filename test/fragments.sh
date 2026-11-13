@@ -147,7 +147,7 @@ check "$([ "$(status nosse)" = 404 ] && echo ok)" "a site without gw-sse does no
     check "$([ "$(status tk8)" = 200 ] && body_has tk8 'saved' && echo ok)" "POST /save with the cookie and header: 200"
     req tk9 POST /webhook -H 'Sec-Fetch-Site: cross-site'
     check "$([ "$(status tk9)" = 200 ] && body_has tk9 'hook' && echo ok)" "POST /webhook (const CSRF = false) with no token, cross-site: 200"
-    check "$(grep -qF '::CSRF && !gweb::_csrf_ok(r, res)' "$WORK/ok/.gweb/main.goose" && echo ok)" "the generated main checks the CSRF constant"
+    check "$(grep -qF '::CSRF && !gweb::_csrf_ok(r, ctx, res)' "$WORK/ok/.gweb/main.goose" && echo ok)" "the generated main checks the CSRF constant"
   fi
   kill "$PID" 2>/dev/null
   wait "$PID" 2>/dev/null
