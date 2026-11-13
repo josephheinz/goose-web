@@ -106,9 +106,7 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     req miss GET /nowhere -H 'GW-Fragment: list'
     check "$([ "$(status miss)" = 404 ] && ! has_header miss 'gw-fragment' && echo ok)" "a missing page with the header: 404, no echo"
 
-    # The runtime's hash depends on the bytes of client/gwi.min.js, so the tests read the name from the page.
-    GWI=$(grep -o '/_gw/gwi\.[0-9a-f]\{8\}\.js' "$WORK/whole.b" | head -1)
-    check "$([ -n "$GWI" ] && echo ok)" "GET /: the runtime tag names /_gw/gwi.<8 hex>.js"
+    check "$(! grep -q '/_gw/gw[a-z]*\.[0-9a-f]\{8\}\.js' "$WORK/whole.b" && echo ok)" "GET /: runtime modules at plain URLs"
     # The script tag: once for each template that has a gw-target.
     check "$([ "$(body_count whole 'src="/_gw/gwf.js"')" = 2 ] && echo ok)" "GET /: the fragment script tag twice (layout and page)"
     req plain GET /plain

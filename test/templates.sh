@@ -37,8 +37,7 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     sleep 0.5
     if curl -s -o "$WORK/got.html" "http://127.0.0.1:$PORT/"; then got=yes; break; fi
   done
-  # A component's hash depends on bytes only a build knows, so the page is compared with it replaced by HASH.
-  sed -E 's|(/_gw/Brace)\.[0-9a-f]{8}\.js|\1.HASH.js|' "$WORK/got.html" > "$WORK/got.norm.html"
+  cp "$WORK/got.html" "$WORK/got.norm.html"
   if [ -z "$got" ]; then bad "the server did not answer on port $PORT"
   elif cmp -s "$WORK/got.norm.html" "$HERE/templates/expect.html"; then ok
   else bad "GET / differs from expect.html:"; diff "$HERE/templates/expect.html" "$WORK/got.norm.html" | sed 's/^/    /'; fi
@@ -77,16 +76,11 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     c3=$(curl -s -o /dev/null -w '%{http_code}' -H 'Accept-Encoding: gzip' -H "If-None-Match: $pe" "$U")
     c4=$(curl -s -o /dev/null -w '%{http_code}' -H "If-None-Match: $ge" "$U")
     if [ "$c1 $c2 $c3 $c4" = "304 304 200 200" ]; then ok; else bad "If-None-Match statuses are '$c1 $c2 $c3 $c4', wanted '304 304 200 200'"; fi
-    # The component's own URL: its hash is that of the JS it serves.
-    cu=$(grep -o '/_gw/Brace\.[0-9a-f]\{8\}\.js' "$WORK/got.html" | head -1)
-    curl -s -D "$WORK/cjs.h" -o "$WORK/cjs.b" "http://127.0.0.1:$PORT$cu"
-    curl -s -o "$WORK/cjs0.b" "http://127.0.0.1:$PORT/_gw/Brace.js"
-    ch=$(node "$ROOT/client/fnv.mjs" "$WORK/cjs.b" | cut -c1-8)
-    if [ "$cu" = "/_gw/Brace.$ch.js" ] && grep -qi '^cache-control: .*immutable' "$WORK/cjs.h" && cmp -s "$WORK/cjs.b" "$WORK/cjs0.b"; then ok; else bad "component URL $cu: wrong hash, no immutable, or differs from /_gw/Brace.js"; fi
-    # It imports the runtime by its hashed name, and that name exists.
-    rt=$(grep -o 'gwi\.[0-9a-f]\{8\}\.js' "$WORK/cjs.b" | head -1)
-    curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/_gw/$rt" > "$WORK/rt.status"
-    if [ -n "$rt" ] && [ "$(cat "$WORK/rt.status")" = 200 ]; then ok; else bad "Brace.js imports '$rt', which is not served"; fi
+    # The component and the runtime it imports keep plain URLs that revalidate.
+    curl -s -D "$WORK/cjs.h" -o "$WORK/cjs.b" "http://127.0.0.1:$PORT/_gw/Brace.js"
+    if grep -qi '^cache-control: public, max-age=0, must-revalidate' "$WORK/cjs.h" && ! grep -q '/_gw/Brace\.[0-9a-f]\{8\}\.js' "$WORK/got.html"; then ok; else bad "/_gw/Brace.js is hashed or not revalidating"; fi
+    curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/_gw/gwi.js" > "$WORK/rt.status"
+    if grep -q '"./gwi.js"' "$WORK/cjs.b" && [ "$(cat "$WORK/rt.status")" = 200 ]; then ok; else bad "Brace.js does not import a served ./gwi.js"; fi
   fi
   kill "$PID" 2>/dev/null
   wait "$PID" 2>/dev/null

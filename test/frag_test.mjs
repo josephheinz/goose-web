@@ -1,9 +1,10 @@
-// Driven by test/frag.sh. Runs client/gwi.js's frag() under jsdom with fetch stubbed.
+// Driven by test/frag.sh. Runs client/gwf.js's frag() (with client/gwi.js) under jsdom with fetch stubbed.
 import fs from "node:fs";
 import { createRequire } from "node:module";
 
 const { JSDOM } = createRequire(process.env.JSDOM_DIR + "/")("jsdom");
-const src = fs.readFileSync(new URL("../client/gwi.js", import.meta.url), "utf8").replace(/^export /gm, "");
+const read = (f) => fs.readFileSync(new URL("../client/" + f, import.meta.url), "utf8");
+const src = (read("gwi.js") + "\n{\n" + read("gwf.js").replace(/^import .*$/m, "") + "\n}").replace(/^export /gm, "");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let bad = 0, total = 0;
 const check = (c, m) => { total++; if (!c) { bad++; console.error("FAIL: " + m); } };
