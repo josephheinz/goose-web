@@ -188,7 +188,7 @@ expect_fail $P '@image("/img/logo.png", "A", "b", "c")' 2 "$U1"
 expect_fail $P '@image("/img/logo.png", )' 2 "$U1"
 expect_fail $P '@image("/img/nope.png", "A")' 2 "no public file at /img/nope.png (looked for public/img/nope.png)"
 expect_fail app/layout.html '@image("/img/none.png", "A")' 2 "no public file at /img/none.png (looked for public/img/none.png)"
-expect_fail $P '@meta()' 2 "@meta() is for layout.html only"
+expect_fail $P '@meta()' 2 "@meta() is for layout.html and views/layouts only"
 expect_fail app/layout.html '@meta(1)' 2 "@meta() takes no arguments"
 # A hashed URL may not be another file's URL.
 cp "$HERE/templates/site/app/page.html" "$WORK/f/app/page.html"
