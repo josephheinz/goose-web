@@ -18,6 +18,7 @@ import i18n;
 import tscan;
 import html;
 import pins;
+import structs;
 
 // ---------------------------------------------------------------- C helpers (proc.c)
 
@@ -1237,47 +1238,9 @@ fn form_decoders(src: const u8[:], code: const u8[:], extra: u8[>..]&) {
         if name.len == 0 { k += 1; continue; }
         if extra.len == 0 { extra.append("\n// gweb: form decoders (generated)\n"); first_form.append(name); }
         var body: u8[>..] = [];
-        var cur: u8[>..] = [];
-        var cur_line = 0;
-        var depth = 0;
-        var in_str = false;
-        var done = false;
-        var ln = k;
-        var start = find(lines[k], "{") + 1;
-        while ln < lines.len && !done {
-            let line = lines[ln];
-            var ci = start;
-            while ci < line.len {
-                let c = line[ci];
-                if in_str {
-                    cur.push(c);
-                    if c == '\\' && ci + 1 < line.len { ci += 1; cur.push(line[ci]); }
-                    else if c == '"' { in_str = false; }
-                    ci += 1;
-                    continue;
-                }
-                if c == '/' && ci + 1 < line.len && line[ci + 1] == '/' { break; }
-                if depth == 0 && c == '}' { done = true; break; }
-                if depth == 0 && c == ',' {
-                    form_field(src, cur_line, cur, body);
-                    cur.clear();
-                    cur_line = 0;
-                    ci += 1;
-                    continue;
-                }
-                if c == '"' { in_str = true; }
-                if c == '[' || c == '(' || c == '{' { depth += 1; }
-                if c == ']' || c == ')' || c == '}' { depth -= 1; }
-                if cur_line == 0 && c != ' ' && c != '\t' { cur_line = ln + 1; }
-                cur.push(c);
-                ci += 1;
-            }
-            if !done { cur.push(' '); }
-            start = 0;
-            ln += 1;
-        }
-        form_field(src, cur_line, cur, body);
+        let next, done = structs::fields(lines, k) { text, ln => form_field(src, ln, text, body); };
         if !done { err(src, k + 1, "this struct is never closed with }"); }
+        let ln = next;
         format(extra, "fn decode(req: const http::Request&, ctx: const gweb::Ctx&, f: ", name, "&, errs: gweb::FieldErrors&) -> bool {\n");
         extra.append("    let before = errs.n;\n");
         extra.append(body);
