@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.7.0 (unreleased)
+
+Made ready for a CMS package (Addendum 20). The integration fixture is `test/cmsready/`.
+
+- `gweb::send_file(req, ctx, res, root, rel, opts)` in `gweb.http.files`: serves a file under a root with `Content-Type`, `ETag` and 304, `Cache-Control` (immutable or revalidate), HEAD, `Content-Disposition`, and a window stream above `stream_over`. Refuses `..`, dotfiles and symlinks out of the root. Also `gweb::mime_type`, `gweb::file_path_ok`, `gweb::FileOptions`.
+- `gweb.packages` takes git URLs: `file:///path/repo.git@tag` and `https://host/path@tag`, cloned into the package cache under `url/`.
+- Views: `validate` errors get the form prefix, so the generated form shows them. `g_parse` writes the JSON it read after an error, so a form can be drawn again as typed.
+- Route tests: `t.host` sets the `Host` header.
+
 ## v0.6.0
 
 Library work toward v1 (the gweb side of the CMS design, Addendum 19).

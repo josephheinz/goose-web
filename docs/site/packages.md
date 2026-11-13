@@ -10,12 +10,16 @@ List packages in `gweb.packages` at the project root, one per line.
 ```
 ../goose-admin at /admin
 josephheinz/goose-widgets@v0.2.0
+file:///srv/repos/cms.git@v1.0.0 at /admin
 ```
 
-A source is a path (relative to the project, or absolute) or
-`owner/repo@tag`. A git source is cloned from GitHub into
-`~/.cache/gweb/pkgs/owner/repo@tag` (or `$GWEB_PKG_CACHE`) the first time. A
-cached tag is never updated. Delete the folder to fetch it again.
+A source is a path (relative to the project, or absolute), `owner/repo@tag`,
+or a git URL: `file:///abs/path/repo.git@tag` or `https://host/path@tag`.
+`owner/repo@tag` is cloned from GitHub into
+`~/.cache/gweb/pkgs/owner/repo@tag` (or `$GWEB_PKG_CACHE`) the first time; a
+URL source goes under `url/` there, with its slashes written `%2F`. A cached
+tag is never updated. Delete the folder to fetch it again.
+The address may hold letters, digits and `. _ - + ~ / :`, and no `..` segment.
 
 - **`at /prefix`** mounts the package's `app/` at `app/prefix/`, and its
   `public/` at `/prefix/`. The prefix is literal folder names: no `[id]`, no

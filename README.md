@@ -417,6 +417,10 @@ for `T[>..<]`).
 `name.K.` and a hidden `name.n`). `g_parse` reads the same names, runs `validate`, and writes the canonical JSON.
 `gweb::form_enum` is the helper for enums. A view is limited to 32 fields and 8 slots.
 
+`validate` names fields plainly (`"title"`); `g_parse` puts the form prefix in front of each error, so the message
+shows under the control (`w.title`). After an error `g_parse` still writes the JSON it read (a field that did not
+parse keeps its default), so the page can draw the form again with what the user typed: `g_form(out, name, json, errs, prefix)`.
+
 The struct scanner is `cli/structs.goose`; the form decoders (Forms and validation) use it too.
 
 ## Markdown
@@ -446,8 +450,8 @@ serves the root through a catch-all uses it to refuse a slug that would shadow o
 ## Packages
 
 A package is a folder with `gweb.package`, and components, routes, public
-files and `lib/` code. List one in `gweb.packages`: a path, or `owner/repo@tag`,
-with `at /prefix` to mount its routes. See [docs/site/packages.md](docs/site/packages.md).
+files and `lib/` code. List one in `gweb.packages`: a path, `owner/repo@tag` (GitHub), or a git URL
+(`file:///path/to/repo.git@tag` or `https://host/path@tag`), with `at /prefix` to mount its routes. See [docs/site/packages.md](docs/site/packages.md).
 
 A package's `views/` folder joins the project's views, like its `components/`. A package may be mounted inside
 another package's mount (`../shop at /admin/shop` beside `../admin at /admin`), when the outer package has no folder
@@ -993,6 +997,45 @@ HTTP/1.0 clients get the body without chunking. A stream holds its worker until 
 exports and downloads, and use `subscribe` (below) for anything that waits on events. `res.body` is
 ignored.
 
+## Serving files from disk
+
+`gweb::send_file` answers a request with a file under a root folder: media a user uploaded, a download, a generated
+report. `public/` is for files known at build time; this is for files that appear at run time.
+
+```goose
+import gweb.http.files;
+
+// app/media/[key]/[name]/route.goose, serving data/media/KEY/NAME
+fn GET(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
+    var rel: u8[>..] = [];
+    format(rel, gweb::param(ctx, "key"), "/", gweb::param(ctx, "name"));
+    var opts = gweb::FileOptions { .. };
+    opts.immutable = true;                      // the key changes when the file does
+    gweb::send_file(req, ctx, res, "data/media", rel, opts);
+}
+```
+
+`send_file(req, ctx, res, root, rel, opts) -> bool` is true when it sent the file or a 304. It is false after it set
+a plain 404.
+
+- `rel` is a decoded relative path. It is refused (404) when it is empty, starts or ends with `/`, has an empty
+  segment, a segment that starts with `.` (so `..`, `.` and dotfiles), a `\`, a control byte, or is over 1,024 bytes.
+  `%2e%2e` arrives decoded, so it is refused too.
+- The real path of the file must be inside the real path of `root`. A symlink that leaves the root is a 404, one that
+  stays inside is followed. Only regular files are sent.
+- `Content-Type` comes from the extension (`gweb::mime_type(name)`); `opts.content_type` overrides it.
+  `X-Content-Type-Options: nosniff` comes from the default headers. HTML and SVG also get
+  `Content-Security-Policy: sandbox`, so an uploaded page cannot run scripts on your origin.
+- `ETag` is `"SIZE-MTIME"`, so a 304 reads no bytes. `If-None-Match` takes one tag, a list or `*`.
+- `Cache-Control` is `public, max-age=0, must-revalidate`, or with `opts.immutable` one year and `immutable`.
+- `opts.download` adds `Content-Disposition: attachment`; `opts.filename` sets the name shown (it also adds
+  `inline; filename=` on its own). Non-ASCII names get an ASCII fallback and `filename*`.
+- A file of `opts.stream_over` bytes or less (1 MiB) is read into the reply with a `Content-Length`. A bigger one is
+  sent in 256 KiB windows through the stream helpers, so it never sits in memory whole. Under `gweb test` there is no
+  connection, so every file is read whole.
+- HEAD sends the head of a GET. A HEAD for a streamed file has a chunked head and no `Content-Length`.
+- There are no range requests, no `If-Modified-Since` and no compression.
+
 ## Server push and WebSockets
 
 One hub thread (from goose-net's `net::Hub`) owns every long-lived connection, so idle clients cost no
@@ -1079,6 +1122,7 @@ fn test_add(t: gweb::Tester&) {
 - The jar `t.cookies` keeps `Set-Cookie` values and sends them on the next request. With `t.auto_csrf` (the default) a
   non-GET request sends the jar's `gw_csrf` as `X-CSRF-Token`, adding a fixed token when there is none. Set
   `t.auto_csrf = false` to test a refusal. `t.headers` holds extra header lines for the next request only.
+  `t.host` is the `Host` header of every request (`test`): set it to test an app that serves several hosts.
 - `state::ask` calls `state::handle` directly on `main`.
 
 Rules for authors:

@@ -20,6 +20,7 @@ Guides:
 - [State and SQLite](state-and-sqlite.md)
 - [The `gweb` command](cli.md)
 - [Packages](packages.md)
+- [Building a CMS on gweb](building-a-cms.md): a package with its own admin, views and media
 - [Editor support](editor.md)
 
 Policy:

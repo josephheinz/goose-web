@@ -387,6 +387,7 @@ readable `gwi.js`.
 | `site/meta.goose` | `ctx.meta` setters, `@meta()` rendering and `gweb::site_url`. |
 | `site/sitemap.goose` | `/sitemap.xml` and `/robots.txt` builders (`gweb::Sitemap`, `sitemap_add`). |
 | `http/cache.goose`, `src/cache.c`, `src/cache_core.[ch]` | The `REVALIDATE` page cache: per-worker store and ETag replies; your own keys and the process-wide epoch (`epoch_bump`). |
+| `http/files.goose`, `src/files.c` | `send_file`: a file under a root with ETag and 304, HEAD, Content-Disposition and a window stream for big files; the path check (`..`, dotfiles, symlinks out of the root) in C. |
 | `http/stream.goose` | Chunked response bodies: `stream_begin`, `write`, `end`. |
 | `http/push.goose` | `subscribe`, `websocket`, `publish`, `send` and the Origin check; the hub side of `run_worker`. |
 | `cli/gzip.c`, `cli/gzip_core.[ch]` | Build-time gzip for gweb (zlib; the server never links it). |
@@ -406,6 +407,8 @@ readable `gwi.js`.
 | `client/gwt.js` | Transitions. |
 | `client/gwe.js` | Server push (client half). |
 | `client/fnv.mjs` | The FNV-1a hash that `build.sh` and `test/runtime.sh` use for the banners. |
+| `test/files_test.goose` | `send_file`: types, ETag and 304, HEAD, options and hostile paths. |
+| `test/cmsready.sh`, `test/cmsready/` | A CMS package from a git source, mounted at `/admin` with a module inside it, and a host app: catch-all pages from SQLite, views by name, markdown, `/media`, two hosts with a keyed cache and `epoch_bump`, sitemap per host, an admin edit, an upload. The worked example in `docs/site/building-a-cms.md`. |
 | `test/views.sh`, `test/views/` | Views: the generated codec, forms and registry (`gweb test` on `test/views/site`), package views, build errors, `reserved_prefixes`, a variable-size state `Msg`. |
 | `test/markdown_test.goose` | `gweb::markdown`: the subset, hostile input, limits, speed. |
 | `test/auth.sh`, `cache.sh`, `sitemap.sh`, `push.sh` | Auth, page cache, sitemap and server push suites. |
