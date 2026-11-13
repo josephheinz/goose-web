@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.1
+
+First release built and tested by CI on macOS and Linux. No API change.
+
+- Linux: test fixes for dash (a reaped server counted as running) and for `usleep` under `-std=c11`.
+- `ops.sh` sends its 20 handoff requests however slow the machine.
+
 ## v0.5.0
 
 - Breaking: environment variables are `GWEB_*`: `GWEB_SECRET`, `GWEB_CSP`, `GWEB_WORKERS`, `GWEB_TRUST_PROXY`, `GWEB_HSTS`, `GWEB_SESSION_IDLE`, `GWEB_SESSION_MAX`, `GWEB_SECURITY_HEADERS`. The server refuses to start while an old `WEB_*` name is set. `sh tools/migrate-v0.5.sh` renames them in `.env` files, units and Dockerfiles.
