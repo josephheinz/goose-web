@@ -532,10 +532,11 @@ false). `run_worker` moves the pending `Set-Cookie` lines into `res.headers`
 after the dispatcher returns.
 
 ```goose
-let theme = gweb::cookie_or(req, "theme", "light");          // one raw value, for layouts and templates
-let n, ok = gweb::cookie_int(req, "visits");                 // i64, bool
+let theme = gweb::cookie_or(req, "theme", "light");          // decoded; an owned value, for layouts and templates
+let n, ok = gweb::cookie_int(req, "visits");                 // decoded, then parsed: i64, bool
 var v: u8[>..] = [];
-let has = gweb::cookie(req, "name", v);                      // percent-decoded, appended to v
+let has = gweb::cookie(req, "name", v);                      // decoded, appended to v
+let raw, has_raw = gweb::cookie_raw(req, "name");            // as sent, still encoded
 
 gweb::set_cookie(ctx, "seen", "1");                          // session cookie, HttpOnly, SameSite=Lax
 gweb::set_cookie(ctx, "theme", "dark", gweb::CookieOptions { max_age: 31536000, http_only: false, .. });
@@ -555,8 +556,9 @@ token of 1 to 64 bytes, the path or domain is bad, `max_age` is below -1, a
 `__Secure-` or `__Host-` prefix rule is broken, or the encoded value is over
 1024 bytes. Check the result for values that come from users: Goose does not
 warn about an ignored `bool`. Every byte of the value outside `A-Z a-z 0-9 - . _ ~`
-is written as `%XX`, so a value that needed encoding reads back encoded through
-`cookie_or` and `cookie_int`; use `gweb::cookie(req, name, out)` for those.
+is written as `%XX`. `cookie`, `cookie_or` and `cookie_int` all decode it again; `cookie_raw`
+returns the bytes as sent. `cookie_or` returns an owned `u8[>..]`, so a `Props` field that holds it
+is `u8[>..]` (the last field) or `u8[..N]`, not a slice.
 
 All `Set-Cookie` lines of one response share 2048 bytes. When they do not fit
 beside the headers already in `res`, the reply becomes a bare

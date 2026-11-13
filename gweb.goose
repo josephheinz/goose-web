@@ -253,10 +253,8 @@ fn all_in(s: const u8[:], set: const ByteSet&) -> bool {
     return true;
 }
 
-// Appends the percent-decoded value to out; false when absent.
-fn cookie(req: const http::Request&, name: const u8[:], out: u8[>..]&) -> bool {
-    let v, has = http::cookie(req, name);
-    if !has { return false; }
+// Appends v with %XX decoded; + stays +, and a bad escape stays as written.
+fn _pct_decode(out: u8[>..]&, v: const u8[:]) {
     var i = 0;
     while i < v.len {
         if v[i] == '%' && i + 2 < v.len && ascii::hex_value(v[i + 1]) >= 0 && ascii::hex_value(v[i + 2]) >= 0 {
@@ -264,20 +262,37 @@ fn cookie(req: const http::Request&, name: const u8[:], out: u8[>..]&) -> bool {
             i += 3;
         } else { out.push(v[i]); i += 1; }
     }
+}
+
+// One rule: cookie, cookie_or and cookie_int percent-decode the value set_cookie encoded. cookie_raw does not.
+
+// Appends the percent-decoded value to out; false when absent.
+fn cookie(req: const http::Request&, name: const u8[:], out: u8[>..]&) -> bool {
+    let v, has = http::cookie(req, name);
+    if !has { return false; }
+    _pct_decode(out, v);
     return true;
 }
 
-// The value as sent (not decoded), or fallback when absent or empty.
-fn cookie_or(req: const http::Request&, name: const u8[:], fallback: const u8[:]) -> const u8[:] {
-    let v, has = http::cookie(req, name);
-    if has && v.len > 0 { return v; }
-    return fallback;
+// The value exactly as the browser sent it (still encoded), and whether the cookie is present.
+fn cookie_raw(req: const http::Request&, name: const u8[:]) -> const u8[:], bool {
+    return http::cookie(req, name);
 }
 
+// The decoded value, or fallback when the cookie is absent or empty.
+fn cookie_or(req: const http::Request&, name: const u8[:], fallback: const u8[:]) -> u8[>..] {
+    var out: u8[>..] = [];
+    if cookie(req, name, out) && out.len > 0 { return out; }
+    out.clear();
+    out.append(fallback);
+    return out;
+}
+
+// The decoded value as a whole number; false when absent, empty or not a number.
 fn cookie_int(req: const http::Request&, name: const u8[:]) -> i64, bool {
-    let v, has = http::cookie(req, name);
-    if !has || v.len == 0 { return 0, false; }
-    return parse_int(v);
+    var out: u8[>..] = [];
+    if !cookie(req, name, out) || out.len == 0 { return 0, false; }
+    return parse_int(out);
 }
 
 // The value is percent-encoded. False, with nothing set, when an argument or option is invalid,

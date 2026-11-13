@@ -17,15 +17,15 @@ fn check_eq(got: const u8[:], want: const u8[:], what: const u8[:]) {
     if got != want { failures += 1; print("FAIL ", what, ": got '", got, "' want '", want, "'"); }
 }
 
-struct Props { theme: const u8[:], path: const u8[:], visits: i64 }
+struct Props { path: const u8[:], visits: i64, theme: u8[>..] }
 
-// The loader shape: Props holds slices into req while ctx gets a cookie.
+// The loader shape: Props holds slices into req while ctx gets a cookie. cookie_or returns an owned value, so theme is owned.
 fn load(req: const http::Request&, ctx: gweb::Ctx&) -> Props {
     let n, has = gweb::cookie_int(req, "visits");
     var text: u8[..24] = "";
     format(text, n + 1);
     gweb::set_cookie(ctx, "visits", text, gweb::CookieOptions { max_age: 60, .. });
-    return Props { theme: gweb::cookie_or(req, "theme", "light"), path: req.path, visits: n + 1 };
+    return Props { path: req.path, visits: n + 1, theme: gweb::cookie_or(req, "theme", "light") };
 }
 
 // The handler shape: res shrinks while cookie views into req stay in use.
@@ -40,7 +40,7 @@ fn handler(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
 }
 
 fn main() {
-    let raw = "GET /p?x=1 HTTP/1.1\r\nHost: a\r\nCookie: a=1;  theme = dark ;bad; =x; q=\"quoted\"; a=2; enc=a%20b%3B%zz+; visits=41; empty=\r\nCookie: second=1\r\n\r\n";
+    let raw = "GET /p?x=1 HTTP/1.1\r\nHost: a\r\nCookie: a=1;  theme = dark ;bad; =x; q=\"quoted\"; a=2; enc=a%20b%3B%zz+; enc2=caf%C3%A9%20100%25; num=%34%32; visits=41; empty=\r\nCookie: second=1\r\n\r\n";
     let req, parsed = http::parse_request(raw);
     let v, has = http::cookie(req, "a");
     check_eq(v, "1", "first duplicate wins"); check(has, "a present");
@@ -67,6 +67,18 @@ fn main() {
     check(n_ok && n == 41, "cookie_int");
     let n2, n2_ok = gweb::cookie_int(req, "theme");
     check(!n2_ok, "cookie_int on text");
+    // One rule: cookie, cookie_or and cookie_int all percent-decode; cookie_raw does not.
+    check_eq(gweb::cookie_or(req, "enc", "x"), "a b;%zz+", "cookie_or decodes");
+    check_eq(gweb::cookie_or(req, "enc2", "x"), "caf\xc3\xa9 100%", "cookie_or decodes UTF-8 and %25");
+    let n3, n3_ok = gweb::cookie_int(req, "num");
+    check(n3_ok && n3 == 42, "cookie_int decodes (%34%32 is 42)");
+    let n4, n4_ok = gweb::cookie_int(req, "empty");
+    check(!n4_ok, "cookie_int on empty");
+    let rw, rw_ok = gweb::cookie_raw(req, "enc");
+    check(rw_ok, "cookie_raw present");
+    check_eq(rw, "a%20b%3B%zz+", "cookie_raw keeps the bytes as sent");
+    let rw2, rw2_ok = gweb::cookie_raw(req, "nope");
+    check(!rw2_ok, "cookie_raw absent");
 
     let bare, bp = http::parse_request("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
     let nb, has_nb = http::cookie(bare, "a");
