@@ -111,5 +111,13 @@ expect_fail "two slots named a" views/widgets/F.html:1 \
 expect_fail "@slot() is for layout.html only" app/page.html:1 \
   'echo "<p>@slot(\"a\")</p>" > app/page.html'
 
+# 5. gweb::reserved_prefixes() (D4): test/views/reserved has routes, a root catch-all and public files.
+cp -R "$HERE/views/reserved" "$WORK/rp"
+if out=$("$GWEB" -C "$WORK/rp" test 2>&1); then
+  case "$out" in *"ok t_reserved::test_reserved_prefixes"*) ok ;; *) bad "reserved_prefixes test did not run:"; show "$out" ;; esac
+else
+  bad "gweb test of the reserved prefixes failed:"; show "$out"
+fi
+
 echo "views.sh: $pass of $((pass + fail)) checks passed"
 [ "$fail" -eq 0 ]

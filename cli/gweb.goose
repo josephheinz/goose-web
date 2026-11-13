@@ -3107,6 +3107,37 @@ thread_fn hub_leave(chans: gweb::Channels) {
 }
 
 // ROUTES, the route patterns in the order route_index numbers them, and the typed jobs:: wrappers.
+// gweb::reserved_prefixes() (DESIGN-ADDENDUM-19, D4): every literal first segment of a route, every top-level public/ name,
+// the generated sitemap and robots names, and _gw: the root-level slugs a content tree must not use. Sorted, once each.
+fn gen_reserved(m: u8[>..]&) {
+    var names: u8[..200][>..<] = [];
+    fn add(n: const u8[:]) {
+        if n.len == 0 || n.len > 200 { return; }
+        for o in names { if o == n { return; } }
+        var t: u8[..200] = "";
+        t.append(n);
+        names.push(t);
+    }
+    add("_gw");
+    if has_sitemap { add("sitemap.xml"); add("robots.txt"); }
+    for d in dirs {
+        if !d.route && !d.page_html { continue; }
+        if d.rel.len == 0 { continue; }
+        let seg = split(d.rel, '/')[0];
+        if seg_kind(seg) == 0 { add(seg); }
+    }
+    for st in statics {
+        if st.url.len < 2 { continue; }
+        let rest = st.url[1..];
+        let slash = find(rest, "/");
+        add(if slash < 0 { rest } else { rest[..slash] });
+    }
+    sort(names) { a, b => compare(a, b) < 0 };
+    m.append("\nlet RESERVED_PREFIXES = [");
+    for n, i in names { if i > 0 { m.append(", "); } m.append("\""); lit(m, n); m.append("\""); }
+    m.append("];\nfn gweb::reserved_prefixes() -> const u8[:][:] { return RESERVED_PREFIXES; }\n");
+}
+
 fn gen_ops_decls(m: u8[>..]&) {
     m.append("\nlet ROUTES = \"");
     var first = true;
@@ -3314,6 +3345,7 @@ fn gen_main_body(m: u8[>..]&, test: bool) {
     gen_finish(m);
     m.append("\n");
     gen_dispatch(m);
+    gen_reserved(m);
     gen_ops_decls(m);
 }
 
