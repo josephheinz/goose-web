@@ -90,3 +90,17 @@ Checked and found working, with no change:
   ships. The fixture package uses nothing newer than 0.6 itself.
 - `FieldErrors` holds 16 errors. A page type with a long repeater and a widget form can reach it. The limit is silent
   (`dropped` is set).
+
+## Resolved for 1.0
+
+- **`send_file` HEAD.** A HEAD for a streamed file sends the head itself (`send_head`, with `Content-Type` and
+  `Content-Length`), so it is no longer chunked. `Last-Modified` and `If-Modified-Since` are in (an IMF-fixdate; a
+  request with `If-None-Match` ignores `If-Modified-Since`). Ranges are still not done: they need a `206` path in both the
+  in-memory and the streamed branch, and are left for a 1.x minor.
+- **A package knows its mount.** gweb writes `NAME::MOUNT` into a mounted package's namespace (`cms::MOUNT == "/admin"`,
+  `shop::MOUNT == "/admin/shop"`). A constant, not `gweb::mount(ctx)`: the matched route's package is the module's,
+  while the guard of the outer package needs its own. The fixture's guard and logout use it.
+- **`gweb.package` versions.** `gweb 1.0` accepts any 1.x; `MAJOR.MINOR.PATCH[-PRE]` is compared as a version.
+- **`FieldErrors`** holds 64. Past 63 the last slot becomes a form-level error and `dropped` is set.
+- Not done: the typed owner hook that would replace `state::ask(ctx, state::Msg.Cms { ... })`, and `const CACHE_KEY`.
+  Both are additions, so they can come in a 1.x minor.
