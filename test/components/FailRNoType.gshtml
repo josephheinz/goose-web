@@ -1,0 +1,5 @@
+<script goose>
+// expect: components/FailRNoType.gshtml:3: error: @state count needs a type: write @state var count: T = ...
+@state var count = 0;
+</script>
+<p>x</p>

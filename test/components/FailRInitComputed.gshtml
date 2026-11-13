@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRInitComputed.gshtml:3: error: @state a reads c, which is @computed; initializers read props and earlier @state only
+@state var a: i64 = c;
+@computed let c: i64 = 1;
+</script>
+<p>x</p>

@@ -1,0 +1,7 @@
+<script goose>
+// expect: components/FailRChildEventDup.gshtml:7: error: @RNestEventChild handles on:change twice
+// with: RNestEventChild
+@state var n: i64 = 0;
+fn picked(v: i64) { n = v; }
+</script>
+@RNestEventChild(start: 1, on:change="picked", on:change="picked")

@@ -1,0 +1,7 @@
+<script goose>
+// with: RCart
+// expect: components/FailRUseTwice.gshtml:5: error: @use RCart twice
+@use RCart;
+@use RCart;
+</script>
+<p>x</p>

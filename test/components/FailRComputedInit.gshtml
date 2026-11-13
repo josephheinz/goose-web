@@ -1,0 +1,5 @@
+<script goose>
+// expect: components/FailRComputedInit.gshtml:3: error: @computed c needs an initializer
+@computed let c: i64;
+</script>
+<p>x</p>

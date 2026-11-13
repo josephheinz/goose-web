@@ -21,7 +21,7 @@ Needs the matching goose-net release (spool mode, `net::Hub`, `Loop.detach`, chu
 - Behaviour change: every response now carries `X-Content-Type-Options`, `Referrer-Policy` and `X-Frame-Options` headers. Opt out with `WEB_SECURITY_HEADERS=0`.
 - Behaviour change: `web::login` rotates the CSRF token.
 - Apps that use sessions refuse to start in production without `WEB_SECRET`.
-- Behaviour change: `/_gw/` URLs are hashed. Pages now load `/_gw/gwi.<hash>.js` and `/_gw/Name.<hash>.js`; the plain names still work. Expected HTML in tests that render components changes.
+- `/_gw/` runtime modules stay at plain URLs (revalidated), so each module loads once.
 - Behaviour change: `gweb build`, `start` and `export` minify `public/**/*.css`. `gweb dev` does not. Pass `--no-minify` to keep the files as written.
 - Static files are served at a hashed URL too (`/css/site.3f9a1c2b.css`) with `Cache-Control: public, max-age=31536000, immutable`. The plain URL is unchanged. A hashed URL that equals another URL is a build error.
 - Text static files of 1 KB or more get a gzip variant at build time, sent to clients that accept it. gweb now links zlib.
@@ -43,6 +43,19 @@ Needs the matching goose-net release (spool mode, `net::Hub`, `Loop.detach`, chu
 - Background jobs and schedules: `app/jobs.goose`, `jobs::enqueue`, `jobs::every`, `jobs::cron`, `--no-schedule`.
 - Linux and Docker: a Dockerfile and `.dockerignore` for new apps, systemd units in `deploy/`, `test/linux.sh`, and `docs/DEPLOY.md`. Windows is supported through WSL2 and Docker only.
 - Behaviour change: `/__gweb/` is reserved; an `app/__gweb` folder is a build error.
+- Reactive components: `@prop`, `@state`, `@computed`, `@watch`. gweb finds which markup reads which names and, after a handler, updates only those text nodes, attribute lists and `{#if}`/`{#for}` blocks. Markup names state directly (`{count}`). A throwing handler leaves the page unchanged. `struct State` components still work.
+- Pages call reactive components with named props: `@Counter(start: 3, label: p.name)`.
+- Async handlers: `await http::get` and `http::post` with typed replies. A failure restores what the handler wrote and raises `gw:error`.
+- Lifecycle: `@mount`, `@unmount`, `@every(ms)`.
+- Events: `dblclick`, `keydown`, `keyup`, `focus`, `blur`, and modifiers `on:keydown.enter.prevent`, `stop`, `300ms`.
+- Nested components with props (`@Card(title: x, key: id)`) and child events (`@event fn`, `on:change="picked"`).
+- Shared stores: `stores/Name.gshtml` and `@use`, optionally kept in `localStorage`.
+- Client navigation: `<body gw-boost>`.
+- Transitions: `gw-enter` and `gw-leave`.
+- Server push, client half: `gw-sse="/events"`, and `web::sse_event`, `web::sse_fragment`, `web::sse_store`.
+- Warnings: `gen`, `build`, `start` and `test` take `--strict` and `--diagnostics json`. New codes: `unkeyed-for`, `unknown-attribute`, `unknown-event`, `child-key`, `prop-keyword`, `state-keyword`, `computed-keyword`, `computed-no-state`, `watch-no-state`, `state-unused`. `gweb dev` shows warnings in a corner box.
+- Runtime split: `gwi.js` is the 4 KB core. Fragments and each other feature are optional modules (`gwf`, `gwh`, `gwl`, `gwm`, `gwc`, `gwn`, `gws`, `gwt`, `gwe`), served only to sites that use them. Fragment pages now load `gwf.js` and `gwi.js`.
+- Changed: a component root with a text part gets `<!--g-->` markers in its HTML.
 
 ## v0.2.1
 

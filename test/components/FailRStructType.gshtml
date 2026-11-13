@@ -1,0 +1,5 @@
+<script goose>
+// expect: components/FailRStructType.gshtml:3: error: @state xs: 'Nope' is not a struct declared in this component
+@state var xs: Nope[>..<] = [];
+</script>
+<p>x</p>

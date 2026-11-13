@@ -1,0 +1,5 @@
+<script goose>
+// expect: components/FailRStateInit.gshtml:3: error: @state n needs an initializer
+@state var n: i64;
+</script>
+<p>x</p>

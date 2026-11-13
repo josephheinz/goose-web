@@ -1,0 +1,8 @@
+<script goose>
+// expect: components/FailREventMarkup.gshtml:8: error: an @event is sent from a handler, not from markup
+@state var n: i64 = 0;
+@event fn change(v: i64);
+fn go() { change(n); }
+</script>
+<button on:click="go">{n}</button>
+{change(n)}

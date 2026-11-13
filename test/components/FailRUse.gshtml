@@ -1,0 +1,5 @@
+<script goose>
+// expect: components/FailRUse.gshtml:3: error: @use Nope: there is no store named Nope (stores/Nope.gshtml)
+@use Nope;
+</script>
+<p>x</p>

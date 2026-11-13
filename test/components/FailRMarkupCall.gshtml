@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRMarkupCall.gshtml:6: error: markup cannot call 'bump', which changes state
+@state var a: i64 = 0;
+fn bump() -> i64 { a += 1; return a; }
+</script>
+<p>{bump()}</p>

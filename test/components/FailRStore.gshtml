@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRStore.gshtml:3: error: @store goes in a file of stores/
+@store(local: "x")
+@state var n: i64 = 0;
+</script>
+<p>x</p>

@@ -1,0 +1,9 @@
+<script goose>
+// expect: components/FailREventComputed.gshtml:6: error: an @event is sent from a handler, not from @computed d
+@state var n: i64 = 0;
+@event fn change(v: i64);
+fn go() { change(n); }
+@computed let d: i64 = pick(n);
+fn pick(v: i64) -> i64 { change(v); return v; }
+</script>
+<button on:click="go">{d}</button>

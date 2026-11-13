@@ -1,0 +1,10 @@
+<script goose>
+// A legacy component with modifiers and the other events.
+struct State { n: i64, last: u8[..20] }
+
+fn hit(s: State&) { s.n += 1; }
+fn key(s: State&, k: const u8[:]) { s.last = k; s.n += 1; }
+
+fn test_hit(s: State&) { hit(s); key(s, "enter"); }
+</script>
+<button on:click.prevent="hit">{s.n}</button><input on:keydown.enter.prevent='key("enter")' on:blur="hit"> {s.last}

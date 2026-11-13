@@ -156,6 +156,125 @@ function (`@shop::boot_json(props)`). The element's own opening tag is markup, s
 `<script src="{props.url}">` works. The old `{{ }}` syntax is an error that
 names its replacement.
 
+## Components
+
+A component is part of a page that runs in the browser, written in a subset of
+Goose (Addendum 3 E1-E8; reactivity in [Addendum 12](docs/DESIGN-ADDENDUM-12-REACTIVITY.md)).
+`components/Name.gshtml` at the project root (flat; `Name` is `[A-Z][A-Za-z0-9]*`).
+The script comes first; the markup follows.
+
+```
+<script goose>
+@prop const start: i64;
+@prop const label: u8[:];
+@prop const step: i64 = 1;
+@state var count: i64 = start;
+@computed let doubled: i64 = count * 2;
+@watch { log(label, count); }
+fn inc() { count += step; }
+fn test_inc() { inc(); inc(); }
+</script>
+<button on:click="inc">{label}: {count} x 2 = {doubled}</button>
+```
+
+A page calls it with named props: `@Counter(start: 3, label: p.name)`. A prop with a
+default may be left out; any other is an error (`@Counter needs prop start`).
+
+| Declaration | Meaning |
+|---|---|
+| `@prop const x: T;` or `= LITERAL;` | input from the parent, read-only. `i64`, `bool`, `u8[:]`, `u8[..N]`, a struct, `S[:]` |
+| `@state var x: T = e;` | local state; handlers assign it. `i64`, `bool`, `u8[..N]`, a struct, one `S[>..<]` (initializer `[]`) |
+| `@computed let x: T = e;` | derived; the framework keeps it current; code cannot assign it |
+| `@watch { }` | runs after the DOM updates, when state it reads changed |
+| `@mount { }`, `@unmount { }`, `@every(MS) { }` | lifecycle |
+| `@event fn name(params);` | an event for the parent |
+| `@use Store;` | read a shared store |
+
+- Types are required (`@state count needs a type`). The keyword is checked: `@prop` should be `const`,
+  `@state` `var`, `@computed` `let` (warnings, errors under `--strict`).
+- A component has at most 31 `@prop`, `@state` and `@computed` names. Names starting with `gw_` are reserved.
+  A parameter or local cannot reuse a reactive name.
+- Handlers are plain functions: `fn add(id: i64)`. Parameters are `i64`, `bool` or `const u8[:]`.
+  Tests are `fn test_*()` with no parameters; props are zero in tests.
+- Markup names state directly: `{count}`, `{#for t in items}`. `{#if}`, `{#for}`, `{#raw}`, `{#let}`
+  and `{ }` work as in `page.html`; `@slot()` and `@f()` do not.
+- gweb works out at build time which parts of the markup read which names. After a handler runs,
+  only those parts update: a text node, an element's attributes, or (inside `{#if}` and `{#for}`) one
+  block through keyed morph. Give list items `gw-key`, or the build warns `unkeyed-for`.
+- If a handler throws, the state goes back and the page is untouched. A `{e}` directly in `<textarea>` is
+  an error; use `bind:value`.
+
+**Events.** `on:EVENT="handler"` or `on:click="remove(t.id)"` (arguments are `i64`, `bool` or strings).
+Events: `click`, `dblclick`, `change`, `input`, `submit`, `keydown`, `keyup`, `focus`, `blur`; another
+name warns `unknown-event`. Modifiers follow the event: `on:keydown.enter.prevent="add"`. They are
+`prevent`, `stop`, a debounce `300ms` (1 to 10000; a bind still updates at once) and, on `keydown` and
+`keyup`, `enter`, `escape`, `space`, `tab`, `up`, `down`, `left`, `right`, `backspace`, `delete`.
+`bind:value="x"` and `bind:checked="x"` tie an input to a `@state` name. Modifiers load `/_gw/gwm.js`.
+
+**Fetch.** In a handler: `x = await http::get(url);`, `let r: T = await http::get(url);`,
+`await http::post(url, value);` or `x = await http::post(url, value);`. `await` goes only there and before
+calls of async functions, never in markup, a computed or an initializer. The reply is checked against the
+type of `x` or `r` (`i64`, `bool`, `u8[..N]`, a struct, `S[>..<]`). A refused status or a bad reply
+(`bad reply from /api/items at [2].title`) restores what that handler wrote, so an optimistic `push`
+disappears, and raises `gw:error`. POST sends JSON with the page's `_csrf` field as `X-CSRF-Token`. A literal
+url must match a `route.goose` with that method (`http::get: no route GET /api/x`). Routes answer with
+`web::json(res, http::Status.Ok); Name::gw_json(res.body, items);` (`gw_json` takes a struct or a `S[:]`).
+Loads `/_gw/gwh.js`.
+
+**Lifecycle.** `@mount` runs once when the component starts in the browser, `@unmount` when its root leaves
+the document (no `await`), `@every(MS)` every MS ms (16 or more) while mounted. A component with any of
+these, `@watch` or `@use` starts at load and runs its watches once first (`/_gw/gwl.js`); others wait for
+their first event.
+
+**Child components.** `@Card(title: it.name, n: count + 1, key: it.id)` inside a component. Props are `i64`,
+`bool` or text. `key:` sets `gw-key` on the child's root; in a `{#for}` without it, `child-key` warns. A
+parent update hands changed props to the live child, which keeps its own state (`/_gw/gwc.js`). The root is a
+`<div>`, so a call cannot sit inside `<p>`. A component cannot contain itself.
+
+**Child events.** The child declares `@event fn change(v: i64);` (params `i64`, `bool`, `const u8[:]`) and calls
+`change(qty);` from a handler or lifecycle block. The parent listens: `@Qty(start: 1, on:change="picked")`;
+`picked` is its function with the same parameters.
+
+**Stores.** `stores/Cart.gshtml` holds one `<script goose>` block (no markup) of `@state`, `@computed`, structs
+and functions; `@store(local: "cart")` first in it also keeps the state in `localStorage`. A component writes
+`@use Cart;`, reads `Cart::count` (`i64`, `bool` or `u8[..N]`; each takes one of its 31 names) and calls
+`Cart::add(id)` from a handler (a function that changes state and returns nothing). Components cannot assign
+store values. Every component that uses the store follows the same state (`/_gw/Cart.js`, `/_gw/gws.js`). A
+store has no `@prop`, `@watch`, `@mount`, `@unmount`, `@every`, `@event`, `@use` or `await`, and its name
+differs from every component's.
+
+**Legacy components.** A script with `struct State` instead of `@` declarations still works, calls
+`@Name(expr)` with one `Name::State` value, and re-renders the whole component on each event. Port them with
+Addendum 12 section 10; both styles in one file is an error.
+
+**Output.** `.gooseweb/Name.goose` keeps the source's lines, so compiler errors point at the `.gshtml`.
+`.gooseweb/_gw/Name.js` is the browser module: pretty under `gweb dev` (real names, a
+`// components/Name.gshtml:LINE` comment above each function), compact under `gweb build` and `gweb start`.
+The page gets the server render, the state as JSON, and `<script type="module" src="/_gw/Name.js">`. The core
+runtime is `client/gwi.js` in dev and `client/gwi.min.js` otherwise; optional modules (`gwf`, `gwh`, `gwl`,
+`gwm`, `gwc`, `gwn`, `gws`, `gwt`, `gwe`) are served only when a site uses them. All sit at `/_gw/` with ETags.
+
+**Client subset.** The script leaves out `match`, `enum`, floats, `loop`, `guard`, `defer`, blocks, closures,
+slices, `as`, bitwise operators, char literals, generics, globals and imports. Callable: the block's functions,
+`min`, `max`, `abs`, `str`, `web::has`, `push`, `remove_at`, `clear`, `append`, `.len`. gweb reports anything
+else as `components/Name.gshtml:LINE: error:`.
+
+**`gweb test`.** Runs each `test_*` function (and a zero case) as Goose and as JavaScript, pretty and compact,
+and compares the state and the render byte for byte. Needs `node`. It generates into `.gooseweb.test/`, so a
+built `.gooseweb/server` and a running `gweb dev` are untouched.
+
+**Tests of this package.** `test/components.sh` (parity fixtures in `test/components/`, `Fail*` per error,
+`Warn*` per warning), `test/runtime.sh` (minified modules are current and under their size ceilings, then the
+jsdom suites: `test/morph.sh`, `test/reactive.sh`, navigation, transitions, server push). jsdom installs into
+`~/.cache/goose-web-test` on first run.
+
+**Maintainers.** After editing a `client/gw*.js` file, run `client/build.sh` (esbuild 0.28.2 through `npx`, or
+`ESBUILD=/path/to/esbuild`); it writes `gw*.min.js` with the source's FNV-1a hash in its banner.
+
+**Limits.** A moved keyed element is reinserted, which reloads an iframe inside it. Integers above 2^53 lose
+precision in the browser. Component state lives in the page only. Handlers get no event data. See
+[ARCHITECTURE.md](docs/ARCHITECTURE.md) section 7.
+
 ## Commands
 
 ```
@@ -183,6 +302,22 @@ Server flags (`gweb start`, `.gooseweb/server`; env in `docs/DEPLOY.md`):
 --no-schedule         run jobs, fire no schedules
 --probe               GET /__gweb/ready on --port, exit 0 on 200 (the Docker HEALTHCHECK)
 ```
+
+The build prints warnings and goes on; `gweb dev` shows them in a small box at the bottom right.
+`gen`, `build`, `start` and `test` take `--strict`: any warning fails the run (`gweb: --strict: 2 warnings stop the build`).
+They also take `--diagnostics json`: stderr becomes JSON Lines, one `{"severity","file","line","code","message"}` object per diagnostic, plus `"detail"` for extra compiler lines.
+
+Warning codes:
+
+| Code | When |
+|---|---|
+| `prop-keyword`, `state-keyword`, `computed-keyword` | `@prop` should be `const`, `@state` `var`, `@computed` `let` |
+| `unknown-event` | `on:EVENT` outside the known events |
+| `unknown-attribute` | an attribute not in the HTML lists (`cli/html.goose`; `data-*`, `aria-*`, `gw-*`, custom elements and `<svg>` pass), or `onclick=` in a component |
+| `unkeyed-for` | `{#for}` over a list that can reorder or shrink, without `gw-key` |
+| `child-key` | a component call in `{#for}` without `key:` |
+| `computed-no-state`, `watch-no-state` | `@computed` or `@watch` that reads no state |
+| `state-unused` | a `@state` nothing reads |
 
 `gweb` finds the compiler in `$GOOSE`, else `goose` on `PATH`, and finds this
 package beside its own binary (or `$GOOSE_WEB_HOME`). A checkout older than
@@ -446,8 +581,8 @@ CSP is opt-in: `WEB_CSP=1` (or `--csp`), or `report-only` to watch without block
 
 A link or form marked `gw-target="NAME"` fetches its normal URL, and the server
 answers with only the `{#fragment NAME}` region of that page, without the
-layout. The runtime (`/_gw/gwi.js`, added by `gweb` to any page with a
-`gw-target`) morphs the reply into the element with `id="NAME"`. Without
+layout. The runtime (`/_gw/gwf.js` on any page with a `gw-target`, which
+imports `gwi.js`) morphs the reply into the element with `id="NAME"`. Without
 JavaScript the same link or form does a normal navigation and gets the whole
 page.
 
@@ -604,7 +739,7 @@ The demo is `../examples/shop/app/fragments` (`/fragments`, `/fragments/products
 Every file in `public/` is served at its plain URL and at a hashed one: `/css/site.css` and
 `/css/site.3f9a1c2b.css` (the first 8 hex digits of its ETag). The hashed URL sends
 `Cache-Control: public, max-age=31536000, immutable`; the plain URL sends `max-age=0, must-revalidate`
-and answers 304. `/_gw/` files follow the same rule, and pages link the hashed names.
+and answers 304. `/_gw/` runtime modules keep plain URLs and revalidate.
 
 ```html
 <link rel="stylesheet" href="@asset("/css/site.css")">      <!-- /css/site.3f9a1c2b.css -->
@@ -877,68 +1012,3 @@ formatting, HTML inside messages, and decimal plural operands.
 `../examples/shop` is the benchmark site: pages, a JSON API, a todo list in
 owner state, static files, and SQLite twins of the product routes under `/db`. Its Next.js twin is in
 `../goose-bench/next-shop`.
-
-## IMPLEMENTATION-NOTES: components
-
-Components are parts of a page that run in the browser, written in a subset of
-Goose (DESIGN-ADDENDUM-3, E1-E8 and follow-up 1).
-
-**File shape.** `components/Name.gshtml` at the project root (flat; `Name` is
-`[A-Z][A-Za-z0-9]*`). Line 1 is exactly `<script goose>`; a line that is
-exactly `</script>` ends the script; the markup follows and refers to the
-state as `s`.
-
-```
-<script goose>
-struct State { count: i64 }
-fn inc(s: State&) { s.count += 1; }
-fn test_basic(s: State&) { inc(s); inc(s); }
-</script>
-<button on:click="inc">Clicked {s.count} times</button>
-```
-
-- The script needs `struct State`. Types: `i64`, `bool`, `u8[..N]`, structs
-  of the block, and one `Name[>..<]` as the last field of `State`.
-- A handler is a function whose first parameter is `s: State&`. Markup calls
-  it with `on:click`, `on:change`, `on:input` or `on:submit`:
-  `on:click="remove(t.id)"`; arguments are `i64`, `bool` or strings.
-- `bind:value="field"` and `bind:checked="field"` tie an input to a direct
-  `State` field.
-- Templates work as in `page.html` (`{ }`, `{#raw }`, `{#if}`, `{#for}`,
-  `{#let}`), except `@Name()`, `@slot()` and `@f()`.
-- The client subset (E3) leaves out `match`, `enum`, floats, `loop`, `guard`,
-  `defer`, blocks, closures, slices, `as`, bitwise operators, char literals,
-  generics, globals and imports. Callable: the block's functions, `min`, `max`,
-  `abs`, `str`, `web::has`, `push`, `remove_at`, `clear`, `append`, and `.len`.
-  gweb reports anything else at its line, as `components/Name.gshtml:LINE: error:`.
-
-**Embedding.** `@Name(expr)` in any page, layout or not-found
-template; `expr` is a `Name::State`, usually from `load`. Every template
-imports every component, so `page.goose` can write `import Name;` and use
-`Name::State` in its `Props`. The page gets the server render, the state as
-JSON and `<script type="module" src="/_gw/Name.js">`.
-
-**Output.** `.gooseweb/Name.goose` keeps the source's lines (compiler errors
-point at the `.gshtml`), then `gw_check`, `gw_json` and `component`.
-`.gooseweb/_gw/Name.js` is the browser module: pretty under `gweb dev` (real
-names, a `// components/Name.gshtml:LINE` comment above each function), compact
-under `gweb build` and `gweb start`. The runtime is `client/gwi.js` in dev and
-`client/gwi.min.js` otherwise; both are served at `/_gw/` with ETags.
-
-**`gweb test`.** Runs each component's `test_*` functions (each takes only
-`s: State&`), plus a `zero` case, as Goose and as JavaScript, pretty and
-compact, and compares the state and the render byte for byte. Needs `node`. It generates into `.gooseweb.test/`, so a built
-`.gooseweb/server` and a running `gweb dev` are untouched.
-goose-web's own suite is `test/components.sh` (parity components in
-`test/components/*.gshtml`, one `Fail*.gshtml` per error message, and a check that
-`client/gwi.min.js` is current). `test/morph.sh` runs the DOM morph under jsdom (it installs jsdom
-into `~/.cache/goose-web-test` on its first run).
-
-**Maintainers.** After editing `client/gwi.js`, run `client/build.sh` (esbuild
-0.28.2 through `npx`, or `ESBUILD=/path/to/esbuild`); it writes
-`client/gwi.min.js` with the source's FNV-1a hash in its banner.
-
-**Limits (v1).** A moved keyed element is reinserted, which reloads an iframe
-inside it. Integers above 2^53 lose precision in the browser. Component
-state lives in the page only. Handlers get no event data.
-

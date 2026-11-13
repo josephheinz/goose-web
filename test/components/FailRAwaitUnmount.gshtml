@@ -1,0 +1,7 @@
+<script goose>
+// expect: components/FailRAwaitUnmount.gshtml:5: error: @unmount cannot await
+@state var u: u8[..8] = "/a";
+@state var m: i64 = 0;
+@unmount { m = await http::get(u); }
+</script>
+<p>x</p>

@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRAwaitInit.gshtml:4: error: @state n cannot await
+@state var u: u8[..8] = "/a";
+@state var n: i64 = await http::get(u);
+</script>
+<p>x</p>

@@ -9,6 +9,7 @@ namespace component;
 
 import std;
 import tscan;
+import html;
 
 enum Kind { Int, Bool, Str, Struct, Array }
 
@@ -35,9 +36,76 @@ struct SDef { name: u8[..64], line: i64, first: i64, n: i64 }
 struct Param { name: u8[..64], ty: Ty, mref: bool, tok: i64, var_id: i64 }
 
 struct FnDef { name: u8[..64], tok: i64, line: i64, first: i64, n: i64, ret: Ty, body: i64,
-               js: u8[..72], handler: bool, test: bool }
+               js: u8[..72], handler: bool, test: bool,
+               event: bool,       // reactive: `@event fn name(params);`, no body
+               r: i64, w: i64,    // reactive: the bits it reads and writes, through calls
+               is_async: bool,    // reactive: awaits, or calls one that does
+               emits: bool,       // reactive: sends an @event, or calls a function that does
+               st: u8[..64],      // a store function as a component sees it (`Cart::add`): the store, else empty
+               sf: u8[..64] }     // and the function's own name
 
 struct Var { name: u8[..64], ty: Ty, js: u8[..72] }
+
+// ---------------------------------------------------------------- reactive model (Addendum 12)
+
+let R_PROP = 0;
+let R_STATE = 1;
+let R_COMPUTED = 2;
+let R_STORE = 3;     // `Store::name` of a @use'd store (Addendum 12 section 7.7): read-only here, a copy of the store's value
+
+// A T_ARRAY whose cap is RO is `S[:]`, a read-only array (props only).
+let RO = 1;
+
+// One @prop, @state or @computed. bit is the declaration index; mask is 1 << bit.
+// init: the default (@prop, -1 when required), the initializer (@state, @computed), or -1;
+// an array @state has init -1 (its initializer is []). r: the bits the initializer reads, through calls.
+// order: for a computed, its place in rorder.
+// ts, te: the type's text in the source (offsets), as the Goose structs write it.
+struct RDecl { kind: i64, name: u8[..64], tok: i64, line: i64, ty: Ty, keyword_tok: i64, init: i64,
+               bit: i64, mask: i64, r: i64, order: i64, ts: i64, te: i64,
+               st: u8[..64], sn: u8[..64] }    // R_STORE: the store and its name for the value; name is `Store$sn`
+
+let RB_WATCH = 0;
+let RB_MOUNT = 1;
+let RB_UNMOUNT = 2;
+let RB_EVERY = 3;
+
+// @watch, @mount, @unmount or @every(ms) with its block. r and w as for a function. lb: the block's `{` token.
+struct RBlock { kind: i64, tok: i64, line: i64, ms: i64, body: i64, r: i64, w: i64, is_async: bool, lb: i64, emits: bool }
+
+struct RUse { name: u8[..64], line: i64, base: i64, n: i64,   // base, n: its R_STORE declarations
+              s: i64, e: i64 }                               // the statement's text in the source
+
+let RM_TEXT = 0;
+let RM_IF = 1;
+let RM_FOR = 2;
+let RM_LET = 3;
+let RM_RAW = 4;
+let RM_ON = 5;
+let RM_BIND = 6;
+
+// A markup expression: the bits it reads and writes (bind: writes), by line.
+struct RMk { kind: i64, line: i64, r: i64, w: i64 }
+
+// A part of the markup (Addendum 12 section 3.2): a dynamic place outside every block. kind: PK_*; r: the bits it
+// reads; pcode[s..e]: its value as JavaScript (see emit_part_value); simple: pcode holds one string expression,
+// otherwise statements that append to the accumulator.
+let PK_TEXT = 0;
+let PK_ATTR = 1;
+let PK_BLOCK = 2;
+let PK_CHILD = 3;     // @Child(...): the marker is before the child's root; the value is its props object
+struct RPart { kind: i64, r: i64, s: i64, e: i64, simple: bool, kids: bool }   // kids: a block that holds child calls
+
+// What the scanner of scan_parts found: a dynamic open tag (s: its `<`, ne: after its name, e: its `>`),
+// an HTML comment, or the content of a <textarea> (s, e; ne is s).
+let PS_TAG = 0;
+let PS_COMMENT = 1;
+let PS_TEXTAREA = 2;
+struct PSpan { kind: i64, s: i64, ne: i64, e: i64 }
+
+// A rewrite of the Goose output: text[at..at + len] becomes `text` (an insertion when len is 0).
+// An edit never spans a line break (edit_range splits one that does).
+struct Edit { at: i64, len: i64, text: u8[..512] }
 
 // Tokens: offsets into text.
 let K_EOF = 0;
@@ -61,6 +129,7 @@ let E_FINIT = 9;     // tok: a
 let E_UN = 10;
 let E_BIN = 11;
 let E_IF = 12;       // if a { b } else { c }
+let E_AWAIT = 13;    // await a: a is the call; c: 1 when it stands where check_await allows it
 let S_LET = 20;      // tok: name, a: init, b: 1 with a type (ty), c: 1 for var
 let S_ASSIGN = 21;   // a tok b
 let S_INCDEC = 22;
@@ -85,6 +154,8 @@ let B_PUSH = -7;
 let B_REMOVE_AT = -8;
 let B_CLEAR = -9;
 let B_APPEND = -10;
+let B_HTTP_GET = -11;   // http::get(u): tv is its stub, ref2 its decoder (reactive, awaited)
+let B_HTTP_POST = -12;  // http::post(u, v)
 
 struct Node {
     k: i64, tok: i64, line: i64,
@@ -96,7 +167,7 @@ struct Node {
 }
 
 // The runtime helpers, in the order of the import line.
-let HELPERS = ["component", "esc", "at", "set", "rm", "blen", "cap", "idiv", "imod"];
+let HELPERS = ["component", "esc", "at", "set", "rm", "blen", "cap", "idiv", "imod", "swap", "T", "A", "B"];
 let H_COMPONENT = 0;
 let H_ESC = 1;
 let H_AT = 2;
@@ -106,6 +177,11 @@ let H_BLEN = 5;
 let H_CAP = 6;
 let H_IDIV = 7;
 let H_IMOD = 8;
+let H_SWAP = 9;
+let H_T = 10;
+let H_A = 11;
+let H_B = 12;
+let HN = 13;     // helpers
 
 let JS_RESERVED = ["await", "break", "case", "catch", "class", "const", "continue", "debugger", "default",
                    "delete", "do", "else", "enum", "export", "extends", "false", "finally", "for", "function",
@@ -115,8 +191,8 @@ let JS_RESERVED = ["await", "break", "case", "catch", "class", "const", "continu
 
 // Names a pretty-mode JavaScript name may not take: the imports, the
 // module's own functions and the globals the output uses.
-let JS_TAKEN = ["component", "esc", "at", "set", "rm", "blen", "cap", "idiv", "imod", "render", "zero",
-                "Math", "JSON", "structuredClone", "undefined", "NaN", "Infinity", "Object", "String", "Number"];
+let JS_TAKEN = ["component", "esc", "at", "set", "rm", "blen", "cap", "idiv", "imod", "swap", "T", "A", "B",
+                "render", "zero", "update", "watch", "init", "Math", "JSON", "structuredClone", "undefined", "NaN", "Infinity", "Object", "String", "Number"];
 
 let GOOSE_KW = ["import", "namespace", "struct", "enum", "type", "fn", "thread_fn", "export", "simd", "recursive",
                 "let", "var", "extern", "const", "pad", "reusable", "if", "else", "while", "for", "in", "loop",
@@ -152,16 +228,26 @@ var ind = 0;
 var fcount = 0;                // the next compact name in the current function
 var mbase = 0;                 // the first compact name a function's locals may take
 var tmp_count = 0;             // pretty loop temporaries: $1, $2, ...
-var helper_used: bool[9];
-var helper_js: u8[..16][9];
+var helper_used: bool[13];
+var helper_js: u8[..16][13];
 var render_js: u8[..8];
 var zero_js: u8[..8];
+var u_js: u8[..8];             // reactive: update, watch and init at module level
+var w_js: u8[..8];
+var i_js: u8[..8];
+var s_js: u8[..72];            // the names the protocol parameters have in every function: state,
+var c_js: u8[..72];            // the change handle, the mask, props (and anchors), root and force
+var m_js: u8[..72];
+var p_js: u8[..72];
+var root_js: u8[..72];
+var f_js: u8[..72];
+var pbase = 0;                 // compact: the first name a reactive function's locals may take
 var ty_ref = false;            // parse_type: the type ended with &
 var ty_const = false;          // parse_type: the type started with const
 var ty_s = 0;                  // parse_type: its first token
 var ty_e = 0;                  // parse_type: the token after it
 
-struct Open { kind: u8, line: i64, mark: i64 }
+struct Open { kind: u8, line: i64, mark: i64, part: i64 }
 var opens: Open[>..<];
 var pend: u8[>..];             // markup text not yet written to the JS
 var cat_open = false;          // an `o += ...` statement is open in the JS
@@ -172,6 +258,69 @@ var gtext: u8[>..];            // markup text not yet written to the Goose line
 var gline: u8[>..];            // the Goose line being built
 var chk: u8[>..];              // the body of gw_check
 var raw_st = 0;                // tscan's <script>/<style> state across markup lines
+
+var reactive = false;          // the script has @ declarations (set by parse_script)
+var store_mode = false;        // compiling stores/Name.gshtml (set by compile_store)
+var store_next = false;        // compile_store asks the next compile() for store mode
+var store_local: u8[..64];     // @store(local: "key"): the localStorage key, or empty
+var store_at = -1;             // the tokens of the @store line: first and last
+var store_end = -1;
+var rdecls: RDecl[>..<];
+var rblocks: RBlock[>..<];
+var ruses: RUse[>..<];
+var rorder: i64[>..<];         // the computeds, each after the computeds it reads
+var rmarks: RMk[>..<];
+var mk_r = 0;                  // every bit the markup reads
+var rw_r = 0;                  // the R/W walker's accumulators
+var rw_w = 0;
+var rw_wide = 0;               // the bits written other than by push and clear (a list that can reorder or shrink)
+var rw_soft = false;           // inside the target of push or clear
+var rw_rep = false;            // the walker reports errors (the last pass only)
+var rw_ctx = 0;                // 0 function or block, 1 computed, 2 @state initializer, 3 markup
+var rw_ctx_name: u8[..64];
+var warns_buf: u8[>..];        // reactive warnings, in the warns format
+var edits: Edit[>..<];         // the Goose rewrites of 3.1, in the order they were recorded
+var props_buf: u8[>..];        // `name\tdefault source\n` for each @prop, for gweb
+var parts: RPart[>..<];        // reactive markup parts, in document order
+var pcode: u8[>..];            // their values
+var letcode: u8[>..];          // the top-level {#let} statements, for update
+var pspans: PSpan[>..<];       // scan_parts, in source order
+var ptag = 0;                  // the dynamic tag whose events come next
+var ptag_phase = 0;            // 0: before its `<`, 1: before the end of its name, 2: before its `>`
+var pr_open = -1;              // the attribute or block part collecting its R and code
+var pr_acc = 0;                // the bits read since it opened
+var pr_ra = 0;                 // where its code starts in js
+var pr_flow = 0;
+var n_flow = 0;                // statements other than text pieces written so far: {#if}, {#for}, {#let}
+var mk_after = 0;              // the source offset after the `}` of the expression being compiled
+var var_r: i64[>..<];          // the bits a {#let} variable reads, by variable
+var ev_types: u8[>..];         // the on: event types used, space separated
+
+// A typed fetch (Addendum 12 section 7.3): the Goose stub of one http::get or http::post, its reply and value types.
+struct Stub { post: bool, reply: Ty, val: Ty }
+var stubs: Stub[>..<];
+var decs: Ty[>..<];            // the reply decoders of the JavaScript module (roots first, then the structs they reach)
+var dec_bits = 0;              // the scalar checks the decoders use: 1 int, 2 bool, 4 string, 8 object, 16 array
+var http_urls_buf: u8[>..];    // `METHOD\tLINE\turl\n` for each string-literal url, for gweb's route check
+var mods_use = 0;              // 1: the module imports gwm.js (on: modifiers)
+var trans_use = 0;             // 1: the markup has gw-enter or gw-leave (the module imports gwt.js)
+var life_use = 0;              // 1: the module imports life from gwl.js
+var http_use = 0;              // 1: http::get is used, 2: http::post
+var await_ctx: u8[..96];       // the place an await may not stand in (markup, a computed), or empty
+var rw_noasync: u8[..96];      // the same for calls of async functions; empty where they are allowed
+var rw_async = false;          // the walker met an await or a call of an async function
+var rw_emits = false;          // the walker met an @event call or a call of a function that sends one
+var rw_awaited = -1;           // the call node of the await being walked
+
+// The components of this gweb run (child calls, Addendum 12 section 7.5), kept across compile() calls: gweb
+// compiles a component after the components it calls. done: 0 not compiled yet, 1 legacy, 2 reactive.
+struct RegC { name: u8[..64], done: i64 }
+var reg: RegC[>..<];
+var reg_props: u8[>..];        // `Name\tprop\tt\tcap\tdefault in Goose\tdefault in JavaScript\n`, each @prop of each reactive component
+var reg_events: u8[>..];       // `Name\tevent\ttype codes (1 i64, 2 bool, 3 text), comma separated\n`, each @event of each reactive component
+var reg_stores: u8[>..];       // `S\tStore\tname\tt\tcap\n` for each @state and @computed of each store, `F\tStore\tfn\tmask\n` for each function a component may call
+var kids: u8[..64][>..<];      // the components this module calls (its imports)
+var child_use = 0;             // gwc.js helpers the module imports: 1 H (render), 2 Q (top-level part), 4 M (block)
 
 // ---------------------------------------------------------------- errors
 
@@ -525,7 +674,8 @@ fn parse_type() -> Ty {
         r.name = tok_name(pos);
         pos += 1;
         if is("[") {
-            if tok_is(pos + 1, ">") && tok_is(pos + 2, "..") && tok_is(pos + 3, "<") && tok_is(pos + 4, "]") { pos += 5; r.t = T_ARRAY; }
+            if reactive && tok_is(pos + 1, ":") && tok_is(pos + 2, "]") { pos += 3; r.t = T_ARRAY; r.cap = RO; }
+            else if tok_is(pos + 1, ">") && tok_is(pos + 2, "..") && tok_is(pos + 3, "<") && tok_is(pos + 4, "]") { pos += 5; r.t = T_ARRAY; }
             else if tok_is(pos + 1, ">") && tok_is(pos + 2, "..") && tok_is(pos + 3, "]") { pos += 4; r.t = T_ARRAY; }
             else { pos += 1; ty_e = pos; type_bad(); r.t = T_ERR; return r; }
         }
@@ -582,6 +732,20 @@ recursive fn parse_binary(level: i64, ns: bool) -> i64 {
 }
 
 recursive fn parse_unary(ns: bool) -> i64 {
+    if store_mode && is("await") {
+        report(toks[pos].line, "a store function cannot await");
+        perr = true;
+        return -1;
+    }
+    if reactive && is("await") {
+        let n = new_node(E_AWAIT, pos);
+        pos += 1;
+        let a = parse_unary(ns);
+        if perr { return -1; }
+        nodes[n].a = a;
+        nodes[n].t1 = nodes[a].t1;
+        return n;
+    }
     if is("!") || is("-") {
         let op = pos;
         pos += 1;
@@ -744,6 +908,14 @@ recursive fn parse_primary(ns: bool) -> i64 {
     pos += 1;
     if is("::") {
         pos += 1;
+        // Store::name, the value of a @use'd store (d: the token of its name).
+        if reactive && at_k(K_ID) && !tok_is(pos + 1, "(") {
+            let sn = new_node(E_NAME, name);
+            nodes[sn].d = pos;
+            nodes[sn].t1 = pos;
+            pos += 1;
+            return sn;
+        }
         if !at_k(K_ID) || !tok_is(pos + 1, "(") { bad_tok(pos - 1); return -1; }
         let n = new_node(E_CALL, name);
         nodes[n].d = pos;
@@ -970,9 +1142,11 @@ fn check_reserved(tok: i64) {
         format(m, "'", name, "' is a reserved word in JavaScript; rename it");
         report(t.line, m);
     }
+    if reactive && starts_with(name, "gw_") { report(t.line, "names starting with gw_ are reserved"); }
 }
 
-fn parse_fn() {
+// bodyless: `@event fn name(params);`
+fn parse_fn(bodyless: bool) {
     let line = toks[pos].line;
     pos += 1;
     if !at_k(K_ID) || is_keyword(pos) { bad_tok(pos); return; }
@@ -982,7 +1156,8 @@ fn parse_fn() {
     if !expect("(") { return; }
     let fi = fns.len;
     fns.push(FnDef { name: tok_name(name_tok), tok: name_tok, line: line, first: params.len, n: 0,
-                     ret: ty(T_VOID), body: -1, js: "", handler: false, test: false });
+                     ret: ty(T_VOID), body: -1, js: "", handler: false, test: false,
+                     event: false, r: 0, w: 0, is_async: false, emits: false, st: "", sf: "" });
     check_reserved(name_tok);
     while !is(")") {
         if !at_k(K_ID) || is_keyword(pos) { bad_tok(pos); return; }
@@ -995,6 +1170,7 @@ fn parse_fn() {
         if (t.t == T_INT || t.t == T_BOOL) && !ty_ref && !ty_const { ok = true; }
         if t.t == T_STR && t.cap == 0 && ty_const && !ty_ref { ok = true; }
         if t.t == T_STRUCT && ty_ref && (ty_const || t.name == "State") { ok = true; }
+        if reactive && t.t == T_STRUCT && ty_ref && t.name != "State" { ok = true; }
         if !ok { type_bad(); return; }
         params.push(Param { name: tok_name(pn), ty: t, mref: ty_ref && !ty_const, tok: pn, var_id: -1 });
         fns[fi].n += 1;
@@ -1008,9 +1184,321 @@ fn parse_fn() {
         if is(",") { bad_tok(pos); return; }
         fns[fi].ret = t;
     }
+    if bodyless {
+        expect(";");
+        return;
+    }
     let b = parse_block();
     if perr { return; }
     fns[fi].body = b;
+}
+
+// ---------------------------------------------------------------- reactive declarations
+
+fn find_rdecl(name: const u8[:]) -> i64 {
+    for d, i in rdecls { if d.name == name { return i; } }
+    return -1;
+}
+
+fn rmark(k: i64) -> u8[..16] {
+    var r: u8[..16] = "";
+    if k == R_PROP { r.append("@prop"); }
+    else if k == R_STATE { r.append("@state"); }
+    else if k == R_STORE { r.append("store value"); }
+    else { r.append("@computed"); }
+    return r;
+}
+
+fn warn_buf(code: const u8[:], line: i64, msg: const u8[:]) {
+    format(warns_buf, code, "\t", src_path, ":", line, ": warning: ", msg, "\n");
+}
+
+// Does the script have a top-level @? Then it is reactive.
+fn detect_reactive() {
+    reactive = false;
+    var depth = 0;
+    var k = pos;
+    while toks[k].k != K_EOF {
+        if toks[k].k == K_OP {
+            if tok_is(k, "{") { depth += 1; }
+            else if tok_is(k, "}") { depth -= 1; }
+            else if depth == 0 && tok_is(k, "@") { reactive = true; }
+        }
+        k += 1;
+    }
+}
+
+fn skip_to_semi() {
+    while !at_k(K_EOF) && !is(";") && !is("}") { pos += 1; }
+    if is(";") { pos += 1; }
+}
+
+fn is_literal(n: i64) -> bool {
+    let k = nodes[n].k;
+    if k == E_INT || k == E_BOOL || k == E_STR { return true; }
+    return k == E_UN && tok_is(nodes[n].tok, "-") && nodes[nodes[n].a].k == E_INT;
+}
+
+// pos is at the word after @ (prop, state or computed).
+fn parse_rdecl(kind: i64) {
+    pos += 1;
+    if !is("const") && !is("let") && !is("var") { bad_tok(pos); return; }
+    let kw = pos;
+    pos += 1;
+    if !at_k(K_ID) || is_keyword(pos) { bad_tok(pos); return; }
+    let nt = pos;
+    pos += 1;
+    let line = toks[nt].line;
+    let di = rdecls.len;
+    var mask = 1;
+    for k in min(di, 62) { mask *= 2; }
+    rdecls.push(RDecl { kind: kind, name: tok_name(nt), tok: nt, line: line, ty: ty(T_ERR), keyword_tok: kw,
+                        init: -1, bit: di, mask: mask, r: 0, order: -1, ts: 0, te: 0, st: "", sn: "" });
+    let name = tok_name(nt);
+    let mk = rmark(kind);
+    check_reserved(nt);
+    if find_rdecl(name) < di {
+        var m: u8[>..] = [];
+        format(m, "'", name, "' is declared twice as a reactive name");
+        report(line, m);
+    }
+    if di == 31 { report(line, "a component may have at most 31 @prop, @state and @computed names"); }
+    let kwtext = text[toks[kw].s..toks[kw].e];
+    if kind == R_PROP && kwtext != "const" { warn_buf("prop-keyword", toks[kw].line, "a prop should be const"); }
+    if kind == R_COMPUTED && kwtext != "let" { warn_buf("computed-keyword", toks[kw].line, "a computed value should be let"); }
+    if kind == R_STATE && kwtext != "var" { warn_buf("state-keyword", toks[kw].line, "state should be var"); }
+    if !is(":") {
+        var m: u8[>..] = [];
+        format(m, mk, " ", name, " needs a type: write ", mk, " ", kwtext, " ", name, ": T");
+        if kind != R_PROP { m.append(" = ..."); }
+        report(line, m);
+        skip_to_semi();
+        return;
+    }
+    pos += 1;
+    let t = parse_type();
+    if perr { return; }
+    var ok = !ty_ref && !ty_const;
+    var allowed: u8[..80] = "";
+    if kind == R_PROP {
+        ok = ok && (t.t == T_INT || t.t == T_BOOL || t.t == T_STR || t.t == T_STRUCT || (t.t == T_ARRAY && t.cap == RO));
+        allowed.append("i64, bool, u8[:], u8[..N], a struct or S[:]");
+    } else if kind == R_STATE {
+        ok = ok && (t.t == T_INT || t.t == T_BOOL || (t.t == T_STR && t.cap > 0) || t.t == T_STRUCT || (t.t == T_ARRAY && t.cap != RO));
+        allowed.append("i64, bool, u8[..N], a struct or S[>..<]");
+    } else {
+        ok = ok && (t.t == T_INT || t.t == T_BOOL || (t.t == T_STR && t.cap > 0) || t.t == T_STRUCT);
+        allowed.append("i64, bool, u8[..N] or a struct");
+    }
+    if !ok {
+        var m: u8[>..] = [];
+        format(m, mk, " ", name, " cannot have type ", text[toks[ty_s].s..toks[ty_e - 1].e], "; allowed: ", allowed);
+        report(toks[ty_s].line, m);
+        skip_to_semi();
+        return;
+    }
+    rdecls[di].ty = t;
+    rdecls[di].ts = toks[ty_s].s;
+    rdecls[di].te = toks[ty_e - 1].e;
+    if kind == R_STATE && t.t == T_ARRAY {
+        for j in di {
+            if rdecls[j].kind == R_STATE && rdecls[j].ty.t == T_ARRAY { report(line, "a component may hold one array @state"); }
+        }
+    }
+    if kind == R_PROP {
+        if accept(";") { return; }
+        if !expect("=") { return; }
+        let e = parse_expr(false);
+        if perr { return; }
+        rdecls[di].init = e;
+        if t.t == T_STRUCT || t.t == T_ARRAY {
+            var m: u8[>..] = [];
+            format(m, mk, " ", name, " cannot have a default; it is required at every call site");
+            report(line, m);
+        } else if !is_literal(e) {
+            var m: u8[>..] = [];
+            format(m, mk, " ", name, ": a default must be a literal (a whole number, true, false or a string)");
+            report(line, m);
+        }
+        expect(";");
+        return;
+    }
+    if !is("=") {
+        var m: u8[>..] = [];
+        format(m, mk, " ", name, " needs an initializer");
+        report(line, m);
+        skip_to_semi();
+        return;
+    }
+    pos += 1;
+    if t.t == T_ARRAY {
+        if is("[") && tok_is(pos + 1, "]") { pos += 2; }
+        else {
+            var m: u8[>..] = [];
+            format(m, mk, " ", name, " is an array; its initializer must be []");
+            report(line, m);
+            skip_to_semi();
+            return;
+        }
+        expect(";");
+        return;
+    }
+    let e = parse_expr(false);
+    if perr { return; }
+    rdecls[di].init = e;
+    expect(";");
+}
+
+// @watch { }, @mount { }, @unmount { }, @every(MS) { }; pos is at the word after @.
+fn parse_rblock() {
+    let line = toks[pos].line;
+    var kind = RB_WATCH;
+    if is("mount") { kind = RB_MOUNT; }
+    else if is("unmount") { kind = RB_UNMOUNT; }
+    else if is("every") { kind = RB_EVERY; }
+    let tk = pos;
+    pos += 1;
+    var ms = 0;
+    if kind == RB_EVERY {
+        var good = false;
+        if is("(") {
+            pos += 1;
+            if at_k(K_INT) { ms = int_value(pos); pos += 1; }
+            if ms >= 16 && is(")") { good = true; }
+        }
+        if !good { report(line, "@every needs a whole number of milliseconds, at least 16"); }
+        while !at_k(K_EOF) && !is("{") && !is(";") { pos += 1; }
+    }
+    if !is("{") { bad_tok(pos); return; }
+    let lb = pos;
+    let b = parse_block();
+    if perr { return; }
+    rblocks.push(RBlock { kind: kind, tok: tk, line: line, ms: ms, body: b, r: 0, w: 0, is_async: false, lb: lb, emits: false });
+}
+
+// @event fn name(params);  pos is at the word after @.
+fn parse_revent() {
+    pos += 1;
+    if !is("fn") { bad_tok(pos); return; }
+    let before = fns.len;
+    parse_fn(true);
+    if fns.len > before { fns[fns.len - 1].event = true; }
+}
+
+// @use Store; gives the component an R_STORE declaration (one bit, a copy in State) for each scalar @state and
+// @computed of the store, and a function entry (Store::name, body -1) for each function of the store that writes its
+// state and returns nothing. The store was compiled before this component, and left its names in reg_stores.
+fn parse_ruse() {
+    let line = toks[pos].line;
+    let from = toks[pos - 1].s;
+    pos += 1;
+    if !at_k(K_ID) || is_keyword(pos) { bad_tok(pos); return; }
+    let sname = tok_name(pos);
+    pos += 1;
+    expect(";");
+    for u in ruses {
+        if u.name == sname {
+            var m: u8[>..] = [];
+            format(m, "@use ", sname, " twice");
+            report(line, m);
+            return;
+        }
+    }
+    var found = false;
+    for l in split(reg_stores, '\n') { if fld(l, 0) == "U" && fld(l, 1) == sname { found = true; } }
+    if !found {
+        var m: u8[>..] = [];
+        format(m, "@use ", sname, ": there is no store named ", sname, " (stores/", sname, ".gshtml)");
+        report(line, m);
+        return;
+    }
+    let base = rdecls.len;
+    var n = 0;
+    var sbits: i64[>..] = [];     // the store's bit of each copy, by copy
+    for l in split(reg_stores, '\n') {
+        if fld(l, 0) != "S" || fld(l, 1) != sname { continue; }
+        let t, tok = parse_int(fld(l, 3));
+        let cap, cok = parse_int(fld(l, 4));
+        let sb, bok = parse_int(fld(l, 5));
+        let di = rdecls.len;
+        var mask = 1;
+        for k in min(di, 62) { mask *= 2; }
+        var d = RDecl { kind: R_STORE, name: "", tok: 0, line: line, ty: ty(t), keyword_tok: 0, init: -1, bit: di, mask: mask,
+                        r: 0, order: -1, ts: 0, te: 0, st: "", sn: "" };
+        d.ty.cap = cap;
+        d.st.append(sname);
+        d.sn.append(fld(l, 2));
+        format(d.name, "gw_", sname, "_", d.sn);
+        rdecls.push(d);
+        sbits.push(sb);
+        n += 1;
+        if di == 31 { report(line, "a component may have at most 31 @prop, @state and @computed names (a @use'd store adds one for each of its names)"); }
+    }
+    ruses.push(RUse { name: sname, line: line, base: base, n: n, s: from, e: toks[pos - 1].e });
+    for l in split(reg_stores, '\n') {
+        if fld(l, 0) != "F" || fld(l, 1) != sname { continue; }
+        let sw, wok = parse_int(fld(l, 3));
+        var wm = 0;
+        for j in n { if ((sw >> sbits[j]) & 1) != 0 { wm = wm | rdecls[base + j].mask; } }
+        var nm: u8[..64] = "";
+        format(nm, sname, "::", fld(l, 2));
+        fns.push(FnDef { name: nm, tok: 0, line: line, first: params.len, n: 0, ret: ty(T_VOID), body: -1, js: "",
+                         handler: false, test: false, event: false, r: 0, w: wm, is_async: false, emits: false, st: "", sf: "" });
+        fns[fns.len - 1].st.append(sname);
+        fns[fns.len - 1].sf.append(fld(l, 2));
+    }
+}
+
+// @store(local: "key") must be the first thing in a store's script.
+fn parse_rstore(at: i64) {
+    let line = toks[at].line;
+    if !store_mode { report(line, "@store goes in a file of stores/"); perr = true; return; }
+    if at != 0 { report(line, "@store goes first in the script"); perr = true; return; }
+    pos += 1;
+    if !expect("(") { return; }
+    if !is("local") { bad_tok(pos); return; }
+    pos += 1;
+    if !expect(":") { return; }
+    if !at_k(K_STR) { bad_tok(pos); return; }
+    let kt = pos;
+    pos += 1;
+    if !expect(")") { return; }
+    store_at = at;
+    store_end = pos - 1;
+    if is(";") { store_end = pos; pos += 1; }
+    let key = text[toks[kt].s + 1..toks[kt].e - 1];
+    var good = key.len > 0 && key.len <= 48 && toks[kt].e - toks[kt].s >= 3 && text[toks[kt].s] == '"';
+    for c in key { if c < 33 || c > 126 || c == '"' || c == '\\' || c == '<' || c == '>' || c == '&' { good = false; } }
+    if !good { report(line, "@store(local: \"key\") needs a key of 1 to 48 plain characters"); return; }
+    store_local.append(key);
+}
+
+// pos is at the @.
+fn parse_at() {
+    let at = pos;
+    pos += 1;
+    if !at_k(K_ID) { bad_tok(pos); return; }
+    if is("store") { parse_rstore(at); return; }
+    if store_mode && (is("prop") || is("watch") || is("mount") || is("unmount") || is("every") || is("event") || is("use")) {
+        var m: u8[>..] = [];
+        format(m, "a store cannot have @", text[toks[pos].s..toks[pos].e],
+               if is("prop") { "; it has no props" } else if is("event") { "; it has no parent" } else if is("use") { "; stores do not use stores" } else { "; it has no lifecycle" });
+        report(toks[pos].line, m);
+        perr = true;
+        return;
+    }
+    if is("prop") { parse_rdecl(R_PROP); }
+    else if is("state") { parse_rdecl(R_STATE); }
+    else if is("computed") { parse_rdecl(R_COMPUTED); }
+    else if is("watch") || is("mount") || is("unmount") || is("every") { parse_rblock(); }
+    else if is("event") { parse_revent(); }
+    else if is("use") { parse_ruse(); }
+    else {
+        var m: u8[>..] = [];
+        format(m, "unknown declaration '@", text[toks[pos].s..toks[pos].e], "'");
+        report(toks[pos].line, m);
+        perr = true;
+    }
 }
 
 fn skip_decl(start: i64) {
@@ -1035,11 +1523,14 @@ fn skip_decl(start: i64) {
 fn parse_script(first_line: i64, close: i64) -> bool {
     let before = nerr;
     pos = tokenize(line_start[first_line], line_start[close], first_line + 1);
+    detect_reactive();
+    if store_mode { reactive = true; }
     while !at_k(K_EOF) {
         let start = pos;
         perr = false;
         if is("struct") { parse_struct(); }
-        else if is("fn") { parse_fn(); }
+        else if is("fn") { parse_fn(false); }
+        else if reactive && is("@") { parse_at(); }
         else if is("let") || is("var") || is("const") { bad_what(toks[pos].line, "global"); }
         else { bad_tok(pos); }
         if perr {
@@ -1098,10 +1589,31 @@ fn begin_fn() {
     used.clear();
     fcount = mbase;
     tmp_count = 0;
+    // A reactive function's protocol names are taken: locals do not reuse them.
+    if reactive {
+        if compact { fcount = pbase; }
+        else {
+            used.push(s_js);
+            used.push(c_js);
+            used.push(m_js);
+            used.push(p_js);
+            used.push(root_js);
+            used.push(f_js);
+        }
+    }
 }
 
 fn declare(tok: i64, t: Ty) -> i64 {
     check_reserved(tok);
+    if reactive {
+        let d = find_rdecl(text[toks[tok].s..toks[tok].e]);
+        if d >= 0 {
+            var m: u8[>..] = [];
+            let mk = rmark(rdecls[d].kind);
+            format(m, "'", rdecls[d].name, "' is ", mk, "; a local cannot reuse the name");
+            report(toks[tok].line, m);
+        }
+    }
     var v = Var { name: tok_name(tok), ty: t, js: "" };
     if compact { v.js.append(next_short()); } else { v.js = pick_name(v.name); }
     vars.push(v);
@@ -1128,25 +1640,76 @@ fn lookup(tok: i64) -> i64 {
     return -1;
 }
 
+// A name for a pretty-mode protocol parameter: base, or base$N when something takes it.
+fn free_name(base: const u8[:]) -> u8[..72] {
+    var c: u8[..72] = "";
+    c.append(base);
+    var k = 1;
+    while name_taken(c) {
+        c.clear();
+        format(c, base, "$", k);
+        k += 1;
+    }
+    return c;
+}
+
 fn assign_module_names() {
-    for h in 9 {
+    for h in HN {
         helper_js[h].clear();
         if compact { helper_js[h].append(short_name(h)); } else { helper_js[h].append(HELPERS[h]); }
         helper_used[h] = false;
     }
     render_js.clear();
     zero_js.clear();
-    if compact { render_js.append(short_name(9)); zero_js.append(short_name(10)); }
-    else { render_js.append("render"); zero_js.append("zero"); }
+    u_js.clear();
+    w_js.clear();
+    i_js.clear();
+    if compact {
+        render_js.append(short_name(13));
+        zero_js.append(short_name(14));
+        u_js.append(short_name(15));
+        w_js.append(short_name(16));
+        i_js.append(short_name(17));
+    } else {
+        render_js.append("render");
+        zero_js.append("zero");
+        u_js.append("update");
+        w_js.append("watch");
+        i_js.append("init");
+    }
     for &f, i in fns {
         f.js.clear();
-        if compact { f.js.append(short_name(11 + i)); }
+        if compact { f.js.append(short_name(18 + i)); }
         else {
             f.js.append(f.name);
             if in_list(f.js, JS_TAKEN) { f.js.push('$'); }
         }
     }
-    mbase = 11 + fns.len;
+    mbase = 18 + fns.len;
+    used.clear();
+    if compact {
+        fcount = mbase;
+        s_js.clear();
+        s_js.append(next_short());
+        c_js.clear();
+        c_js.append(next_short());
+        m_js.clear();
+        m_js.append(next_short());
+        p_js.clear();
+        p_js.append(next_short());
+        root_js.clear();
+        root_js.append(next_short());
+        f_js.clear();
+        f_js.append(next_short());
+        pbase = fcount;
+    } else {
+        s_js = free_name("s");
+        c_js = free_name("c");
+        m_js = free_name("m");
+        p_js = free_name("p");
+        root_js = free_name("root");
+        f_js = free_name("f");
+    }
 }
 
 // ---------------------------------------------------------------- types of expressions
@@ -1224,14 +1787,59 @@ fn type_call(n: i64) {
     nodes[n].ty = res;
 }
 
+// The store named name that this component @use'd (its index in ruses), or -1.
+fn use_of(name: const u8[:]) -> i64 {
+    for u, i in ruses { if u.name == name { return i; } }
+    return -1;
+}
+
+// A Store:: reference that cannot be taken: the store is not used, or is not a store at all. True when reported.
+fn store_ref_bad(n: i64) -> bool {
+    let sname = tok_name(nodes[n].tok);
+    var known = false;
+    for l in split(reg_stores, '\n') { if fld(l, 0) == "U" && fld(l, 1) == sname { known = true; } }
+    if !known { return false; }
+    var m: u8[>..] = [];
+    if store_mode { format(m, "a store cannot use another store (", sname, "::", tok_name(nodes[n].d), ")"); }
+    else if use_of(sname) < 0 { format(m, sname, "::", tok_name(nodes[n].d), ": write @use ", sname, "; first"); }
+    if m.len == 0 { return false; }
+    report(nodes[n].line, m);
+    return true;
+}
+
 recursive fn check_expr(n: i64) {
     let k = nodes[n].k;
     let line = nodes[n].line;
     if k == E_INT { nodes[n].ty = ty(T_INT); return; }
     if k == E_BOOL { nodes[n].ty = ty(T_BOOL); return; }
     if k == E_STR { nodes[n].ty = ty(T_STR); return; }
+    if k == E_NAME && nodes[n].d >= 0 {
+        // Store::name: the component's copy of the store's value.
+        if store_ref_bad(n) { return; }
+        var full: u8[..64] = "";
+        format(full, "gw_", tok_name(nodes[n].tok), "_", tok_name(nodes[n].d));
+        let d = find_rdecl(full);
+        if d < 0 {
+            var m: u8[>..] = [];
+            format(m, tok_name(nodes[n].tok), " has no value ", tok_name(nodes[n].d),
+                   " to read here (a component reads the i64, bool and u8[..N] @state and @computed of a store)");
+            report(line, m);
+            return;
+        }
+        nodes[n].ref2 = d;
+        nodes[n].ty = rdecls[d].ty;
+        return;
+    }
     if k == E_NAME {
         let v = lookup(nodes[n].tok);
+        if v < 0 && reactive {
+            let d = find_rdecl(text[toks[nodes[n].tok].s..toks[nodes[n].tok].e]);
+            if d >= 0 { nodes[n].ref2 = d; nodes[n].ty = rdecls[d].ty; return; }
+            if tok_is(nodes[n].tok, "s") {
+                report(line, "'s' does not exist in a reactive component; name the state directly");
+                return;
+            }
+        }
         if v < 0 { cannot_type(line); return; }
         nodes[n].ref = v;
         nodes[n].ty = vars[v].ty;
@@ -1269,7 +1877,28 @@ recursive fn check_expr(n: i64) {
     if k == E_CALL {
         let tk = nodes[n].tok;
         if nodes[n].d >= 0 {
-            if tok_is(tk, "web") && tok_is(nodes[n].d, "has") { nodes[n].ref = B_HAS; }
+            if store_ref_bad(n) { return; }
+            if reactive && use_of(tok_name(tk)) >= 0 {
+                // Store::fn(...): a function of the store that writes its state.
+                var q: u8[..160] = "";
+                format(q, tok_name(tk), "::", tok_name(nodes[n].d));
+                let fi = find_fn(q);
+                if fi < 0 {
+                    var m: u8[>..] = [];
+                    format(m, tok_name(tk), " has no function ", tok_name(nodes[n].d),
+                           " that a component can call (one that changes the store's state and returns nothing)");
+                    report(line, m);
+                    return;
+                }
+                nodes[n].ref = fi;
+            }
+            else if tok_is(tk, "web") && tok_is(nodes[n].d, "has") { nodes[n].ref = B_HAS; }
+            else if reactive && is_http(n) {
+                var m: u8[>..] = [];
+                format(m, "http::", tok_name(nodes[n].d), " needs await");
+                report(line, m);
+                return;
+            }
             else {
                 var q: u8[..160] = "";
                 q.append(tok_name(tk));
@@ -1349,6 +1978,16 @@ recursive fn check_expr(n: i64) {
         nodes[n].ty = ty(if lv == 3 { T_BOOL } else { T_INT });
         return;
     }
+    if k == E_AWAIT {
+        if await_ctx.len > 0 {
+            var m: u8[>..] = [];
+            format(m, await_ctx, " cannot await");
+            report(line, m);
+        } else {
+            report(line, "await only goes at the start of a statement, after x =, or after let x: T =");
+        }
+        return;
+    }
     if k == E_IF {
         let c = nodes[n].a;
         let a = nodes[n].b;
@@ -1411,8 +2050,138 @@ fn check_for_head(n: i64) {
     }
 }
 
+// http::get or http::post.
+fn is_http(c: i64) -> bool {
+    return nodes[c].d >= 0 && tok_is(nodes[c].tok, "http") && (tok_is(nodes[c].d, "get") || tok_is(nodes[c].d, "post"));
+}
+
+// A type a reply decodes into: i64, bool, u8[..N], a struct, or an array of struct.
+fn reply_ok(t: const Ty&) -> bool {
+    if t.t == T_INT || t.t == T_BOOL { return true; }
+    if t.t == T_STR { return t.cap > 0; }
+    if t.t == T_STRUCT { return find_struct(t.name) >= 0; }
+    if t.t == T_ARRAY { return t.cap != RO && find_struct(t.name) >= 0; }
+    return false;
+}
+
+fn same_reply(a: const Ty&, b: const Ty&) -> bool {
+    return same_ty(a, b) && (a.t != T_STR || a.cap == b.cap);
+}
+
+// The stub of one kind of http call: gw_get_K or gw_post_K in the Goose tail.
+fn stub_of(post: bool, reply: const Ty&, val: const Ty&) -> i64 {
+    for st, i in stubs {
+        if st.post == post && same_reply(st.reply, reply) && same_ty(st.val, val) { return i; }
+    }
+    stubs.push(Stub { post: post, reply: reply, val: val });
+    return stubs.len - 1;
+}
+
+// The decoder of a reply type in the JavaScript module.
+fn dec_of(t: const Ty&) -> i64 {
+    for d, i in decs { if same_reply(d, t) { return i; } }
+    decs.push(t);
+    return decs.len - 1;
+}
+
+// aw is an `await`: want is the type the result goes into (T_VOID: nowhere). Sets the types of aw and of its call.
+// The call is http::get(u), http::post(u, v) or a call of an async function.
+fn check_await(aw: i64, want: const Ty&) {
+    let line = nodes[aw].line;
+    let c = nodes[aw].a;
+    if nodes[c].k != E_CALL {
+        report(line, "await goes before http::get(u), http::post(u, v) or a call of an async function");
+        return;
+    }
+    if !is_http(c) {
+        check_expr(c);
+        if nodes[c].ty.t == T_ERR { return; }
+        if nodes[c].ref < 0 {
+            report(line, "await goes before http::get(u), http::post(u, v) or a call of an async function");
+            return;
+        }
+        if want.t != T_VOID && nodes[c].ty.t == T_VOID { cannot_type(line); return; }
+        nodes[aw].ty = nodes[c].ty;
+        nodes[aw].c = 1;
+        return;
+    }
+    let post = tok_is(nodes[c].d, "post");
+    nodes[c].ref = if post { B_HTTP_POST } else { B_HTTP_GET };
+    var a = nodes[c].a;
+    var bad = false;
+    while a >= 0 {
+        check_expr(a);
+        if nodes[a].ty.t == T_ERR { bad = true; }
+        a = nodes[a].next;
+    }
+    if bad { return; }
+    var what: u8[>..] = [];
+    format(what, "http::", tok_name(nodes[c].d));
+    let na = args_count(c);
+    if na != (if post { 2 } else { 1 }) {
+        var m: u8[>..] = [];
+        if post { format(m, what, " takes a url and a value: http::post(u, v)"); } else { format(m, what, " takes a url: http::get(u)"); }
+        report(line, m);
+        return;
+    }
+    if arg_t(c, 0) != T_STR {
+        var m: u8[>..] = [];
+        format(m, what, " needs a string url");
+        report(line, m);
+        return;
+    }
+    var val = ty(T_VOID);
+    if post {
+        val = nodes[arg_at(c, 1)].ty;
+        if val.t == T_VOID || val.t == T_ERR {
+            report(line, "http::post sends an i64, bool, string, struct or array of struct");
+            return;
+        }
+    }
+    if want.t == T_ERR { return; }
+    if want.t == T_VOID && !post {
+        report(line, "http::get needs a place for its reply: x = await http::get(u);");
+        return;
+    }
+    if want.t != T_VOID && !reply_ok(want) {
+        var m: u8[>..] = [];
+        format(m, "await ", what, " decodes into i64, bool, u8[..N], a struct or S[>..<]");
+        report(line, m);
+        return;
+    }
+    nodes[c].ty = want;
+    nodes[aw].ty = want;
+    nodes[aw].c = 1;
+    nodes[c].tv = stub_of(post, want, val);
+    if want.t != T_VOID { nodes[c].ref2 = dec_of(want); }
+    http_use = http_use | (if post { 2 } else { 1 });
+    let u = arg_at(c, 0);
+    if nodes[u].k == E_STR {
+        let lit = text[toks[nodes[u].tok].s + 1..toks[nodes[u].tok].e - 1];
+        if find(lit, "\\") < 0 { format(http_urls_buf, if post { "POST" } else { "GET" }, "\t", line, "\t", lit, "\n"); }
+    }
+}
+
 fn check_let(n: i64) {
     let a = nodes[n].a;
+    if nodes[a].k == E_AWAIT {
+        var t = ty(T_ERR);
+        if nodes[n].b == 1 { t = nodes[n].ty; }
+        let c = nodes[a].a;
+        if nodes[n].b != 1 && nodes[c].k == E_CALL && is_http(c) {
+            var m: u8[>..] = [];
+            format(m, "let ", tok_name(nodes[n].tok), " needs a type: await http::", tok_name(nodes[c].d), "(...) decodes into it");
+            report(nodes[n].line, m);
+            nodes[n].ref = declare(nodes[n].tok, t);
+            return;
+        }
+        var wt = ty(T_STRUCT);
+        if nodes[n].b == 1 { wt = t; }
+        check_await(a, wt);
+        if nodes[n].b != 1 { t = nodes[a].ty; nodes[n].ty = t; }
+        nodes[n].ref = declare(nodes[n].tok, t);
+        return;
+    }
     check_expr(a);
     var t = nodes[a].ty;
     if t.t == T_VOID { cannot_type(nodes[n].line); t = ty(T_ERR); }
@@ -1438,6 +2207,12 @@ recursive fn check_stmt(n: i64) {
         let a = nodes[n].a;
         let b = nodes[n].b;
         check_expr(a);
+        if nodes[b].k == E_AWAIT {
+            if !is_lvalue(a) { cannot_type(line); return; }
+            if !tok_is(nodes[n].tok, "=") { report(line, "await goes after = only"); return; }
+            check_await(b, nodes[a].ty);
+            return;
+        }
         check_expr(b);
         if !is_lvalue(a) { cannot_type(line); return; }
         let ta = nodes[a].ty.t;
@@ -1485,18 +2260,613 @@ recursive fn check_stmt(n: i64) {
         return;
     }
     if k == S_EXPR {
-        check_expr(nodes[n].a);
+        let e = nodes[n].a;
+        if nodes[e].k == E_AWAIT { let none = ty(T_VOID); check_await(e, none); return; }
+        check_expr(e);
         return;
     }
 }
 
 fn check_fn(fi: i64) {
+    if reactive && fns[fi].event { return; }
     begin_fn();
     let f = fns[fi];
     for p in f.first..f.first + f.n {
         params[p].var_id = declare(params[p].tok, params[p].ty);
     }
     if f.body >= 0 { check_block(f.body); }
+}
+
+// ---------------------------------------------------------------- reads, writes (Addendum 12, section 2)
+
+// Which reactive name is node n, or -1 (a local, or something else).
+fn rdecl_of(n: i64) -> i64 {
+    if nodes[n].k == E_NAME { return nodes[n].ref2; }
+    return -1;
+}
+
+fn rw_read(d: i64) { rw_r = rw_r | rdecls[d].mask; }
+
+fn rw_write(d: i64, line: i64) {
+    rw_w = rw_w | rdecls[d].mask;
+    if !rw_soft { rw_wide = rw_wide | rdecls[d].mask; }
+    if !rw_rep { return; }
+    let dc = rdecls[d];
+    var m: u8[>..] = [];
+    if dc.kind == R_PROP {
+        format(m, "@prop ", dc.name, " is const; a component cannot change its props");
+        report(line, m);
+    } else if dc.kind == R_COMPUTED {
+        format(m, "@computed ", dc.name, " is set by the framework; component code cannot assign it");
+        report(line, m);
+    } else if dc.kind == R_STORE {
+        format(m, dc.st, "::", dc.sn, " belongs to the store; only a function of ", dc.st, " changes it");
+        report(line, m);
+    }
+}
+
+// A target: a name, or a field or element inside one. compound: the old value is read too.
+recursive fn rw_lvalue(n: i64, compound: bool, line: i64) {
+    if n < 0 { return; }
+    let k = nodes[n].k;
+    if k == E_NAME {
+        let d = nodes[n].ref2;
+        if d >= 0 {
+            if compound { rw_read(d); }
+            rw_write(d, line);
+        }
+        return;
+    }
+    if k == E_FIELD { rw_lvalue(nodes[n].a, compound, line); return; }
+    if k == E_INDEX {
+        rw_lvalue(nodes[n].a, compound, line);
+        rw_expr(nodes[n].b);
+        return;
+    }
+    rw_expr(n);
+}
+
+recursive fn rw_expr(n: i64) {
+    if n < 0 { return; }
+    let k = nodes[n].k;
+    let line = nodes[n].line;
+    if k == E_NAME {
+        if nodes[n].ref2 >= 0 { rw_read(nodes[n].ref2); }
+        else if nodes[n].ref >= 0 && nodes[n].ref < var_r.len { rw_r = rw_r | var_r[nodes[n].ref]; }
+        return;
+    }
+    if k == E_FIELD { rw_expr(nodes[n].a); return; }
+    if k == E_INDEX { rw_expr(nodes[n].a); rw_expr(nodes[n].b); return; }
+    if k == E_UN { rw_expr(nodes[n].a); return; }
+    if k == E_BIN { rw_expr(nodes[n].a); rw_expr(nodes[n].b); return; }
+    if k == E_IF { rw_expr(nodes[n].a); rw_expr(nodes[n].b); rw_expr(nodes[n].c); return; }
+    if k == E_SLIT {
+        var f = nodes[n].a;
+        while f >= 0 { rw_expr(nodes[f].a); f = nodes[f].next; }
+        return;
+    }
+    if k == E_AWAIT {
+        rw_async = true;
+        if rw_rep && rw_noasync.len > 0 && nodes[n].c == 1 {
+            var m: u8[>..] = [];
+            format(m, rw_noasync, " cannot await");
+            report(line, m);
+        }
+        rw_awaited = nodes[n].a;
+        rw_expr(nodes[n].a);
+        return;
+    }
+    if k != E_CALL { return; }
+    let r = nodes[n].ref;
+    var a = nodes[n].a;
+    if r >= 0 && fns[r].is_async {
+        rw_async = true;
+        if rw_rep {
+            var m: u8[>..] = [];
+            if rw_noasync.len > 0 { format(m, rw_noasync, " cannot call '", fns[r].name, "', which is async"); }
+            else if rw_awaited != n { format(m, "'", fns[r].name, "' is async: write await ", fns[r].name, "()"); }
+            if m.len > 0 { report(line, m); }
+        }
+    } else if r >= 0 && rw_awaited == n && rw_rep {
+        var m: u8[>..] = [];
+        format(m, "'", fns[r].name, "' is not async: remove await");
+        report(line, m);
+    }
+    if r >= 0 && (fns[r].event || fns[r].emits) {
+        rw_emits = true;
+        if rw_rep {
+            var nm: u8[>..] = [];
+            if rw_ctx == 1 { format(nm, "@computed ", rw_ctx_name); }
+            else if rw_ctx == 2 { format(nm, "@state ", rw_ctx_name); }
+            else if rw_ctx == 3 { nm.append("markup"); }
+            else if rw_noasync == "@watch" { nm.append("@watch"); }
+            if nm.len > 0 {
+                var m: u8[>..] = [];
+                format(m, "an @event is sent from a handler, not from ", nm);
+                report(line, m);
+            }
+        }
+    }
+    if r >= 0 {
+        rw_r = rw_r | fns[r].r;
+        rw_w = rw_w | fns[r].w;
+        if rw_rep && rw_ctx != 0 && fns[r].w != 0 {
+            var m: u8[>..] = [];
+            if rw_ctx == 1 { format(m, "@computed ", rw_ctx_name, " cannot call '", fns[r].name, "', which changes state"); }
+            else if rw_ctx == 2 { format(m, "@state ", rw_ctx_name, " cannot call '", fns[r].name, "', which changes state"); }
+            else { format(m, "markup cannot call '", fns[r].name, "', which changes state"); }
+            report(line, m);
+        }
+        var i = 0;
+        while a >= 0 {
+            if i < fns[r].n && params[fns[r].first + i].mref { rw_lvalue(a, false, line); } else { rw_expr(a); }
+            i += 1;
+            a = nodes[a].next;
+        }
+        return;
+    }
+    if r == B_PUSH || r == B_REMOVE_AT || r == B_CLEAR || r == B_APPEND {
+        rw_soft = r == B_PUSH || r == B_CLEAR;
+        rw_lvalue(a, false, line);
+        rw_soft = false;
+        if a >= 0 { a = nodes[a].next; }
+    }
+    while a >= 0 { rw_expr(a); a = nodes[a].next; }
+}
+
+recursive fn rw_stmt(n: i64) {
+    let k = nodes[n].k;
+    let line = nodes[n].line;
+    if k == S_LET { rw_expr(nodes[n].a); return; }
+    if k == S_ASSIGN {
+        rw_expr(nodes[n].b);
+        rw_lvalue(nodes[n].a, !tok_is(nodes[n].tok, "="), line);
+        return;
+    }
+    if k == S_INCDEC { rw_lvalue(nodes[n].a, true, line); return; }
+    if k == S_IF {
+        rw_expr(nodes[n].a);
+        rw_block(nodes[n].b);
+        let e = nodes[n].c;
+        if e >= 0 {
+            if nodes[e].k == S_IF { rw_stmt(e); } else { rw_block(e); }
+        }
+        return;
+    }
+    if k == S_FOR {
+        rw_expr(nodes[n].a);
+        rw_expr(nodes[n].b);
+        rw_block(nodes[n].c);
+        return;
+    }
+    if k == S_WHILE { rw_expr(nodes[n].a); rw_block(nodes[n].c); return; }
+    if k == S_RETURN || k == S_RESULT || k == S_EXPR { rw_expr(nodes[n].a); return; }
+}
+
+recursive fn rw_block(n: i64) {
+    if n < 0 { return; }
+    var s = nodes[n].a;
+    while s >= 0 {
+        rw_stmt(s);
+        s = nodes[s].next;
+    }
+}
+
+// R and W of every function, to a fixed point over the call graph. No errors.
+fn rw_fixpoint() {
+    rw_rep = false;
+    rw_ctx = 0;
+    rw_noasync.clear();
+    var changed = true;
+    while changed {
+        changed = false;
+        for i in fns.len {
+            if fns[i].body < 0 { continue; }
+            rw_r = 0;
+            rw_w = 0;
+            rw_async = false;
+            rw_emits = false;
+            rw_block(fns[i].body);
+            if rw_r != fns[i].r || rw_w != fns[i].w || rw_async != fns[i].is_async || rw_emits != fns[i].emits {
+                fns[i].r = rw_r;
+                fns[i].w = rw_w;
+                fns[i].is_async = rw_async;
+                fns[i].emits = rw_emits;
+                changed = true;
+            }
+        }
+    }
+}
+
+// The computeds in dependency order into rorder, or the cycle error.
+fn order_computeds() {
+    rorder.clear();
+    var cmask = 0;
+    var total = 0;
+    for i in rdecls.len {
+        if rdecls[i].kind == R_COMPUTED { cmask += rdecls[i].mask; total += 1; }
+    }
+    var placed = 0;
+    while rorder.len < total {
+        var progress = false;
+        for i in rdecls.len {
+            if rdecls[i].kind != R_COMPUTED || (placed & rdecls[i].mask) != 0 { continue; }
+            let pending = cmask - placed;
+            if (rdecls[i].r & pending) != 0 { continue; }
+            rorder.push(i);
+            rdecls[i].order = rorder.len - 1;
+            placed += rdecls[i].mask;
+            progress = true;
+        }
+        if progress { continue; }
+        // A cycle: follow the dependencies from the first computed left until one repeats.
+        var cur = -1;
+        for i in rdecls.len {
+            if cur < 0 && rdecls[i].kind == R_COMPUTED && (placed & rdecls[i].mask) == 0 { cur = i; }
+        }
+        var seen = 0;
+        loop {
+            seen = seen | rdecls[cur].mask;
+            let deps = rdecls[cur].r & (cmask - placed);
+            var nxt = -1;
+            for j in rdecls.len {
+                if nxt < 0 && (deps & rdecls[j].mask) != 0 { nxt = j; }
+            }
+            if nxt < 0 { return; }
+            if (seen & rdecls[nxt].mask) != 0 {
+                var m: u8[>..] = [];
+                if nxt == cur { format(m, "@computed ", rdecls[cur].name, " depends on itself"); }
+                else {
+                    let lo = min(cur, nxt);
+                    let hi = max(cur, nxt);
+                    format(m, "@computed ", rdecls[lo].name, " and ", rdecls[hi].name, " depend on each other");
+                }
+                report(rdecls[min(cur, nxt)].line, m);
+                return;
+            }
+            cur = nxt;
+        }
+    }
+}
+
+// After check_fn: initializers, blocks, then R/W and the rules built on them.
+fn check_reactive() {
+    for i in rdecls.len {
+        let init = rdecls[i].init;
+        if init < 0 { continue; }
+        begin_fn();
+        await_ctx.clear();
+        format(await_ctx, rmark(rdecls[i].kind), " ", rdecls[i].name);
+        check_expr(init);
+        await_ctx.clear();
+        let got = nodes[init].ty;
+        let want = rdecls[i].ty;
+        if got.t == T_ERR || want.t == T_ERR { continue; }
+        if !same_ty(got, want) {
+            var m: u8[>..] = [];
+            let mk = rmark(rdecls[i].kind);
+            format(m, "the ", if rdecls[i].kind == R_PROP { "default" } else { "initializer" }, " of ", mk, " ", rdecls[i].name, " has the wrong type");
+            report(nodes[init].line, m);
+        }
+    }
+    for i in rblocks.len {
+        begin_fn();
+        check_block(rblocks[i].body);
+    }
+    rw_fixpoint();
+    rw_rep = true;
+    for i in fns.len {
+        if fns[i].body < 0 { continue; }
+        rw_ctx = 0;
+        rw_r = 0;
+        rw_w = 0;
+        rw_async = false;
+        rw_noasync.clear();
+        rw_block(fns[i].body);
+        if fns[i].test && fns[i].is_async {
+            var m: u8[>..] = [];
+            format(m, "'", fns[i].name, "' is async; a test runs without a network");
+            report(fns[i].line, m);
+        }
+    }
+    for i in rblocks.len {
+        rw_ctx = 0;
+        rw_r = 0;
+        rw_w = 0;
+        rw_noasync.clear();
+        // @mount and @every run through run() like a handler, so they may await; the others may not.
+        if rblocks[i].kind == RB_WATCH { rw_noasync.append("@watch"); }
+        else if rblocks[i].kind == RB_UNMOUNT { rw_noasync.append("@unmount"); }
+        rw_async = false;
+        rw_emits = false;
+        rw_block(rblocks[i].body);
+        rblocks[i].emits = rw_emits;
+        rblocks[i].is_async = rw_async;
+        rblocks[i].r = rw_r;
+        rblocks[i].w = rw_w;
+    }
+    for i in rdecls.len {
+        let init = rdecls[i].init;
+        if init < 0 || rdecls[i].kind == R_PROP { continue; }
+        rw_ctx = if rdecls[i].kind == R_STATE { 2 } else { 1 };
+        rw_ctx_name.clear();
+        rw_ctx_name.append(rdecls[i].name);
+        rw_noasync.clear();
+        format(rw_noasync, rmark(rdecls[i].kind), " ", rdecls[i].name);
+        rw_r = 0;
+        rw_w = 0;
+        rw_expr(init);
+        rdecls[i].r = rw_r;
+        if rdecls[i].kind != R_STATE { continue; }
+        for j in rdecls.len {
+            if (rw_r & rdecls[j].mask) == 0 { continue; }
+            var m: u8[>..] = [];
+            if rdecls[j].kind == R_STATE && j >= i {
+                format(m, "@state ", rdecls[i].name, " reads ", rdecls[j].name, ", which is declared after it");
+            } else if rdecls[j].kind == R_COMPUTED {
+                format(m, "@state ", rdecls[i].name, " reads ", rdecls[j].name, ", which is @computed; initializers read props and earlier @state only");
+            }
+            if m.len > 0 { report(rdecls[i].line, m); }
+        }
+    }
+    rw_rep = false;
+    rw_noasync.clear();
+    order_computeds();
+}
+
+// A markup expression: its R and W, and the rule that markup does not call a function that writes.
+fn rw_mark(n: i64, line: i64, kind: i64) {
+    if n < 0 { return; }
+    rw_rep = true;
+    rw_ctx = 3;
+    rw_r = 0;
+    rw_w = 0;
+    rw_noasync.clear();
+    rw_noasync.append("markup");
+    rw_expr(n);
+    rw_noasync.clear();
+    rw_rep = false;
+    rmarks.push(RMk { kind: kind, line: line, r: rw_r, w: rw_w });
+    mk_r = mk_r | rw_r;
+    if pr_open >= 0 { pr_acc = pr_acc | rw_r; }
+}
+
+// After the parse: the rules that need every declaration, and the marks on functions.
+fn check_rmodel() {
+    let si = find_struct("State");
+    if si >= 0 { report(structs[si].line, "a component uses either @ declarations or struct State, not both"); }
+    let pi = find_struct("Props");
+    if pi >= 0 { report(structs[pi].line, "a reactive component cannot declare struct Props; gweb writes it from the @prop lines"); }
+    for i in rdecls.len {
+        let t = rdecls[i].ty;
+        if (t.t == T_STRUCT || t.t == T_ARRAY) && find_struct(t.name) < 0 {
+            var m: u8[>..] = [];
+            let mk = rmark(rdecls[i].kind);
+            format(m, mk, " ", rdecls[i].name, ": '", t.name, "' is not a struct declared in this component");
+            report(rdecls[i].line, m);
+            rdecls[i].ty = ty(T_ERR);
+        }
+    }
+    for &f in fns {
+        f.test = starts_with(f.name, "test_") && f.n == 0 && !f.event;
+        f.handler = !f.test && !f.event;
+    }
+}
+
+// ---------------------------------------------------------------- Goose rewrites (Addendum 12, section 3.1)
+
+fn takes_state(fi: i64) -> bool { (fns[fi].r | fns[fi].w) != 0 }
+
+// The JavaScript of a reactive function: (s, c, ...) when it writes or awaits, (s, ...) when it only reads, (...) else.
+fn js_takes_s(fi: i64) -> bool { return takes_state(fi) || fns[fi].is_async || fns[fi].emits; }
+fn js_takes_c(fi: i64) -> bool { return fns[fi].w != 0 || fns[fi].is_async || fns[fi].emits; }
+
+// The name of the typed-fetch imports and of reply decoder k, in the output's style.
+fn http_name(post: bool) -> u8[..16] {
+    var r: u8[..16] = "";
+    r.append(if compact { if post { "$p" } else { "$g" } } else { if post { "gw_post" } else { "gw_get" } });
+    return r;
+}
+
+fn dec_name(k: i64) -> u8[..16] {
+    var r: u8[..16] = "";
+    format(r, if compact { "$" } else { "gw_d" }, k);
+    return r;
+}
+
+// One scalar check of a decoder: i int, b bool, s string, o object, a array.
+fn dec_check(c: u8) -> u8[..16] {
+    var r: u8[..16] = "";
+    r.append(if compact { "$" } else { "gw_" });
+    r.push(c);
+    return r;
+}
+
+fn add_edit(at: i64, len: i64, repl: const u8[:]) {
+    var e = Edit { at: at, len: len, text: "" };
+    e.text.append(repl);
+    edits.push(e);
+}
+
+// text[s..e] becomes repl. The pieces on later lines become empty, so the line count stays.
+fn edit_range(s: i64, e: i64, repl: const u8[:]) {
+    var a = s;
+    var first = true;
+    for p in s..e + 1 {
+        if p < e && text[p] != '\n' { continue; }
+        if first { add_edit(a, p - a, repl); first = false; }
+        else if p > a { add_edit(a, p - a, ""); }
+        a = p + 1;
+    }
+}
+
+// text[s..e] with the edits inside it applied, in the order of their offsets.
+fn rewrite(s: i64, e: i64) -> u8[>..] {
+    var out: u8[>..] = [];
+    var idx: i64[>..] = [];
+    for i in edits.len {
+        if edits[i].at >= s && edits[i].at + edits[i].len <= e { idx.push(i); }
+    }
+    // An insertion sort keeps edits at one offset in the order they were recorded.
+    var q = 1;
+    while q < idx.len {
+        let x = idx[q];
+        var j = q - 1;
+        while j >= 0 && edits[idx[j]].at > edits[x].at {
+            idx[j + 1] = idx[j];
+            j -= 1;
+        }
+        idx[j + 1] = x;
+        q += 1;
+    }
+    var cur = s;
+    for k in idx.len {
+        let ed = edits[idx[k]];
+        if ed.at > cur { out.append(text[cur..ed.at]); }
+        out.append(ed.text);
+        cur = max(cur, ed.at + ed.len);
+    }
+    out.append(text[cur..e]);
+    return out;
+}
+
+// The token index of the `;` that ends the declaration holding token t, or -1.
+fn semi_after(t: i64) -> i64 {
+    var i = t;
+    while toks[i].k != K_EOF {
+        if tok_is(i, ";") { return i; }
+        i += 1;
+    }
+    return -1;
+}
+
+// Names that resolve to a prop or to state get gw_p. or gw_s.; calls of state-taking functions get gw_p, gw_s.
+recursive fn rec_expr(n: i64) {
+    if n < 0 { return; }
+    let k = nodes[n].k;
+    if k == E_NAME {
+        let d = nodes[n].ref2;
+        if d >= 0 && rdecls[d].kind == R_STORE {
+            // Cart::count is the component's copy, gw_s.gw_Cart_count.
+            var nm: u8[>..] = [];
+            format(nm, "gw_s.", rdecls[d].name);
+            edit_range(toks[nodes[n].tok].s, toks[nodes[n].d].e, nm);
+        }
+        else if d >= 0 { add_edit(toks[nodes[n].tok].s, 0, if rdecls[d].kind == R_PROP { "gw_p." } else { "gw_s." }); }
+        return;
+    }
+    if k == E_FIELD || k == E_UN { rec_expr(nodes[n].a); return; }
+    if k == E_INDEX || k == E_BIN { rec_expr(nodes[n].a); rec_expr(nodes[n].b); return; }
+    if k == E_IF { rec_expr(nodes[n].a); rec_expr(nodes[n].b); rec_expr(nodes[n].c); return; }
+    if k == E_SLIT {
+        var f = nodes[n].a;
+        while f >= 0 { rec_expr(nodes[f].a); f = nodes[f].next; }
+        return;
+    }
+    if k == E_AWAIT {
+        // The Goose side runs nothing asynchronously: the await is dropped.
+        edit_range(toks[nodes[n].tok].s, toks[nodes[n].tok].e, "");
+        rec_expr(nodes[n].a);
+        return;
+    }
+    if k != E_CALL { return; }
+    let r = nodes[n].ref;
+    if r == B_HTTP_GET || r == B_HTTP_POST {
+        var nm: u8[>..] = [];
+        format(nm, if r == B_HTTP_GET { "gw_get_" } else { "gw_post_" }, nodes[n].tv);
+        edit_range(toks[nodes[n].tok].s, toks[nodes[n].d].e, nm);
+    }
+    if r >= 0 && fns[r].st.len > 0 {
+        // Cart::add(x) is Cart::gw_x_add(x) on the server, a function that does nothing (a handler never runs there).
+        add_edit(toks[nodes[n].d].s, 0, "gw_x_");
+    } else if r >= 0 && takes_state(r) {
+        add_edit(toks[nodes[n].tok + 1].e, 0, if nodes[n].a >= 0 { "gw_p, gw_s, " } else { "gw_p, gw_s" });
+    }
+    var a = nodes[n].a;
+    while a >= 0 { rec_expr(a); a = nodes[a].next; }
+}
+
+recursive fn rec_stmt(n: i64) {
+    let k = nodes[n].k;
+    if k == S_LET || k == S_RETURN || k == S_RESULT || k == S_EXPR { rec_expr(nodes[n].a); return; }
+    if k == S_ASSIGN { rec_expr(nodes[n].a); rec_expr(nodes[n].b); return; }
+    if k == S_INCDEC { rec_expr(nodes[n].a); return; }
+    if k == S_IF {
+        rec_expr(nodes[n].a);
+        rec_block(nodes[n].b);
+        let e = nodes[n].c;
+        if e >= 0 {
+            if nodes[e].k == S_IF { rec_stmt(e); } else { rec_block(e); }
+        }
+        return;
+    }
+    if k == S_FOR {
+        rec_expr(nodes[n].a);
+        rec_expr(nodes[n].b);
+        rec_block(nodes[n].c);
+        return;
+    }
+    if k == S_WHILE { rec_expr(nodes[n].a); rec_block(nodes[n].c); }
+}
+
+recursive fn rec_block(n: i64) {
+    if n < 0 { return; }
+    var s = nodes[n].a;
+    while s >= 0 {
+        rec_stmt(s);
+        s = nodes[s].next;
+    }
+}
+
+// Has this declaration a Goose function (gw_i_x, gw_c_x) for its initializer?
+fn has_init_fn(d: RDecl) -> bool {
+    return d.kind != R_PROP && d.ty.t != T_ERR && d.ty.t != T_ARRAY && d.init >= 0;
+}
+
+// After check_reactive: the edits of the script lines. Markup edits are recorded as the markup is compiled.
+fn rec_script() {
+    if store_at >= 0 { edit_range(toks[store_at].s, toks[store_end].e, ""); }
+    for u in ruses { edit_range(u.s, u.e, ""); }
+    for i in rdecls.len {
+        let d = rdecls[i];
+        if d.kind == R_STORE { continue; }
+        let semi = semi_after(d.tok);
+        if semi < 0 { continue; }
+        let from = toks[d.keyword_tok - 2].s;
+        if !has_init_fn(d) { edit_range(from, toks[semi].e, ""); continue; }
+        var pre: u8[>..] = [];
+        format(pre, "fn gw_", if d.kind == R_STATE { "i_" } else { "c_" }, d.name,
+               "(gw_p: const Props&, gw_s: const State&) -> ", text[d.ts..d.te], " { return ");
+        edit_range(from, span_s(d.init), pre);
+        edit_range(span_e(d.init), toks[semi].e, "; }");
+        rec_expr(d.init);
+    }
+    for i in rblocks.len {
+        let b = rblocks[i];
+        var h: u8[>..] = [];
+        format(h, "fn gw_w", i, "(gw_p: const Props&, gw_s: ", if b.w != 0 { "" } else { "const " }, "State&) ");
+        edit_range(toks[b.tok - 1].s, toks[b.lb].s, h);
+        rec_block(b.body);
+    }
+    for i in fns.len {
+        let f = fns[i];
+        if f.event {
+            // `@event fn change(v: i64);` becomes `fn change(v: i64) {}`.
+            let semi = semi_after(f.tok);
+            if semi < 0 { continue; }
+            edit_range(toks[f.tok - 3].s, toks[f.tok - 1].s, "");
+            edit_range(toks[semi].s, toks[semi].e, " {}");
+            continue;
+        }
+        if f.body < 0 { continue; }
+        if takes_state(i) {
+            var h: u8[>..] = [];
+            h.append(if f.w != 0 { "gw_p: const Props&, gw_s: State&" } else { "gw_p: const Props&, gw_s: const State&" });
+            if f.n > 0 { h.append(", "); }
+            add_edit(toks[f.tok + 1].e, 0, h);
+        }
+        rec_block(f.body);
+    }
 }
 
 // ---------------------------------------------------------------- JavaScript
@@ -1557,7 +2927,12 @@ recursive fn emit_expr(n: i64, top: bool) {
     let k = nodes[n].k;
     if k == E_INT || k == E_STR { w_tok(nodes[n].tok); return; }
     if k == E_BOOL { w_bool(tok_is(nodes[n].tok, "true")); return; }
-    if k == E_NAME { w_var(nodes[n].ref); return; }
+    if k == E_NAME {
+        // A reactive name is a field of the state object.
+        if nodes[n].ref2 >= 0 { w(s_js); w("."); w(rdecls[nodes[n].ref2].name); return; }
+        w_var(nodes[n].ref);
+        return;
+    }
     if k == E_FIELD {
         let a = nodes[n].a;
         let at = nodes[a].ty.t;
@@ -1584,6 +2959,11 @@ recursive fn emit_expr(n: i64, top: bool) {
         return;
     }
     if k == E_CALL { emit_call(n, top); return; }
+    if k == E_AWAIT {
+        w("await ");
+        emit_expr(nodes[n].a, false);
+        return;
+    }
     if k == E_SLIT {
         w("{");
         var f = nodes[n].a;
@@ -1655,12 +3035,58 @@ recursive fn emit_args(n: i64) {
     }
 }
 
+// The name of a @use'd store's module in the output.
+fn store_js(name: const u8[:]) -> u8[..72] {
+    var r: u8[..72] = "";
+    format(r, if compact { "$" } else { "gw_" }, name);
+    return r;
+}
+
 recursive fn emit_call(n: i64, top: bool) {
     let r = nodes[n].ref;
+    if r >= 0 && fns[r].event {
+        // c.e("change", [args]): the runtime hands it to the parent's handler.
+        w(c_js);
+        w(".e(");
+        js_str(fns[r].name);
+        wo(", [");
+        emit_args(n);
+        w("])");
+        return;
+    }
+    if r >= 0 && fns[r].st.len > 0 {
+        // Cart::add(x): the store module's function runs on the store's state and tells every subscriber.
+        w(store_js(fns[r].st));
+        w(".");
+        w(fns[r].sf);
+        w("(");
+        w(c_js);
+        if nodes[n].a >= 0 { wo(", "); }
+        emit_args(n);
+        w(")");
+        return;
+    }
     if r >= 0 {
         w(fns[r].js);
         w("(");
+        // A reactive function gets the state, and the change handle when it writes.
+        var lead = false;
+        if reactive && js_takes_s(r) {
+            w(s_js);
+            lead = true;
+            if js_takes_c(r) { wo(", "); w(c_js); }
+        }
+        if lead && nodes[n].a >= 0 { wo(", "); }
         emit_args(n);
+        w(")");
+        return;
+    }
+    if r == B_HTTP_GET || r == B_HTTP_POST {
+        w(http_name(r == B_HTTP_POST));
+        w("(");
+        emit_expr(arg_at(n, 0), true);
+        if r == B_HTTP_POST { wo(", "); emit_expr(arg_at(n, 1), true); }
+        if nodes[n].ref2 >= 0 { wo(", "); w(dec_name(nodes[n].ref2)); }
         w(")");
         return;
     }
@@ -1694,6 +3120,8 @@ recursive fn emit_call(n: i64, top: bool) {
 // Node n's value, stored into a slot of type target: structs are copied,
 // and a string going into u8[..N] is checked against N.
 recursive fn emit_val(n: i64, target: Ty) {
+    // A decoded reply is fresh and fits; an async function's result is a scalar.
+    if nodes[n].k == E_AWAIT { emit_expr(n, true); return; }
     let nt = nodes[n].ty;
     if nt.t == T_STRUCT && nodes[n].k != E_SLIT {
         if is_deep(nt.name) {
@@ -1795,9 +3223,106 @@ recursive fn emit_if(n: i64) {
     }
 }
 
-recursive fn emit_stmt(n: i64) {
+// The reactive name a target writes: a name, or a field or element inside one; 0 for anything else.
+fn lv_mask(n: i64) -> i64 {
+    var x = n;
+    while x >= 0 {
+        let k = nodes[x].k;
+        if k == E_NAME { return if nodes[x].ref2 >= 0 { rdecls[nodes[x].ref2].mask } else { 0 }; }
+        if k != E_FIELD && k != E_INDEX { return 0; }
+        x = nodes[x].a;
+    }
+    return 0;
+}
+
+// The names an expression writes by passing them to a `T&` parameter.
+recursive fn call_marks(n: i64) -> i64 {
+    if n < 0 { return 0; }
     let k = nodes[n].k;
+    if k == E_FIELD || k == E_UN { return call_marks(nodes[n].a); }
+    if k == E_INDEX || k == E_BIN { return call_marks(nodes[n].a) | call_marks(nodes[n].b); }
+    if k == E_IF { return call_marks(nodes[n].a) | call_marks(nodes[n].b) | call_marks(nodes[n].c); }
+    var m = 0;
+    if k == E_SLIT {
+        var f = nodes[n].a;
+        while f >= 0 { m = m | call_marks(nodes[f].a); f = nodes[f].next; }
+        return m;
+    }
+    if k == E_AWAIT { return call_marks(nodes[n].a); }
+    if k != E_CALL { return 0; }
+    let r = nodes[n].ref;
+    var a = nodes[n].a;
+    var i = 0;
+    while a >= 0 {
+        if r >= 0 && i < fns[r].n && params[fns[r].first + i].mref { m = m | lv_mask(a); } else { m = m | call_marks(a); }
+        i += 1;
+        a = nodes[a].next;
+    }
+    return m;
+}
+
+// The names statement n writes before it runs: its calls with `T&` arguments (the callee cannot mark them).
+fn pre_marks(n: i64) -> i64 {
+    let k = nodes[n].k;
+    if k == S_LET || k == S_RETURN || k == S_RESULT || k == S_IF || k == S_WHILE { return call_marks(nodes[n].a); }
+    if k == S_ASSIGN { return call_marks(nodes[n].b); }
+    if k == S_FOR { return call_marks(nodes[n].a) | call_marks(nodes[n].b); }
+    if k == S_EXPR {
+        let e = nodes[n].a;
+        if nodes[e].k == E_CALL && nodes[e].ref <= B_PUSH { return call_marks(arg_at(e, 1)); }
+        return call_marks(e);
+    }
+    return 0;
+}
+
+// The name statement n writes itself: an assignment, ++, --, push, remove_at, clear or append.
+fn stmt_marks(n: i64) -> i64 {
+    let k = nodes[n].k;
+    if k == S_ASSIGN || k == S_INCDEC { return lv_mask(nodes[n].a); }
+    if k == S_EXPR {
+        let e = nodes[n].a;
+        if nodes[e].k == E_CALL && nodes[e].ref <= B_PUSH { return lv_mask(arg_at(e, 0)); }
+    }
+    return 0;
+}
+
+fn emit_mark(mask: i64) {
+    w(c_js);
+    w(".m(");
+    format(js, mask);
+    w(");");
+}
+
+// The await a statement starts with (let x: T = await ..., x = await ..., await ...), or -1.
+fn await_of(n: i64) -> i64 {
+    let k = nodes[n].k;
+    var e = -1;
+    if k == S_LET || k == S_EXPR { e = nodes[n].a; }
+    else if k == S_ASSIGN { e = nodes[n].b; }
+    if e >= 0 && nodes[e].k == E_AWAIT { return e; }
+    return -1;
+}
+
+recursive fn emit_stmt(n: i64) {
     nl();
+    if reactive {
+        let pm = pre_marks(n);
+        if pm != 0 { emit_mark(pm); nl(); }
+        // Show what the handler has written so far before it waits.
+        if await_of(n) >= 0 { w(c_js); w(".f();"); nl(); }
+    }
+    emit_stmt_body(n);
+    if reactive {
+        let sm = stmt_marks(n);
+        if sm != 0 {
+            if !compact { w(" "); }
+            emit_mark(sm);
+        }
+    }
+}
+
+recursive fn emit_stmt_body(n: i64) {
+    let k = nodes[n].k;
     if k == S_LET {
         w("let ");
         w_var(nodes[n].ref);
@@ -1949,11 +3474,19 @@ fn emit_line_note(line: i64) {
 fn emit_js_fn(i: i64) {
     let f = fns[i];
     emit_line_note(f.line);
+    if reactive && f.is_async { w("async "); }
     w("function ");
     w(f.js);
     w("(");
+    var first = true;
+    if reactive && js_takes_s(i) {
+        w(s_js);
+        first = false;
+        if js_takes_c(i) { wo(", "); w(c_js); }
+    }
     for p in f.first..f.first + f.n {
-        if p > f.first { wo(", "); }
+        if !first { wo(", "); }
+        first = false;
         w_var(params[p].var_id);
     }
     wo(") {");
@@ -2003,6 +3536,108 @@ fn emit_zero() {
     if !compact { w("\n"); }
 }
 
+// Handlers and tests of the def table: `name` or `name: f`, and for a function that does not take the
+// change handle, the wrapper (s, c, ...a) => f(s, ...a) the runtime's call needs.
+// The def key of lifecycle block bi: gw_m0 (mount), gw_u0 (unmount), gw_e0 (every), numbered per kind.
+fn block_key(bi: i64) {
+    var n = 0;
+    for j in bi { if rblocks[j].kind == rblocks[bi].kind { n += 1; } }
+    let k = rblocks[bi].kind;
+    w(if k == RB_MOUNT { "gw_m" } else if k == RB_UNMOUNT { "gw_u" } else { "gw_e" });
+    format(js, n);
+}
+
+fn emit_table(which: i64) {
+    wo(": {");
+    var first = true;
+    for i in fns.len {
+        let f = fns[i];
+        if f.body < 0 { continue; }
+        if (which == 0 && !f.handler) || (which == 1 && !f.test) { continue; }
+        if !first { w(","); }
+        if !compact { w(" "); }
+        first = false;
+        js.append(f.name);
+        let wrap = which == 0 && (!reactive || !js_takes_c(i));
+        if wrap {
+            wo(": ");
+            w("(");
+            w(s_js);
+            w(",");
+            if !compact { w(" "); }
+            w(c_js);
+            w(",...");
+            w(m_js);
+            w(")");
+            wo(" => ");
+            w(f.js);
+            w("(");
+            if !reactive || js_takes_s(i) {
+                w(s_js);
+                w(",");
+                if !compact { w(" "); }
+            }
+            w("...");
+            w(m_js);
+            w(")");
+        } else if f.js != f.name { wo(": "); js.append(f.js); }
+    }
+    if which == 0 && reactive {
+        // @mount, @unmount and @every bodies are handlers under reserved names.
+        for bi in rblocks.len {
+            let b = rblocks[bi];
+            if b.kind == RB_WATCH { continue; }
+            if !first { w(","); }
+            if !compact { w(" "); }
+            first = false;
+            block_key(bi);
+            wo(": ");
+            if b.is_async { w("async "); }
+            w("(");
+            w(s_js);
+            w(",");
+            if !compact { w(" "); }
+            w(c_js);
+            w(")");
+            wo(" => {");
+            emit_block(b.body);
+        }
+        // A component that @uses a store subscribes when it starts: its store keys and their bits in this component.
+        for u, ui in ruses {
+            if !first { w(","); }
+            if !compact { w(" "); }
+            first = false;
+            format(js, "gw_s", ui);
+            wo(": (");
+            w(s_js);
+            w(",");
+            wo(" ");
+            w(c_js);
+            w(")");
+            wo(" => ");
+            w(store_js(u.name));
+            w(".sub(");
+            w(s_js);
+            w(",");
+            wo(" ");
+            w(c_js);
+            w(",");
+            wo(" {");
+            for j in u.n {
+                if j > 0 { w(","); }
+                wo(" ");
+                w(rdecls[u.base + j].sn);
+                wo(": ");
+                format(js, rdecls[u.base + j].mask);
+            }
+            if u.n > 0 && !compact { w(" "); }
+            w("})");
+        }
+    }
+    if !compact && !first { w(" "); }
+    w("}");
+}
+
 fn emit_component_call() {
     if !compact { w("\n"); }
     helper(H_COMPONENT);
@@ -2010,29 +3645,619 @@ fn emit_component_call() {
     js.append(isl);
     w("\",");
     wo(" { ");
-    for which in 2 {
-        if which == 0 {
-            if compact { w("render:"); w(render_js); w(",zero:"); w(zero_js); }
-            else { w("render, zero"); }
-        }
+    if compact { w("render:"); w(render_js); w(",zero:"); w(zero_js); }
+    else { w("render, zero"); }
+    // u: render, then swap it in.
+    wo(", ");
+    w("u");
+    wo(": ");
+    if compact { w(s_js); } else { w("("); w(s_js); w(")"); }
+    wo(" => {");
+    wo(" ");
+    w("const ");
+    w(m_js);
+    wo(" = ");
+    w(render_js);
+    w("(");
+    w(s_js);
+    w(");");
+    wo(" ");
+    w("return");
+    wo(" (");
+    w(p_js);
+    wo(", ");
+    w(root_js);
+    wo(", ");
+    w(f_js);
+    w(")");
+    wo(" => ");
+    helper(H_SWAP);
+    w("(");
+    w(root_js);
+    wo(", ");
+    w(m_js);
+    wo(", ");
+    w(f_js);
+    w(");");
+    wo(" ");
+    close_brace();
+    wo(", ");
+    w("h");
+    emit_table(0);
+    wo(", ");
+    w("e");
+    wo(": ");
+    js_str(ev_types);
+    wo(", ");
+    w("tests");
+    emit_table(1);
+    wo(" });");
+    if !compact { w("\n"); }
+}
+
+// ---------------------------------------------------------------- the reactive module (Addendum 12 section 3.3)
+
+fn emit_zero_val(t: Ty) {
+    if t.t == T_INT { w("0"); }
+    else if t.t == T_BOOL { w_bool(false); }
+    else if t.t == T_STR { w("\"\""); }
+    else if t.t == T_ARRAY { w("[]"); }
+    else if t.t == T_STRUCT {
+        let si = find_struct(t.name);
+        if si >= 0 { zero_obj(si, 0); } else { w("{}"); }
+    } else { w("0"); }
+}
+
+// The decoders of the typed fetches (section 7.3): dK(value, path) returns a fresh checked value or throws the
+// path of the first mismatch, which gwh.js turns into `bad reply from URL at PATH`. Structs are rebuilt field
+// by field, so extra keys are dropped; a string is checked against its capacity in bytes.
+fn dec_field(f: Field) {
+    // The check of v.<f>, its path p + ".f".
+    var path: u8[>..] = [];
+    format(path, "p + \".", f.name, "\"");
+    if f.kind == Kind.Int || f.kind == Kind.Bool {
+        dec_bits = dec_bits | (if f.kind == Kind.Int { 1 } else { 2 });
+        w(dec_check(if f.kind == Kind.Int { 'i' } else { 'b' }));
+        w("(v.");
+        w(f.name);
         wo(", ");
-        w(if which == 0 { "handlers" } else { "tests" });
-        wo(": {");
-        var first = true;
-        for f in fns {
-            if f.body < 0 { continue; }
-            if (which == 0 && !f.handler) || (which == 1 && !f.test) { continue; }
-            if !first { w(","); }
-            if !compact { w(" "); }
-            first = false;
-            js.append(f.name);
-            if f.js != f.name { wo(": "); js.append(f.js); }
+        wo(path);
+        w(")");
+    } else if f.kind == Kind.Str {
+        dec_bits = dec_bits | 4;
+        w(dec_check('s'));
+        w("(v.");
+        w(f.name);
+        wo(", ");
+        wo(path);
+        wo(", ");
+        format(js, f.cap);
+        w(")");
+    } else {
+        var t = ty(if f.kind == Kind.Struct { T_STRUCT } else { T_ARRAY });
+        t.name = f.struct_name;
+        w(dec_name(dec_of(t)));
+        w("(v.");
+        w(f.name);
+        wo(", ");
+        wo(path);
+        w(")");
+    }
+}
+
+fn emit_decoders() {
+    if decs.len == 0 { return; }
+    dec_bits = 0;
+    var k = 0;
+    while k < decs.len {
+        let t = decs[k];
+        if !compact { w("\n"); }
+        w("function ");
+        w(dec_name(k));
+        wo("(v, p) {");
+        ind = 1;
+        nl();
+        if t.t == T_INT { dec_bits = dec_bits | 1; w("return "); w(dec_check('i')); wo("(v, p);"); }
+        else if t.t == T_BOOL { dec_bits = dec_bits | 2; w("return "); w(dec_check('b')); wo("(v, p);"); }
+        else if t.t == T_STR { dec_bits = dec_bits | 4; w("return "); w(dec_check('s')); wo("(v, p, "); format(js, t.cap); w(");"); }
+        else if t.t == T_STRUCT {
+            dec_bits = dec_bits | 8;
+            w(dec_check('o'));
+            wo("(v, p);");
+            nl();
+            w("return {");
+            let si = find_struct(t.name);
+            for q in structs[si].n {
+                if q > 0 { w(","); }
+                if !compact { w(" "); }
+                let f = fields[structs[si].first + q];
+                w(f.name);
+                wo(": ");
+                dec_field(f);
+            }
+            if !compact && structs[si].n > 0 { w(" "); }
+            w("};");
+        } else {
+            dec_bits = dec_bits | 16;
+            var et = ty(T_STRUCT);
+            et.name = t.name;
+            w("return ");
+            w(dec_check('a'));
+            wo("(v, p).map((x, i) => ");
+            w(dec_name(dec_of(et)));
+            wo("(x, p + \"[\" + i + \"]\"));");
         }
-        if !compact && !first { w(" "); }
+        ind = 0;
+        nl();
+        close_brace();
+        if !compact { w("\n"); }
+        k += 1;
+    }
+    for c in "ibsoa" {
+        let bit = if c == 'i' { 1 } else if c == 'b' { 2 } else if c == 's' { 4 } else if c == 'o' { 8 } else { 16 };
+        if (dec_bits & bit) == 0 { continue; }
+        w("function ");
+        w(dec_check(c));
+        wo(if c == 's' { "(v, p, n) {" } else { "(v, p) {" });
+        ind = 1;
+        nl();
+        if c == 'i' { wo("if (!Number.isSafeInteger(v)) throw p; "); w("return v;"); }
+        else if c == 'b' { wo("if (typeof v != \"boolean\") throw p; "); w("return v;"); }
+        else if c == 's' {
+            wo("if (typeof v != \"string\" || ");
+            helper(H_BLEN);
+            wo("(v) > n) throw p; ");
+            w("return v;");
+        }
+        else if c == 'o' { wo("if (!v || typeof v != \"object\" || Array.isArray(v)) throw p;"); }
+        else { wo("if (!Array.isArray(v)) throw p; "); w("return v;"); }
+        ind = 0;
+        nl();
+        close_brace();
+        if !compact { w("\n"); }
+    }
+}
+
+var vbase = 0;
+
+// The name of part i's new value in update.
+fn part_name(i: i64) -> u8[..72] {
+    var n: u8[..72] = "";
+    if compact { n.append(short_name(vbase + i)); return n; }
+    format(n, "v", i);
+    while name_taken(n) { n.push('$'); }
+    return n;
+}
+
+// Appends src to dst; each line break is followed by `extra` more levels of indentation.
+fn append_indented(dst: u8[>..]&, src: const u8[:], extra: i64) {
+    for c in src {
+        dst.push(c);
+        if c == '\n' { for k in extra { dst.append("  "); } }
+    }
+}
+
+// Part i's new value, a string expression: the part's own, or an immediately called function running its statements.
+fn part_value(i: i64) {
+    let pt = parts[i];
+    let code = pcode[pt.s..pt.e];
+    if pt.simple { js.append(code); return; }
+    wo("(() => {");
+    ind += 1;
+    nl();
+    w("let ");
+    w(o_js);
+    wo(" = ");
+    w("\"\";");
+    if !compact { nl(); }
+    append_indented(js, code, 1);
+    nl();
+    w("return ");
+    w(o_js);
+    w(";");
+    ind -= 1;
+    nl();
+    w("})()");
+}
+
+// update(s, m): phase 1. The computeds in order, each when a name it reads changed; the new value of each
+// part that reads a changed name; the function that writes them.
+fn emit_reactive_update() {
+    if !compact { w("\n"); }
+    w("function ");
+    w(u_js);
+    w("(");
+    w(s_js);
+    wo(", ");
+    w(m_js);
+    wo(") {");
+    ind = 1;
+    vbase = fcount;
+    for k in rorder.len {
+        let d = rdecls[rorder[k]];
+        if d.r == 0 || !has_init_fn(d) { continue; }
+        nl();
+        wo("if (");
+        w(m_js);
+        wo(" & ");
+        format(js, d.r);
+        wo(") {");
+        ind += 1;
+        nl();
+        w(s_js);
+        w(".");
+        w(d.name);
+        wo(" = ");
+        emit_val(d.init, d.ty);
+        w(";");
+        nl();
+        w(m_js);
+        wo(" |= ");
+        format(js, d.mask);
+        w(";");
+        ind -= 1;
+        nl();
+        close_brace();
+    }
+    var any = false;
+    for pt in parts { if pt.r != 0 { any = true; } }
+    if any { js.append(letcode); }
+    var first = true;
+    for i in parts.len {
+        let pt = parts[i];
+        if pt.r == 0 { continue; }
+        if compact { if first { w("const "); } else { w(","); } }
+        else { nl(); w("const "); }
+        first = false;
+        w(part_name(i));
+        wo(" = ");
+        w(m_js);
+        wo(" & ");
+        format(js, pt.r);
+        wo(" && ");
+        part_value(i);
+        if !compact { w(";"); }
+    }
+    if compact && !first { w(";"); }
+    nl();
+    w("return");
+    if first { wo(" () => {}"); }
+    else {
+        wo(" (");
+        w(p_js);
+        wo(", ");
+        w(root_js);
+        wo(", ");
+        w(f_js);
+        w(")");
+        wo(" => {");
+        ind += 1;
+        for i in parts.len {
+            let pt = parts[i];
+            if pt.r == 0 { continue; }
+            nl();
+            w(m_js);
+            wo(" & ");
+            format(js, pt.r);
+            wo(" && ");
+            if pt.kind == PK_CHILD {
+                child_use = child_use | 2;
+                w(gwc_name(2));
+            } else {
+                // A block that holds child calls reads its children's state before the morph moves their scripts.
+                if pt.kind == PK_BLOCK && pt.kids {
+                    child_use = child_use | 4;
+                    w("(");
+                    w(gwc_name(4));
+                    w("(");
+                    w(p_js);
+                    w("[");
+                    format(js, i);
+                    w("]");
+                    wo("), ");
+                }
+                helper(if pt.kind == PK_TEXT { H_T } else if pt.kind == PK_ATTR { H_A } else { H_B });
+            }
+            w("(");
+            w(p_js);
+            w("[");
+            format(js, i);
+            w("]");
+            wo(", ");
+            w(part_name(i));
+            if pt.kind == PK_ATTR || pt.kind == PK_BLOCK { wo(", "); w(f_js); }
+            if pt.kind == PK_BLOCK && pt.kids { w(")"); }
+            w(");");
+        }
+        ind -= 1;
+        nl();
+        close_brace();
+    }
+    w(";");
+    ind = 0;
+    nl();
+    close_brace();
+    if !compact { w("\n"); }
+}
+
+// watch(s, m, c): each @watch body when a name it reads changed. False when there is none.
+fn emit_reactive_watch() -> bool {
+    var any = false;
+    for b in rblocks { if b.kind == RB_WATCH && b.r != 0 { any = true; } }
+    if !any { return false; }
+    w("function ");
+    w(w_js);
+    w("(");
+    w(s_js);
+    wo(", ");
+    w(m_js);
+    wo(", ");
+    w(c_js);
+    wo(") {");
+    ind = 1;
+    for bi in rblocks.len {
+        let b = rblocks[bi];
+        if b.kind != RB_WATCH || b.r == 0 { continue; }
+        nl();
+        wo("if (");
+        w(m_js);
+        wo(" & ");
+        format(js, b.r);
+        wo(") {");
+        emit_block(b.body);
+    }
+    ind = 0;
+    nl();
+    close_brace();
+    if !compact { w("\n"); }
+    return true;
+}
+
+// init(p): the whole state from a props object (a missing prop is zero), the initializers in order, the computeds sorted.
+fn emit_reactive_init() {
+    w("function ");
+    w(i_js);
+    w("(");
+    w(p_js);
+    wo(") {");
+    ind = 1;
+    nl();
+    w("const ");
+    w(s_js);
+    wo(" = {");
+    if !compact { w(" "); }
+    // The keys come in the order of the Goose gw_json (props, state, computeds, the array), so JSON.stringify of
+    // the state is what the server writes (gwc.js's H).
+    for pass in 4 {
+        for d in rdecls {
+            if pass == 0 { if d.kind != R_PROP { continue; } }
+            else if !in_state(d, pass - 1) { continue; }
+            w(d.name);
+            wo(": ");
+            emit_zero_val(d.ty);
+            w(",");
+            if !compact { w(" "); }
+        }
+    }
+    w("...");
+    w(p_js);
+    if !compact { w(" "); }
+    w("};");
+    // The copies of the stores' values start as the stores' initial state.
+    for u in ruses {
+        nl();
+        w("{");
+        wo(" ");
+        w("const ");
+        w(c_js);
+        wo(" = ");
+        w(store_js(u.name));
+        w(".i();");
+        for j in u.n {
+            wo(" ");
+            w(s_js);
+            w(".");
+            w(rdecls[u.base + j].name);
+            wo(" = ");
+            w(c_js);
+            w(".");
+            w(rdecls[u.base + j].sn);
+            w(";");
+        }
+        wo(" ");
         w("}");
+    }
+    for d in rdecls {
+        if d.kind != R_STATE || !has_init_fn(d) { continue; }
+        nl();
+        w(s_js);
+        w(".");
+        w(d.name);
+        wo(" = ");
+        emit_val(d.init, d.ty);
+        w(";");
+    }
+    for k in rorder.len {
+        let d = rdecls[rorder[k]];
+        if !has_init_fn(d) { continue; }
+        nl();
+        w(s_js);
+        w(".");
+        w(d.name);
+        wo(" = ");
+        emit_val(d.init, d.ty);
+        w(";");
+    }
+    nl();
+    w("return ");
+    w(s_js);
+    w(";");
+    ind = 0;
+    nl();
+    close_brace();
+    if !compact { w("\n"); }
+}
+
+fn emit_reactive_call(watch: bool) {
+    if store_mode {
+        // A store is registered like a component (gweb test runs its tests; there are no roots), and its module
+        // exports what gws.js makes of it.
+        w(if compact { "const $d=" } else { "const gw_def = " });
+        wo("{ ");
+    } else {
+        helper(H_COMPONENT);
+        w("(\"");
+        js.append(isl);
+        w("\",");
+        wo(" { ");
+        w("r");
+        wo(": ");
+        w(render_js);
+        wo(", ");
+    }
+    w("u");
+    wo(": ");
+    w(u_js);
+    if watch {
+        wo(", ");
+        w("w");
+        wo(": ");
+        w(w_js);
+    }
+    wo(", ");
+    w("i");
+    wo(": ");
+    w(i_js);
+    wo(", ");
+    w("h");
+    emit_table(0);
+    wo(", ");
+    w("b");
+    wo(": {");
+    for d, k in rdecls {
+        if k > 0 { w(","); }
+        if !compact { w(" "); }
+        w(d.name);
+        wo(": ");
+        format(js, d.mask);
+    }
+    if !compact && rdecls.len > 0 { w(" "); }
+    w("}");
+    // x: the names each async handler writes, which a failure restores.
+    var anyx = false;
+    for f in fns { if f.handler && f.is_async && f.body >= 0 { anyx = true; } }
+    for b in rblocks { if b.kind != RB_WATCH && b.is_async { anyx = true; } }
+    if anyx {
+        wo(", ");
+        w("x");
+        wo(": {");
+        var firstx = true;
+        for f in fns {
+            if !f.handler || !f.is_async || f.body < 0 { continue; }
+            if !firstx { w(","); }
+            if !compact { w(" "); }
+            firstx = false;
+            js.append(f.name);
+            wo(": ");
+            format(js, f.w);
+        }
+        for bi in rblocks.len {
+            if rblocks[bi].kind == RB_WATCH || !rblocks[bi].is_async { continue; }
+            if !firstx { w(","); }
+            if !compact { w(" "); }
+            firstx = false;
+            block_key(bi);
+            wo(": ");
+            format(js, rblocks[bi].w);
+        }
+        if !compact { w(" "); }
+        w("}");
+    }
+    // l: the lifecycle entries: mount keys (the store subscriptions first), unmount keys, [ms, key] intervals.
+    if rblocks.len > 0 || ruses.len > 0 {
+        var any = ruses.len > 0;
+        for b in rblocks { if b.kind != RB_WATCH { any = true; } }
+        if any {
+            wo(", ");
+            w("l");
+            wo(": {");
+            var firstl = true;
+            for kind in 1..4 {
+                if kind == RB_EVERY { wo(" v: ["); } else if kind == RB_MOUNT { wo(" m: ["); } else { wo(" u: ["); }
+                var firstk = true;
+                if kind == RB_MOUNT {
+                    for ui in ruses.len {
+                        if !firstk { w(","); }
+                        firstk = false;
+                        w("\"");
+                        format(js, "gw_s", ui);
+                        w("\"");
+                    }
+                }
+                for bi in rblocks.len {
+                    if rblocks[bi].kind != kind { continue; }
+                    if !firstk { w(","); }
+                    firstk = false;
+                    if kind == RB_EVERY { w("["); format(js, rblocks[bi].ms); w(","); }
+                    w("\"");
+                    block_key(bi);
+                    w("\"");
+                    if kind == RB_EVERY { w("]"); }
+                }
+                w("]");
+                if kind < 3 { w(","); }
+            }
+            if !compact { w(" "); }
+            w("}");
+        }
+    }
+    var pm = 0;
+    for d in rdecls { if d.kind == R_PROP { pm = pm | d.mask; } }
+    wo(", ");
+    w("p");
+    wo(": ");
+    format(js, pm);
+    wo(", ");
+    w("e");
+    wo(": ");
+    js_str(ev_types);
+    wo(", ");
+    w("t");
+    emit_table(1);
+    if store_mode {
+        wo(" };");
+        if !compact { w("\n"); }
+        helper(H_COMPONENT);
+        w("(\"");
+        js.append(isl);
+        w("\",");
+        wo(" ");
+        w(if compact { "$d" } else { "gw_def" });
+        w(");");
+        if !compact { w("\n"); }
+        w("export default ");
+        w(if compact { "$s" } else { "gw_store" });
+        w("(\"");
+        js.append(isl);
+        w("\",");
+        wo(" ");
+        w(if compact { "$d" } else { "gw_def" });
+        if store_local.len > 0 { w(","); wo(" "); js_str(store_local); }
+        w(");");
+        if !compact { w("\n"); }
+        return;
     }
     wo(" });");
     if !compact { w("\n"); }
+    // A component with a block or a @use'd store starts eagerly (Addendum 12, 7.2).
+    if rblocks.len > 0 || ruses.len > 0 {
+        life_use = 1;
+        w(if compact { "$l" } else { "life" });
+        w("(");
+        js_str(isl);
+        w(");");
+        if !compact { w("\n"); }
+    }
 }
 
 // ---------------------------------------------------------------- markup
@@ -2091,6 +4316,317 @@ fn cat_expr(raw: bool) {
     cat_plus();
 }
 
+// ---------------------------------------------------------------- parts (Addendum 12 section 3.2)
+
+fn is_name_ch(c: u8) -> bool { return is_alpha(c) || is_dig(c) || c == '-' || c == ':'; }
+
+// Does the `on:` attribute at line[from..] pass an argument that names something? A name may read state; a
+// literal cannot. (A top-level tag is a part only when its arguments may read state.)
+fn on_args_dynamic(line: const u8[:], from: i64) -> bool {
+    var q = from + 3;
+    while q < line.len && line[q] >= 'a' && line[q] <= 'z' { q += 1; }
+    if !(q + 1 < line.len && line[q] == '=' && (line[q + 1] == '"' || line[q + 1] == '\'')) { return false; }
+    let qc = line[q + 1];
+    var e = q + 2;
+    while e < line.len && line[e] != qc { e += 1; }
+    var i = q + 2;
+    var par = false;
+    while i < e {
+        let c = line[i];
+        if c == '(' { par = true; i += 1; continue; }
+        if !par { i += 1; continue; }
+        let j = tscan::skip_literal(line, i);
+        if j > i { i = j; continue; }
+        if is_alpha(c) {
+            var k = i;
+            while k < e && (is_alpha(line[k]) || is_dig(line[k])) { k += 1; }
+            let word = line[i..k];
+            if word != "true" && word != "false" { return true; }
+            i = k;
+            continue;
+        }
+        i += 1;
+    }
+    return false;
+}
+
+// One pass over the markup before it is compiled: the open tags that are parts (they hold a { }, a bind:, or
+// an on: with a name in its arguments), HTML comments, and the content of <textarea>s. Reactive components only.
+fn scan_parts(first_line: i64) {
+    var st = tscan::MARKUP;
+    var in_tag = false;
+    var closing = false;
+    var quote: u8 = 0;
+    var comment = false;
+    var comment_s = 0;
+    var tag_s = 0;
+    var tag_ne = 0;
+    var tag_depth = 0;
+    var dyn = false;
+    var is_ta = false;
+    var ta_open = false;
+    var ta_s = 0;
+    var depth = 0;
+    for li in first_line..line_start.len {
+        let base = line_start[li];
+        var line: u8[>..] = [];
+        line.append(text[base..line_end[li]]);
+        var p = 0;
+        while p < line.len {
+            if tscan::is_raw(st) { p = tscan::raw_end(line, p, st); continue; }
+            let at = tscan::next(line, p, st, true);
+            var i = p;
+            while i < at {
+                let c = line[i];
+                let off = base + i;
+                if comment {
+                    if c == '-' && starts_with(line[i..at], "-->") {
+                        comment = false;
+                        pspans.push(PSpan { kind: PS_COMMENT, s: comment_s, ne: comment_s, e: off });
+                        i += 3;
+                        continue;
+                    }
+                    i += 1;
+                    continue;
+                }
+                if in_tag {
+                    if quote != 0 { if c == quote { quote = 0; } i += 1; continue; }
+                    if c == '"' || c == '\'' { quote = c; i += 1; continue; }
+                    if c == '>' {
+                        in_tag = false;
+                        if !closing {
+                            if dyn && tag_depth == 0 { pspans.push(PSpan { kind: PS_TAG, s: tag_s, ne: tag_ne, e: off }); }
+                            if is_ta { ta_open = true; ta_s = off + 1; }
+                        }
+                        i += 1;
+                        continue;
+                    }
+                    let ws = i == 0 || line[i - 1] == ' ' || line[i - 1] == '\t';
+                    if !closing && ws && starts_with(line[i..at], "bind:") { dyn = true; }
+                    if !closing && ws && starts_with(line[i..at], "on:") && on_args_dynamic(line, i) { dyn = true; }
+                    i += 1;
+                    continue;
+                }
+                if c != '<' { i += 1; continue; }
+                if ta_open {
+                    if tscan::starts_nocase(line, i, "</textarea") {
+                        pspans.push(PSpan { kind: PS_TEXTAREA, s: ta_s, ne: ta_s, e: off });
+                        ta_open = false;
+                    } else { i += 1; continue; }
+                }
+                if starts_with(line[i..at], "<!--") { comment = true; comment_s = off + 4; i += 4; continue; }
+                if i + 1 < at && line[i + 1] == '/' {
+                    in_tag = true;
+                    closing = true;
+                    quote = 0;
+                    i += 2;
+                    continue;
+                }
+                if i + 1 < at && is_alpha(line[i + 1]) {
+                    var j = i + 1;
+                    while j < at && is_name_ch(line[j]) { j += 1; }
+                    in_tag = true;
+                    closing = false;
+                    quote = 0;
+                    dyn = false;
+                    tag_s = off;
+                    tag_ne = base + j;
+                    tag_depth = depth;
+                    is_ta = tscan::starts_nocase(line, i + 1, "textarea") && j == i + 9;
+                    i = j;
+                    continue;
+                }
+                i += 1;
+            }
+            p = at;
+            if at == line.len || tscan::is_raw(st) { continue; }
+            if line[at] == '}' { p = at + 1; continue; }
+            if line[at] == '@' {
+                let open = tscan::call_open(line, at);
+                let close = tscan::paren_end(line, open);
+                if close < 0 { break; }
+                p = close + 1;
+                continue;
+            }
+            if starts_with(line[at..], "{{") { break; }
+            if starts_with(line[at..], "{--") {
+                let e = find(line[at..], "--}");
+                if e < 0 { break; }
+                p = at + e + 3;
+                continue;
+            }
+            let e = tscan::brace_end(line, at);
+            if e < 0 { break; }
+            p = e + 1;
+            if in_tag && !comment { dyn = true; }
+            let inner = trim(line[at + 1..e]);
+            if starts_with(inner, "#if ") || starts_with(inner, "#for ") { depth += 1; }
+            else if inner == "/if" || inner == "/for" { depth = max(0, depth - 1); }
+        }
+    }
+}
+
+// The kind of span that holds source offset q, or -1.
+fn span_kind_at(q: i64) -> i64 {
+    for sp in pspans {
+        if q >= sp.s && q < sp.e { return sp.kind; }
+    }
+    return -1;
+}
+
+fn next_tag() -> i64 {
+    while ptag < pspans.len && pspans[ptag].kind != PS_TAG { ptag += 1; }
+    return if ptag < pspans.len { ptag } else { -1 };
+}
+
+// The source offset of the next event of the dynamic tags: the `<`, the end of the name, the `>`.
+fn next_ev() -> i64 {
+    let t = next_tag();
+    if t < 0 { return -1; }
+    if ptag_phase == 0 { return pspans[t].s; }
+    if ptag_phase == 1 { return pspans[t].ne; }
+    return pspans[t].e;
+}
+
+fn part_begin(kind: i64) -> i64 {
+    parts.push(RPart { kind: kind, r: 0, s: 0, e: 0, simple: true, kids: false });
+    return parts.len - 1;
+}
+
+fn part_end(i: i64, r: i64, code: const u8[:], simple: bool) {
+    parts[i].r = r;
+    parts[i].s = pcode.len;
+    pcode.append(code);
+    parts[i].e = pcode.len;
+    parts[i].simple = simple;
+}
+
+// js[from..] as one string expression: the text pieces `+ a + b` lose their first +.
+fn region_expr(from: i64) -> u8[>..] {
+    var r: u8[>..] = [];
+    var i = from;
+    while i < js.len && (js[i] == ' ' || js[i] == '\n') { i += 1; }
+    if i < js.len && js[i] == '+' { i += 1; }
+    while i < js.len && js[i] == ' ' { i += 1; }
+    r.append(js[i..js.len]);
+    return r;
+}
+
+// js[from..] as statements: a first text piece `+ a` continues the statement that was open, and becomes `o += a`.
+fn region_stmts(from: i64) -> u8[>..] {
+    var r: u8[>..] = [];
+    var i = from;
+    while i < js.len && (js[i] == ' ' || js[i] == '\n') { i += 1; }
+    if i < js.len && js[i] == '+' {
+        r.append(o_js);
+        r.append(if compact { "+=" } else { " +=" });
+        r.append(js[i + 1..js.len]);
+    } else if i < js.len && js[i] == ';' {
+        r.append(js[i + 1..js.len]);
+    } else {
+        r.append(js[i..js.len]);
+    }
+    return r;
+}
+
+fn end_attr_part() {
+    let i = pr_open;
+    pr_open = -1;
+    if i < 0 { return; }
+    if n_flow == pr_flow {
+        part_end(i, pr_acc, region_expr(pr_ra), true);
+    } else {
+        var c = region_stmts(pr_ra);
+        if cat_open { c.push(';'); }
+        part_end(i, pr_acc, c, false);
+    }
+}
+
+// The closing of a top-level {#if} or {#for}: its code is the statements since pr_ra.
+fn end_block_part(i: i64) {
+    pr_open = -1;
+    part_end(i, pr_acc, region_stmts(pr_ra), false);
+    mtext("<!--/g-->");
+}
+
+// One event of the next dynamic tag: its marker, the start of its attribute list, its end.
+fn fire_one() {
+    if next_tag() < 0 { return; }
+    if ptag_phase == 0 {
+        mtext("<!--g-->");
+        pr_open = part_begin(PK_ATTR);
+        pr_acc = 0;
+        ptag_phase = 1;
+    } else if ptag_phase == 1 {
+        cat_pend();
+        pr_ra = js.len;
+        pr_flow = n_flow;
+        ptag_phase = 2;
+    } else {
+        cat_pend();
+        end_attr_part();
+        ptag_phase = 0;
+        ptag += 1;
+    }
+}
+
+// Fires the events at or before source offset x.
+fn fire_to(x: i64) {
+    if !reactive { return; }
+    loop {
+        let ev = next_ev();
+        if ev < 0 || ev > x { return; }
+        fire_one();
+    }
+}
+
+// Markup text[a..b]; in a reactive component the events inside it split it.
+fn m_chunk(a: i64, b: i64) {
+    if !reactive { mtext(text[a..b]); return; }
+    var p = a;
+    loop {
+        fire_to(p);
+        let ev = next_ev();
+        if ev < 0 || ev >= b { break; }
+        mtext(text[p..ev]);
+        p = ev;
+    }
+    mtext(text[p..b]);
+}
+
+// Does a tag, a closing tag or a comment start at source offset at?
+fn tag_follows(at: i64) -> bool {
+    if at + 1 >= text.len || text[at] != '<' { return false; }
+    let c = text[at + 1];
+    return is_alpha(c) || c == '/' || c == '!';
+}
+
+fn set_var_r(v: i64, r: i64) {
+    while var_r.len <= v { var_r.push(0); }
+    var_r[v] = r;
+}
+
+// Expression n as the update function needs it: a string, as a part's new text. It is written to js and taken back.
+fn snip_value(n: i64) -> u8[>..] {
+    let keep = js.len;
+    if nodes[n].ty.t != T_STR { w("\"\""); wo(" + "); }
+    emit_expr(n, false);
+    var r: u8[>..] = [];
+    r.append(js[keep..js.len]);
+    js.resize(keep);
+    return r;
+}
+
+fn add_event(e: const u8[:]) {
+    var hay: u8[>..] = [];
+    format(hay, " ", ev_types, " ");
+    var needle: u8[>..] = [];
+    format(needle, " ", e, " ");
+    if find(hay, needle) >= 0 { return; }
+    if ev_types.len > 0 { ev_types.push(' '); }
+    ev_types.append(e);
+}
+
 // Tagged with the source line so gweb can map a compiler error back to the markup.
 fn chk_line(s: const u8[:], line: i64) {
     chk.append(s);
@@ -2107,11 +4643,25 @@ fn parse_tag_expr(s: i64, e: i64, line: i64) -> i64 {
 }
 
 fn m_expr(s: i64, e: i64, line: i64, raw: bool) {
+    // In a reactive component an expression outside every block and open tag is a part: markers around it.
+    var part = -1;
+    if reactive {
+        let sk = span_kind_at(s);
+        if sk == PS_TEXTAREA { report(line, "use bind:value on <textarea>"); }
+        else if sk < 0 && opens.len == 0 {
+            part = part_begin(if raw { PK_BLOCK } else { PK_TEXT });
+            mtext("<!--g-->");
+        }
+    }
     g_flush();
-    format(gline, if raw { "web::raw(out, " } else { "web::put(out, " }, text[s..e], "); ");
     let n = parse_tag_expr(s, e, line);
+    var rbits = 0;
+    if n >= 0 {
+        check_expr(n);
+        if reactive { rw_mark(n, line, if raw { RM_RAW } else { RM_TEXT }); rbits = rw_r; rec_expr(n); }
+    }
+    format(gline, if raw { "web::raw(out, " } else { "web::put(out, " }, rewrite(s, e), "); ");
     if n < 0 { return; }
-    check_expr(n);
     let t = nodes[n].ty.t;
     if t == T_ERR { return; }
     if t != T_INT && t != T_BOOL && t != T_STR { cannot_type(line); return; }
@@ -2123,36 +4673,69 @@ fn m_expr(s: i64, e: i64, line: i64, raw: bool) {
         emit_expr(n, true);
         w(")");
     }
+    if part >= 0 {
+        part_end(part, rbits, snip_value(n), true);
+        if raw { mtext("<!--/g-->"); }
+        else if !tag_follows(mk_after) { mtext("<!---->"); }
+    }
 }
 
-fn open_tag(kind: u8, line: i64) {
-    opens.push(Open { kind: kind, line: line, mark: scope.len });
+fn open_tag(kind: u8, line: i64, part: i64) {
+    opens.push(Open { kind: kind, line: line, mark: scope.len, part: part });
 }
 
-fn m_if(s: i64, e: i64, line: i64, else_if: bool) {
-    g_flush();
+// A top-level {#if} or {#for} of a reactive component is a block part; its marker goes before the open.
+fn block_top(s: i64) -> bool {
+    if !reactive || opens.len > 0 || span_kind_at(s) >= 0 { return false; }
+    mtext("<!--g-->");
+    return true;
+}
+
+fn block_open(top: bool) -> i64 {
+    if !top { return -1; }
+    pr_open = part_begin(PK_BLOCK);
+    pr_acc = 0;
+    pr_ra = js.len;
+    return pr_open;
+}
+
+// The Goose line and gw_check get the condition as rewritten for reactive names.
+fn if_head(s: i64, e: i64, line: i64, else_if: bool) {
     var head: u8[>..] = [];
-    format(head, if else_if { "} else if " } else { "if " }, text[s..e], " {");
+    format(head, if else_if { "} else if " } else { "if " }, rewrite(s, e), " {");
     gline.append(head);
     gline.push(' ');
     chk_line(head, line);
+}
+
+fn m_if(s: i64, e: i64, line: i64, else_if: bool) {
+    let top = !else_if && block_top(s);
+    g_flush();
     cat_close();
+    let part = block_open(top);
+    if !else_if { n_flow += 1; }
     if else_if {
-        if opens.len == 0 || opens[opens.len - 1].kind != 'i' { report(line, "{#else if} outside {#if}"); return; }
+        if opens.len == 0 || opens[opens.len - 1].kind != 'i' {
+            if_head(s, e, line, else_if);
+            report(line, "{#else if} outside {#if}");
+            return;
+        }
         scope.resize(opens[opens.len - 1].mark);
         ind -= 1;
     } else {
-        open_tag('i', line);
+        open_tag('i', line, part);
     }
     nl();
     if else_if { wo("} else if ("); } else { wo("if ("); }
     let n = parse_tag_expr(s, e, line);
     if n >= 0 {
         check_expr(n);
+        if reactive { rw_mark(n, line, RM_IF); rec_expr(n); }
         let t = nodes[n].ty.t;
         if t != T_ERR && t != T_BOOL { cannot_type(line); }
         else if t == T_BOOL { emit_expr(n, true); }
     }
+    if_head(s, e, line, else_if);
     wo(") {");
     ind += 1;
 }
@@ -2178,21 +4761,58 @@ fn m_close(want: u8, line: i64) {
         return;
     }
     scope.resize(opens[opens.len - 1].mark);
+    let part = opens[opens.len - 1].part;
     opens.pop();
     ind -= 1;
     nl();
     close_brace();
+    if part >= 0 { end_block_part(part); }
+}
+
+// computed-no-state, watch-no-state, state-unused: from the R sets of the R/W pass and mk_r, the markup's reads.
+fn warn_reactive() {
+    var read = mk_r;
+    for f in fns { if f.body >= 0 { read = read | f.r; } }
+    for b in rblocks { read = read | b.r; }
+    for d in rdecls { read = read | d.r; }
+    for d in rdecls {
+        var m: u8[>..] = [];
+        if d.kind == R_COMPUTED && d.r == 0 {
+            format(m, "@computed ", d.name, " reads no state; use a plain function or a literal");
+            warn_buf("computed-no-state", d.line, m);
+        } else if d.kind == R_STATE && !store_mode && (read & d.mask) == 0 {
+            format(m, "@state ", d.name, " is never read");
+            warn_buf("state-unused", d.line, m);
+        }
+    }
+    for b in rblocks {
+        if b.kind == RB_WATCH && b.r == 0 { warn_buf("watch-no-state", b.line, "@watch reads no state; it runs once at start"); }
+    }
+}
+
+// unkeyed-for (reactive components): a {#for} over a @state array that the code writes other than by push and
+// clear (the R/W pass records those writes in rw_wide), whose first element tag has no gw-key.
+fn warn_unkeyed_r(n: i64, line: i64) {
+    let it = nodes[n].a;
+    if it < 0 || nodes[it].k != E_NAME || nodes[it].ref2 < 0 { return; }
+    let d = rdecls[nodes[it].ref2];
+    if d.kind != R_STATE || d.ty.t != T_ARRAY || (rw_wide & d.mask) == 0 { return; }
+    // A body that starts with a child call is checked by child-key.
+    var q = mk_after;
+    while q < line_end[line - 1] && (text[q] == ' ' || text[q] == '\t') { q += 1; }
+    if q < line_end[line - 1] && text[q] == '@' { return; }
+    if !first_tag_unkeyed(line - 1, mk_after - line_start[line - 1]) { return; }
+    var m: u8[>..] = [];
+    format(m, "{#for} over ", d.name, " needs gw-key on its elements: the list can reorder or lose an item");
+    warn_buf("unkeyed-for", line, m);
 }
 
 fn m_for(s: i64, e: i64, line: i64) {
+    let top = block_top(s);
     g_flush();
-    var head: u8[>..] = [];
-    format(head, "for ", text[s..e], " {");
-    gline.append(head);
-    gline.push(' ');
-    chk_line(head, line);
     cat_close();
-    open_tag('f', line);
+    open_tag('f', line, block_open(top));
+    n_flow += 1;
     pos = tokenize(s, e, line);
     perr = false;
     let n = new_node(S_FOR, pos);
@@ -2202,20 +4822,27 @@ fn m_for(s: i64, e: i64, line: i64) {
     nl();
     if ok {
         check_for_head(n);
+        if reactive {
+            rw_mark(nodes[n].a, line, RM_FOR);
+            rw_mark(nodes[n].b, line, RM_FOR);
+            rec_expr(nodes[n].a);
+            rec_expr(nodes[n].b);
+            warn_unkeyed_r(n, line);
+        }
         emit_for_head(n);
     } else {
         wo("for (;;) {");
     }
     ind += 1;
+    var head: u8[>..] = [];
+    format(head, "for ", rewrite(s, e), " {");
+    gline.append(head);
+    gline.push(' ');
+    chk_line(head, line);
 }
 
 fn m_let(s: i64, e: i64, line: i64) {
     g_flush();
-    var head: u8[>..] = [];
-    format(head, "let ", text[s..e], ";");
-    gline.append(head);
-    gline.push(' ');
-    chk_line(head, line);
     cat_close();
     pos = tokenize(s, e, line);
     perr = false;
@@ -2223,17 +4850,107 @@ fn m_let(s: i64, e: i64, line: i64) {
     var ok = parse_let_head(n);
     if ok && !at_k(K_EOF) { bad_tok(pos); ok = false; }
     perr = false;
+    if ok {
+        check_let(n);
+        if reactive { rw_mark(nodes[n].a, line, RM_LET); set_var_r(nodes[n].ref, rw_r); rec_expr(nodes[n].a); }
+    }
+    n_flow += 1;
+    var head: u8[>..] = [];
+    format(head, "let ", rewrite(s, e), ";");
+    gline.append(head);
+    gline.push(' ');
+    chk_line(head, line);
     if !ok { return; }
-    check_let(n);
+    let la = js.len;
     nl();
     w("let ");
     w_var(nodes[n].ref);
     wo(" = ");
     emit_val(nodes[n].a, nodes[n].ty);
     w(";");
+    // A top-level {#let} is not a part, but update computes it again for the parts that read it.
+    if reactive && opens.len == 0 && span_kind_at(s) < 0 { letcode.append(js[la..js.len]); }
 }
 
-fn m_on(event: const u8[:], vs: i64, ve: i64, line: i64) {
+// on: in a reactive component: any function of the component whose parameters are i64, bool or const u8[:].
+fn m_on_r(event: const u8[:], mods: const u8[:], vs: i64, ve: i64, line: i64) {
+    let n = parse_tag_expr(vs, ve, line);
+    if n < 0 { return; }
+    var name_tok = -1;
+    if nodes[n].k == E_NAME { name_tok = nodes[n].tok; }
+    else if nodes[n].k == E_CALL && nodes[n].c != 1 && nodes[n].d < 0 { name_tok = nodes[n].tok; }
+    var fi = -1;
+    if name_tok >= 0 { fi = find_fn(text[toks[name_tok].s..toks[name_tok].e]); }
+    let shown = if name_tok >= 0 { text[toks[name_tok].s..toks[name_tok].e] } else { text[vs..ve] };
+    var m: u8[>..] = [];
+    if fi < 0 || fns[fi].event {
+        format(m, "on:", event, " handler '", shown, "' is not a function of this component");
+        report(line, m);
+        return;
+    }
+    for p in fns[fi].first..fns[fi].first + fns[fi].n {
+        let pt = params[p].ty.t;
+        if params[p].mref || (pt != T_INT && pt != T_BOOL && pt != T_STR) {
+            format(m, "on:", event, " handler '", shown, "' takes only i64, bool and const u8[:] parameters");
+            report(line, m);
+            return;
+        }
+    }
+    let na = if nodes[n].k == E_CALL { args_count(n) } else { 0 };
+    if na != fns[fi].n {
+        format(m, "on:", event, " handler '", shown, "' is called with ", na, " arguments; it takes ", fns[fi].n);
+        report(line, m);
+        return;
+    }
+    var t: u8[>..] = [];
+    format(t, "data-on-", event, "=\"", shown, mods, "\"");
+    mtext(t);
+    add_event(event);
+    // gw_check calls the handler as the Goose compiler will see it: name(gw_p, gw_w, args) or name(args).
+    var call: u8[>..] = [];
+    format(call, shown, "(");
+    if takes_state(fi) {
+        call.append("gw_p, gw_w");
+        if na > 0 { call.append(", "); }
+    }
+    if na > 0 { mtext(" data-args=\"["); }
+    var a = nodes[n].a;
+    if nodes[n].k != E_CALL { a = -1; }
+    var i = 0;
+    while a >= 0 {
+        check_expr(a);
+        rw_mark(a, line, RM_ON);
+        rec_expr(a);
+        let at = nodes[a].ty.t;
+        if at != T_ERR && at != params[fns[fi].first + i].ty.t {
+            m.clear();
+            format(m, "on:", event, " handler '", shown, "': argument ", i + 1, " has the wrong type");
+            report(line, m);
+        }
+        let src = rewrite(span_s(a), span_e(a));
+        if i > 0 { mtext(","); call.append(", "); }
+        call.append(src);
+        g_flush();
+        format(gline, "web::arg(out, ", src, "); ");
+        if at != T_ERR {
+            cat_expr(false);
+            helper(H_ESC);
+            w("(");
+            if at == T_STR { w("JSON.stringify("); emit_expr(a, true); w(")"); } else { emit_expr(a, true); }
+            w(")");
+        }
+        i += 1;
+        a = nodes[a].next;
+    }
+    if na > 0 { mtext("]\""); }
+    call.append(");");
+    chk_line(call, line);
+}
+
+fn m_on(event: const u8[:], mods: const u8[:], vs: i64, ve: i64, line: i64) {
+    if mods.len > 0 { mods_use = 1; }
+    if reactive { m_on_r(event, mods, vs, ve, line); return; }
+    add_event(event);
     let n = parse_tag_expr(vs, ve, line);
     if n < 0 { return; }
     var name_tok = -1;
@@ -2250,7 +4967,7 @@ fn m_on(event: const u8[:], vs: i64, ve: i64, line: i64) {
     }
     let fname = text[toks[name_tok].s..toks[name_tok].e];
     var t: u8[>..] = [];
-    format(t, "data-on-", event, "=\"", fname, "\"");
+    format(t, "data-on-", event, "=\"", fname, mods, "\"");
     mtext(t);
     var call: u8[>..] = [];
     format(call, fname, "(gw_w");
@@ -2286,7 +5003,73 @@ fn m_on(event: const u8[:], vs: i64, ve: i64, line: i64) {
     chk_line(call, line);
 }
 
+// bind: in a reactive component: a @state var of type i64, bool or u8[..N] (bool for checked).
+fn m_bind_r(what: const u8[:], vs: i64, ve: i64, line: i64) {
+    let field = trim(text[vs..ve]);
+    let d = find_rdecl(field);
+    var m: u8[>..] = [];
+    if d < 0 {
+        format(m, "bind:", what, " needs a @state var; '", field, "' is not one");
+        report(line, m);
+        return;
+    }
+    if rdecls[d].kind != R_STATE {
+        let mk = rmark(rdecls[d].kind);
+        format(m, "bind:", what, " needs a @state var; '", field, "' is ", mk);
+        report(line, m);
+        return;
+    }
+    let t = rdecls[d].ty;
+    if t.t == T_ERR { return; }
+    if what == "checked" {
+        if t.t != T_BOOL { report(line, "bind:checked needs a @state var of type bool"); return; }
+    } else if t.t != T_INT && t.t != T_BOOL && t.t != T_STR {
+        format(m, "bind:", what, " needs a @state var of type i64, bool or u8[..N]");
+        report(line, m);
+        return;
+    }
+    rmarks.push(RMk { kind: RM_BIND, line: line, r: rdecls[d].mask, w: rdecls[d].mask });
+    mk_r = mk_r | rdecls[d].mask;
+    if pr_open >= 0 { pr_acc = pr_acc | rdecls[d].mask; }
+    var code: u8[>..] = [];
+    var tail: u8[>..] = [];
+    if what == "value" {
+        mtext("value=\"");
+        format(code, "web::put(out, gw_s.", field, "); ");
+        g_code(code);
+        cat_expr(false);
+        helper(H_ESC);
+        w("(");
+        w(s_js);
+        w(".");
+        w(field);
+        w(")");
+        format(tail, "\" data-bind=\"", field, "\"");
+        if t.t == T_STR { format(tail, " data-cap=\"", t.cap, "\""); }
+        mtext(tail);
+        return;
+    }
+    format(code, "if gw_s.", field, " { ");
+    g_code(code);
+    gtext.append("checked");
+    g_code("} ");
+    // The same text as a conditional piece, so the attribute list stays one string expression.
+    cat_expr(false);
+    w("(");
+    w(s_js);
+    w(".");
+    w(field);
+    wo(" ? ");
+    js_str("checked");
+    wo(" : ");
+    w("\"\"");
+    w(")");
+    format(tail, " data-bind=\"", field, "\"");
+    mtext(tail);
+}
+
 fn m_bind(what: const u8[:], vs: i64, ve: i64, line: i64) {
+    if reactive { m_bind_r(what, vs, ve, line); return; }
     let field = trim(text[vs..ve]);
     let fi = find_field(find_struct("State"), field);
     var ok = fi >= 0;
@@ -2352,17 +5135,69 @@ fn next_attr(p: i64, e: i64) -> i64 {
     return -1;
 }
 
+// on:EVENT.MOD.MOD (Addendum 12, 7.2b). mods is "" or ".mod.mod". An unknown event is a warning; a bad modifier an error.
+fn on_event_ok(event: const u8[:], mods: const u8[:], line: i64) -> bool {
+    if event.len == 0 { report(line, "on: needs an event name"); return false; }
+    let known = event == "click" || event == "dblclick" || event == "change" || event == "input" || event == "submit"
+        || event == "keydown" || event == "keyup" || event == "focus" || event == "blur";
+    if !known {
+        var w: u8[>..] = [];
+        format(w, "unknown on: event '", event, "'");
+        warn_buf("unknown-event", line, w);
+    }
+    var ok = true;
+    var i = 0;
+    while i < mods.len {
+        var j = i + 1;
+        while j < mods.len && mods[j] != '.' { j += 1; }
+        let m = mods[i + 1..j];
+        i = j;
+        var msg: u8[>..] = [];
+        if m == "prevent" || m == "stop" { continue; }
+        if m.len > 0 && m[0] >= '0' && m[0] <= '9' {
+            var n = 0;
+            var k = 0;
+            while k < m.len && m[k] >= '0' && m[k] <= '9' && n < 100000 { n = n * 10 + (m[k] - '0'); k += 1; }
+            if m[k..m.len] != "ms" || n < 1 || n > 10000 {
+                report(line, "a debounce is 1ms to 10000ms");
+                ok = false;
+            }
+            continue;
+        }
+        if m == "enter" || m == "escape" || m == "space" || m == "tab" || m == "up" || m == "down" || m == "left"
+            || m == "right" || m == "backspace" || m == "delete" {
+            if event != "keydown" && event != "keyup" {
+                format(msg, ".", m, " works on on:keydown and on:keyup only");
+                report(line, msg);
+                ok = false;
+            }
+            continue;
+        }
+        format(msg, "unknown modifier .", m, " on on:", event);
+        report(line, msg);
+        ok = false;
+    }
+    return ok;
+}
+
 // Attribute values take double or single quotes; there is no escape syntax, and output attributes are always double-quoted.
 fn m_text(s: i64, e: i64, line: i64) {
     var p = s;
     while p < e {
         let k = next_attr(p, e);
-        if k < 0 { mtext(text[p..e]); return; }
-        mtext(text[p..k]);
+        if k < 0 { m_chunk(p, e); return; }
+        m_chunk(p, k);
         let on = text[k] == 'o';
         let name_s = k + (if on { 3 } else { 5 });
         var q = name_s;
         while q < e && text[q] >= 'a' && text[q] <= 'z' { q += 1; }
+        let name_e = q;
+        if on {
+            while q < e && text[q] == '.' {
+                q += 1;
+                while q < e && ((text[q] >= 'a' && text[q] <= 'z') || (text[q] >= '0' && text[q] <= '9')) { q += 1; }
+            }
+        }
         let quoted = q + 1 < e && text[q] == '=' && (text[q + 1] == '"' || text[q + 1] == '\'');
         var ve = q + 2;
         if quoted {
@@ -2371,13 +5206,13 @@ fn m_text(s: i64, e: i64, line: i64) {
         }
         if !quoted || ve >= e {
             report(line, "on: and bind: take a value in quotes on the same line");
-            mtext(text[k..e]);
+            m_chunk(k, e);
             return;
         }
-        let name = text[name_s..q];
+        let name = text[name_s..name_e];
         if on {
-            if name == "click" || name == "change" || name == "input" || name == "submit" { m_on(name, q + 2, ve, line); }
-            else { not_available(line, text[k..q]); }
+            let mods = text[name_e..q];
+            if on_event_ok(name, mods, line) { m_on(name, mods, q + 2, ve, line); }
         } else {
             if name == "value" || name == "checked" { m_bind(name, q + 2, ve, line); }
             else { not_available(line, text[k..q]); }
@@ -2396,6 +5231,354 @@ fn trim_e(s: i64, e: i64) -> i64 {
     var b = e;
     while b > s && (text[b - 1] == ' ' || text[b - 1] == '\t' || text[b - 1] == '\r') { b -= 1; }
     return b;
+}
+
+// ---------------------------------------------------------------- child components (Addendum 12 section 7.5)
+
+fn reg_find(name: const u8[:]) -> i64 {
+    for i in reg.len { if reg[i].name == name { return i; } }
+    return -1;
+}
+
+// Field k of a tab-separated line.
+fn fld(l: const u8[:], k: i64) -> const u8[:] {
+    var s = 0;
+    var n = 0;
+    for i in l.len + 1 {
+        if i == l.len || l[i] == '\t' {
+            if n == k { return l[s..i]; }
+            n += 1;
+            s = i + 1;
+        }
+    }
+    return l[l.len..];
+}
+
+// The length of a leading `name:` (one colon, not ::) in arg, or 0.
+fn named_len(arg: const u8[:]) -> i64 {
+    var i = 0;
+    if arg.len == 0 || !tscan::ident_start(arg[0]) { return 0; }
+    while i < arg.len && tscan::ident_char(arg[i]) { i += 1; }
+    let n = i;
+    while i < arg.len && (arg[i] == ' ' || arg[i] == '\t') { i += 1; }
+    if i < arg.len && arg[i] == ':' && !(i + 1 < arg.len && arg[i + 1] == ':') { return n; }
+    return 0;
+}
+
+// The offsets (in text) of each argument of a call: the pieces between its top-level commas.
+fn split_args(s: i64, e: i64, starts: i64[>..]&, ends: i64[>..]&) {
+    var line: u8[>..] = [];
+    line.append(text[s..e]);
+    var depth = 0;
+    var from = 0;
+    var i = 0;
+    while i < line.len {
+        let c = line[i];
+        if c == '"' || c == '\'' {
+            let j = tscan::skip_literal(line, i);
+            if j > i { i = j; continue; }
+        }
+        if c == '(' || c == '[' || c == '{' { depth += 1; }
+        else if c == ')' || c == ']' || c == '}' { depth -= 1; }
+        else if c == ',' && depth == 0 {
+            starts.push(s + from);
+            ends.push(s + i);
+            from = i + 1;
+        }
+        i += 1;
+    }
+    starts.push(s + from);
+    ends.push(e);
+}
+
+// The name of a gwc.js helper in the module: bit 1 H, 2 Q, 4 M.
+fn gwc_name(bit: i64) -> u8[..16] {
+    var n: u8[..16] = "";
+    if compact { n.append(if bit == 1 { "$h" } else if bit == 2 { "$q" } else { "$m" }); }
+    else { n.append(if bit == 1 { "gw_child" } else if bit == 2 { "gw_props" } else { "gw_mat" }); }
+    return n;
+}
+
+// js[keep..] taken back out of the module.
+fn grab(keep: i64) -> u8[>..] {
+    var r: u8[>..] = [];
+    r.append(js[keep..js.len]);
+    js.resize(keep);
+    return r;
+}
+
+// The props object of a child call: the given props (nodes[k] >= 0), and with all also the defaults.
+fn child_obj(props: const u8[:][:], np: i64, pn: const i64[:], all: bool) -> u8[>..] {
+    let keep = js.len;
+    w("{");
+    var first = true;
+    for k in np {
+        let l = props[k];
+        if pn[k] < 0 && !all { continue; }
+        if !first { w(","); if !compact { w(" "); } }
+        first = false;
+        js.append(fld(l, 0));
+        wo(": ");
+        if pn[k] >= 0 {
+            var pt = ty(0);
+            let tv, ok = parse_int(fld(l, 1));
+            pt.t = tv;
+            let cv, ok2 = parse_int(fld(l, 2));
+            pt.cap = cv;
+            emit_val(pn[k], pt);
+        } else { js.append(fld(l, 4)); }
+    }
+    w("}");
+    return grab(keep);
+}
+
+// The type names of an @event's parameters, from the codes of reg_events: `(i64, bool, const u8[:])`.
+fn event_types(codes: const u8[:]) -> u8[>..] {
+    var r: u8[>..] = [];
+    r.push('(');
+    var first = true;
+    for c in codes {
+        if c == ',' { continue; }
+        if !first { r.append(", "); }
+        first = false;
+        r.append(if c == '1' { "i64" } else if c == '2' { "bool" } else { "const u8[:]" });
+    }
+    r.push(')');
+    return r;
+}
+
+// An `on:EVENT="handler"` argument of a child call (text[a0..a1]). False when it is not one (a prop called `on`
+// is `on: expr`); true when handled, errors included. A good one adds ` data-emit-EVENT="handler"` to attrs.
+fn child_on(ln: i64, name: const u8[:], a0: i64, a1: i64, attrs: u8[>..]&) -> bool {
+    if a1 - a0 < 4 || text[a0..a0 + 3] != "on:" || !tscan::ident_start(text[a0 + 3]) { return false; }
+    var j = a0 + 3;
+    while j < a1 && tscan::ident_char(text[j]) { j += 1; }
+    let ev = text[a0 + 3..j];
+    var k = j;
+    while k < a1 && (text[k] == ' ' || text[k] == '\t') { k += 1; }
+    if k >= a1 || text[k] != '=' || (k + 1 < a1 && text[k + 1] == '=') { return false; }
+    k += 1;
+    while k < a1 && (text[k] == ' ' || text[k] == '\t') { k += 1; }
+    var m: u8[>..] = [];
+    var ok = a1 - k >= 3 && text[k] == '"' && text[a1 - 1] == '"' && tscan::ident_start(text[k + 1]);
+    if ok { for q in k + 1..a1 - 1 { if !tscan::ident_char(text[q]) { ok = false; } } }
+    if !ok {
+        format(m, "on:", ev, " on a component takes a handler name");
+        report(ln, m);
+        return true;
+    }
+    let h = text[k + 1..a1 - 1];
+    var codes: u8[>..] = [];
+    var have = false;
+    for l in split(reg_events, '\n') {
+        if l.len > 0 && fld(l, 0) == name && fld(l, 1) == ev { have = true; codes.append(fld(l, 2)); }
+    }
+    if !have {
+        format(m, name, " has no @event ", ev);
+        report(ln, m);
+        return true;
+    }
+    let fi = find_fn(h);
+    if fi < 0 || fns[fi].event {
+        format(m, "on:", ev, " handler '", h, "' is not a function of this component");
+        report(ln, m);
+        return true;
+    }
+    var np = 0;
+    for c in codes { if c != ',' { np += 1; } }
+    var same = fns[fi].n == np;
+    var pi = 0;
+    for c in codes {
+        if c == ',' { continue; }
+        let want = if c == '1' { T_INT } else if c == '2' { T_BOOL } else { T_STR };
+        if same && (params[fns[fi].first + pi].mref || params[fns[fi].first + pi].ty.t != want) { same = false; }
+        pi += 1;
+    }
+    if !same {
+        format(m, "on:", ev, " handler '", h, "' must take ", event_types(codes));
+        report(ln, m);
+        return true;
+    }
+    var mark: u8[>..] = [];
+    format(mark, " data-emit-", ev, "=");
+    if find(attrs, mark) >= 0 {
+        format(m, "@", name, " handles on:", ev, " twice");
+        report(ln, m);
+        return true;
+    }
+    format(attrs, " data-emit-", ev, "=\"", h, "\"");
+    return true;
+}
+
+// @Name(a: e, b: e, key: e) in a reactive component's markup. False when Name is not a reactive component of this
+// build (the caller says it is not available); true when handled, errors included. The Goose is
+// `{ let gw_c = Name::Props { ... }; Name::nest(out, gw_c, KEY); }`; the JavaScript renders the child's server form
+// with gwc.js's H, and a call outside every block is a part that writes the props into the live child.
+fn child_call(ln: i64, s: i64, e: i64, name: const u8[:]) -> bool {
+    let ci = reg_find(name);
+    if !reactive || ci < 0 { return false; }
+    if name == isl || reg[ci].done == 0 {
+        report(ln, "components cannot contain themselves");
+        return true;
+    }
+    if reg[ci].done != 2 { return false; }
+    var mine: u8[>..] = [];                 // `prop\tt\tcap\tgoose default\tjs default\n` of the child, in declaration order
+    for l in split(reg_props, '\n') {
+        if l.len <= name.len + 1 || !starts_with(l, name) || l[name.len] != '\t' { continue; }
+        mine.append(l[name.len + 1..]);
+        mine.push('\n');
+    }
+    let props = split(mine, '\n');
+    var np = 0;
+    for l in props { if l.len > 0 { np += 1; } }
+    var pn: i64[>..] = [];                  // the node of each prop's value, or -1
+    var vs: i64[>..] = [];                  // its source span
+    var ve: i64[>..] = [];
+    for k in np { pn.push(-1); vs.push(0); ve.push(0); }
+    var starts: i64[>..] = [];
+    var ends: i64[>..] = [];
+    split_args(s, e, starts, ends);
+    let before = nerr;
+    var rbits = 0;
+    var emit_attrs: u8[>..] = [];           // ` data-emit-change="picked"` for each on:EVENT
+    var kx = -1;                            // the node of key: e
+    var kx_s = 0;
+    var kx_e = 0;
+    for k in np {
+        let t = fld(props[k], 1);
+        if t != "1" && t != "2" && t != "3" {
+            var m: u8[>..] = [];
+            format(m, "@", name, " has the prop ", fld(props[k], 0), " of a struct or array type; a call from markup passes whole numbers, bool and text only");
+            report(ln, m);
+            return true;
+        }
+    }
+    for pi in starts.len {
+        let a0 = trim_s(starts[pi], ends[pi]);
+        let a1 = trim_e(a0, ends[pi]);
+        if a1 <= a0 {
+            if starts.len > 1 && pi + 1 < starts.len { report(ln, "an empty argument; write @Name(a: 1, b: 2)"); }
+            continue;
+        }
+        if child_on(ln, name, a0, a1, emit_attrs) { continue; }
+        let nlen = named_len(text[a0..a1]);
+        if nlen == 0 {
+            var m: u8[>..] = [];
+            var first: u8[>..] = [];
+            if np > 0 { first.append(fld(props[0], 0)); } else { first.append("x"); }
+            format(m, "@", name, " takes named props: @", name, "(", first, ": 3)");
+            report(ln, m);
+            return true;
+        }
+        let pname = text[a0..a0 + nlen];
+        var found = -1;
+        for k in np { if fld(props[k], 0) == pname { found = k; } }
+        var m: u8[>..] = [];
+        if found < 0 && pname != "key" {
+            format(m, name, " has no prop ", pname);
+            report(ln, m);
+            continue;
+        }
+        if (pname == "key" && kx >= 0) || (found >= 0 && pn[found] >= 0) {
+            if pname == "key" { format(m, "@", name, " passes key twice"); }
+            else { format(m, "@", name, " passes prop ", pname, " twice"); }
+            report(ln, m);
+            continue;
+        }
+        var colon = a0 + nlen;
+        while text[colon] != ':' { colon += 1; }
+        let v0 = trim_s(colon + 1, a1);
+        if v0 >= a1 {
+            if pname == "key" { format(m, "@", name, " key needs a value"); }
+            else { format(m, "@", name, " prop ", pname, " needs a value"); }
+            report(ln, m);
+            continue;
+        }
+        let n = parse_tag_expr(v0, a1, ln);
+        if n < 0 { continue; }
+        check_expr(n);
+        rw_mark(n, ln, RM_TEXT);
+        if found >= 0 { rbits = rbits | rw_r; }
+        rec_expr(n);
+        let nt = nodes[n].ty.t;
+        if nt == T_ERR { continue; }
+        if found >= 0 {
+            let want = fld(props[found], 1);
+            let wt = if want == "1" { T_INT } else if want == "2" { T_BOOL } else { T_STR };
+            if nt != wt {
+                format(m, "@", name, " prop ", pname, " is ", if wt == T_INT { "a whole number" } else if wt == T_BOOL { "bool" } else { "text" },
+                       ", not ", if nt == T_INT { "a whole number" } else if nt == T_BOOL { "bool" } else if nt == T_STR { "text" } else { "this" });
+                report(ln, m);
+                continue;
+            }
+            pn[found] = n;
+            vs[found] = v0;
+            ve[found] = a1;
+        } else {
+            if nt != T_INT && nt != T_STR { report(ln, "key: takes a whole number or text"); continue; }
+            kx = n;
+            kx_s = v0;
+            kx_e = a1;
+        }
+    }
+    for k in np {
+        if pn[k] < 0 && fld(props[k], 3).len == 0 && nerr == before {
+            var m: u8[>..] = [];
+            format(m, "@", name, " needs prop ", fld(props[k], 0));
+            report(ln, m);
+        }
+    }
+    if kx < 0 {
+        var in_for = false;
+        for o in opens { if o.kind == 'f' { in_for = true; } }
+        if in_for && nerr == before { warn_buf("child-key", ln, "a component in {#for} needs key:"); }
+    }
+    if nerr != before { return true; }
+    // The Goose.
+    var call: u8[>..] = [];
+    let int_key = kx >= 0 && nodes[kx].ty.t == T_INT;
+    if int_key { format(call, "{ var gw_k: u8[>..] = []; format(gw_k, ", rewrite(kx_s, kx_e), "); "); } else { call.append("{ "); }
+    format(call, "let gw_c = ", name, "::Props { ");
+    for k in np {
+        let l = props[k];
+        if k > 0 { call.append(", "); }
+        if pn[k] >= 0 { format(call, fld(l, 0), ": ", rewrite(vs[k], ve[k])); }
+        else { format(call, fld(l, 0), ": ", fld(l, 3)); }
+    }
+    if np == 0 { call.append(".. "); }
+    format(call, "}; ", name, "::nest(out, gw_c, ");
+    if int_key { call.append("gw_k"); } else if kx >= 0 { call.append(rewrite(kx_s, kx_e)); } else { call.append("\"\""); }
+    call.append(", \"");
+    for ch in emit_attrs { if ch == '"' { call.append("\\\""); } else { call.push(ch); } }
+    call.append("\"); } ");
+    var part = -1;
+    if opens.len == 0 && span_kind_at(s) < 0 {
+        part = part_begin(PK_CHILD);
+        mtext("<!--g-->");
+    } else if opens.len > 0 && opens[0].part >= 0 { parts[opens[0].part].kids = true; }
+    g_flush();
+    g_code(call);
+    // The JavaScript.
+    let full = child_obj(props, np, pn, true);
+    cat_expr(true);
+    child_use = child_use | 1;
+    w(gwc_name(1));
+    w("(");
+    js_str(name);
+    wo(", ");
+    js.append(full);
+    if kx >= 0 {
+        wo(", ");
+        if nodes[kx].ty.t == T_INT { w("\"\""); wo(" + "); }
+        emit_expr(kx, true);
+    } else if emit_attrs.len > 0 { wo(", "); w("\"\""); }
+    if emit_attrs.len > 0 { wo(", "); js_str(emit_attrs); }
+    w(")");
+    var have = false;
+    for k in kids { if k == name { have = true; } }
+    if !have { var kn: u8[..64] = ""; kn.append(name); kids.push(kn); }
+    if part >= 0 { part_end(part, rbits, child_obj(props, np, pn, false), true); }
+    return true;
 }
 
 fn markup_line(li: i64, last: bool, goose_out: u8[>..]&) {
@@ -2417,13 +5600,18 @@ fn markup_line(li: i64, last: bool, goose_out: u8[>..]&) {
         m_text(base + p, base + at, ln);
         p = at;
         if at == line.len || tscan::is_raw(raw_st) { continue; }
+        fire_to(base + at);
         if line[at] == '}' { report(ln, "'}' without '{'; for a literal brace write &#125;"); break; }
         if line[at] == '@' {
             let open = tscan::call_open(line, at);
+            let close = tscan::paren_end(line, open);
+            if reactive && close >= 0 && find(line[at + 1..open], ":") < 0 && child_call(ln, base + open + 1, base + close, line[at + 1..open]) {
+                p = close + 1;
+                continue;
+            }
             var what: u8[>..] = [];
             format(what, line[at..open], "()");
             not_available(ln, what);
-            let close = tscan::paren_end(line, open);
             if close < 0 { break; }
             p = close + 1;
             continue;
@@ -2440,6 +5628,7 @@ fn markup_line(li: i64, last: bool, goose_out: u8[>..]&) {
         let a = trim_s(base + at + 1, base + e);
         let b = trim_e(a, base + e);
         p = e + 1;
+        mk_after = base + e + 1;
         let inner = text[a..b];
         if starts_with(inner, "#if ") { m_if(trim_s(a + 4, b), b, ln, false); }
         else if starts_with(inner, "#else if ") { m_if(trim_s(a + 9, b), b, ln, true); }
@@ -2465,12 +5654,14 @@ fn markup_line(li: i64, last: bool, goose_out: u8[>..]&) {
         else if a == b { report(ln, "empty { }"); }
         else { m_expr(a, b, ln, false); }
     }
+    fire_to(base + line.len);
     if !last { mtext("\n"); }
     g_flush();
     if last { gline.append("}"); }
     goose_out.append(gline);
     goose_out.push('\n');
-    if !compact { cat_close(); }
+    // A tag with a part's attribute list stays one statement across its lines.
+    if !compact && ptag_phase == 0 { cat_close(); }
 }
 
 fn compile_markup(first_line: i64, render_line: i64, goose_out: u8[>..]&) {
@@ -2480,24 +5671,28 @@ fn compile_markup(first_line: i64, render_line: i64, goose_out: u8[>..]&) {
     if compact {
         o_js.clear();
         o_js.append(next_short());
-        var v = Var { name: "s", ty: st, js: "" };
-        v.js.append(next_short());
-        vars.push(v);
+        if !reactive {
+            var v = Var { name: "s", ty: st, js: "" };
+            v.js.append(next_short());
+            vars.push(v);
+        }
     } else {
         o_js.clear();
         o_js.append("o");
         used.push("o");
-        var v = Var { name: "s", ty: st, js: "" };
-        v.js = pick_name("s");
-        vars.push(v);
+        if !reactive {
+            var v = Var { name: "s", ty: st, js: "" };
+            v.js = pick_name("s");
+            vars.push(v);
+        }
     }
-    s_var = vars.len - 1;
-    scope.push(s_var);
+    // A reactive component's markup names its state directly: no s.
+    if reactive { s_var = -1; } else { s_var = vars.len - 1; scope.push(s_var); }
     emit_line_note(render_line);
     w("function ");
     w(render_js);
     w("(");
-    w_var(s_var);
+    if reactive { w(s_js); } else { w_var(s_var); }
     wo(") {");
     ind = 1;
     nl();
@@ -2509,6 +5704,7 @@ fn compile_markup(first_line: i64, render_line: i64, goose_out: u8[>..]&) {
     pend.clear();
     raw_st = tscan::MARKUP;
     cat_open = false;
+    if reactive { scan_parts(first_line); }
     let nl_count = line_start.len;
     var raw_line = 0;             // the line where the open <script>/<style> began
     for li in first_line..nl_count {
@@ -2547,7 +5743,169 @@ fn emit_json_writer(out: u8[>..]&) {
             }
         }
         out.append(if sd.n == 0 { "out.append(\"{}\"); }\n" } else { "out.push('}'); }\n" });
+        // Reactive components also write a slice of structs (routes, step 6).
+        if reactive {
+            format(out, "fn gw_json(out: u8[>..]&, v: const ", sd.name, "[:]) { out.push('['); ",
+                   "for gw_x, gw_i in v { if gw_i > 0 { out.push(','); } gw_json(out, gw_x); } out.push(']'); }\n");
+        }
     }
+}
+
+// ---------------------------------------------------------------- the reactive tail (section 3.1)
+
+// A declaration's type as the Goose structs write it: as in the source, with const on u8[:] and S[:] props.
+fn decl_type(d: RDecl) -> u8[>..] {
+    var r: u8[>..] = [];
+    if d.kind == R_STORE { r.append(stub_ty(d.ty)); return r; }
+    if (d.ty.t == T_STR && d.ty.cap == 0) || (d.ty.t == T_ARRAY && d.ty.cap == RO) { r.append("const "); }
+    r.append(text[d.ts..d.te]);
+    return r;
+}
+
+// State holds @state, then @computed, in declaration order, and the array @state last.
+fn in_state(d: RDecl, pass: i64) -> bool {
+    if pass == 0 { return (d.kind == R_STATE || d.kind == R_STORE) && d.ty.t != T_ARRAY; }
+    if pass == 1 { return d.kind == R_COMPUTED; }
+    return d.kind == R_STATE && d.ty.t == T_ARRAY;
+}
+
+// The writer of one field: owner is "gw_p." or "gw_s.".
+fn json_field(out: u8[>..]&, d: RDecl, owner: const u8[:], first: bool) {
+    format(out, "out.append(\"", if first { "{" } else { "," }, "\\\"", d.name, "\\\":\"); ");
+    let t = d.ty.t;
+    if t == T_INT || t == T_BOOL { format(out, "format(out, ", owner, d.name, "); "); }
+    else if t == T_STR { format(out, "web::json_text(out, ", owner, d.name, "); "); }
+    else if t == T_STRUCT { format(out, "gw_json(out, ", owner, d.name, "); "); }
+    else {
+        format(out, "out.push('['); for gw_x, gw_i in ", owner, d.name,
+               " { if gw_i > 0 { out.push(','); } gw_json(out, gw_x); } out.push(']'); ");
+    }
+}
+
+// A type as the Goose stubs write it.
+fn stub_ty(t: const Ty&) -> u8[>..] {
+    var r: u8[>..] = [];
+    if t.t == T_INT { r.append("i64"); }
+    else if t.t == T_BOOL { r.append("bool"); }
+    else if t.t == T_STR { format(r, "u8[..", t.cap, "]"); }
+    else if t.t == T_STRUCT { r.append(t.name); }
+    else { format(r, t.name, "[>..<]"); }
+    return r;
+}
+
+// What the stub returns: the type's zero.
+fn stub_zero(t: const Ty&) -> u8[>..] {
+    var r: u8[>..] = [];
+    if t.t == T_INT { r.append("0"); }
+    else if t.t == T_BOOL { r.append("false"); }
+    else if t.t == T_STR { r.append("\"\""); }
+    else if t.t == T_STRUCT { format(r, t.name, " { .. }"); }
+    else { r.append("[]"); }
+    return r;
+}
+
+// gw_get_K(url) -> T and gw_post_K(url, value) [-> T]: the Goose side of http::get and http::post. A handler never
+// runs on the server, so the stubs only give the Goose compiler the types.
+fn emit_stubs(out: u8[>..]&) {
+    for st, i in stubs {
+        format(out, "fn gw_", if st.post { "post" } else { "get" }, "_", i, "(gw_u: const u8[:]");
+        if st.post {
+            out.append(", gw_v: ");
+            let v = st.val;
+            if v.t == T_STR { out.append("const u8[:]"); }
+            else if v.t == T_STRUCT { format(out, "const ", v.name, "&"); }
+            else if v.t == T_ARRAY { format(out, "const ", v.name, "[:]"); }
+            else { out.append(stub_ty(v)); }
+        }
+        out.push(')');
+        if st.reply.t == T_VOID { out.append(" {}\n"); continue; }
+        let rt = stub_ty(st.reply);
+        format(out, " -> ", rt, " { var gw_r: ", rt, " = ", stub_zero(st.reply), "; return gw_r; }\n");
+    }
+}
+
+fn emit_reactive_tail(name: const u8[:], out: u8[>..]&) {
+    out.append("struct Props {");
+    var first = true;
+    for d in rdecls {
+        if d.kind != R_PROP { continue; }
+        format(out, if first { " " } else { ", " }, d.name, ": ", decl_type(d));
+        first = false;
+    }
+    out.append(if first { "}\n" } else { " }\n" });
+    out.append("struct State {");
+    first = true;
+    for pass in 3 {
+        for d in rdecls {
+            if !in_state(d, pass) { continue; }
+            format(out, if first { " " } else { ", " }, d.name, ": ", decl_type(d));
+            first = false;
+        }
+    }
+    out.append(if first { "}\n" } else { " }\n" });
+    emit_stubs(out);
+    out.append("fn gw_init(gw_p: const Props&) -> State { var gw_s = State { .. }; ");
+    // The copies of the stores' values start as the stores' initial state.
+    for u in ruses {
+        format(out, "{ var gw_t = ", u.name, "::Props { .. }; let gw_v = ", u.name, "::gw_init(gw_t); ");
+        for j in u.n { format(out, "gw_s.", rdecls[u.base + j].name, " = gw_v.", rdecls[u.base + j].sn, "; "); }
+        out.append("} ");
+    }
+    for d in rdecls {
+        if d.kind == R_STATE && has_init_fn(d) { format(out, "gw_s.", d.name, " = gw_i_", d.name, "(gw_p, gw_s); "); }
+    }
+    for k in rorder.len {
+        let d = rdecls[rorder[k]];
+        if has_init_fn(d) { format(out, "gw_s.", d.name, " = gw_c_", d.name, "(gw_p, gw_s); "); }
+    }
+    out.append("return gw_s; }\n");
+    out.append("fn gw_flush(gw_p: const Props&, gw_s: State&) { ");
+    for k in rorder.len {
+        let d = rdecls[rorder[k]];
+        if has_init_fn(d) { format(out, "gw_s.", d.name, " = gw_c_", d.name, "(gw_p, gw_s); "); }
+    }
+    out.append("}\n");
+    out.append("fn gw_check(gw_p: const Props&, gw_s: const State&) { var gw_w = State { .. };\n");
+    out.append(chk);
+    out.append("}\n");
+    emit_json_writer(out);
+    out.append("fn gw_json(out: u8[>..]&, gw_p: const Props&, gw_s: const State&) { ");
+    first = true;
+    for d in rdecls {
+        if d.kind != R_PROP { continue; }
+        json_field(out, d, "gw_p.", first);
+        first = false;
+    }
+    for pass in 3 {
+        for d in rdecls {
+            if !in_state(d, pass) { continue; }
+            json_field(out, d, "gw_s.", first);
+            first = false;
+        }
+    }
+    out.append(if first { "out.append(\"{}\"); }\n" } else { "out.push('}'); }\n" });
+    if store_mode {
+        // What a component calls (Store::add(x) is Store::gw_x_add(x) there): the Goose side runs no handler.
+        for f in fns {
+            if f.body < 0 || f.test || f.w == 0 || f.ret.t != T_VOID { continue; }
+            var close = f.tok + 2;
+            while !tok_is(close, ")") { close += 1; }
+            format(out, "fn gw_x_", f.name, "(", text[toks[f.tok + 1].e..toks[close].s], ") {}\n");
+        }
+        return;
+    }
+    // nest is the child form (a parent's markup calls it with the child's key); component adds the module script.
+    format(out, "fn nest(out: u8[>..]&, gw_p: const Props&, gw_k: const u8[:], gw_a: const u8[:]) { let gw_s = gw_init(gw_p); out.append(\"<div data-component=\\\"", name,
+           "\\\"\"); if gw_k.len > 0 { out.append(\" gw-key=\\\"\"); web::put(out, gw_k); out.append(\"\\\"\"); } out.append(gw_a); out.append(\">\"); ",
+           "render(out, gw_p, gw_s); out.append(\"</div><script type=\\\"application/json\\\">\"); gw_json(out, gw_p, gw_s); out.append(\"</script>\"); }\n");
+    // Each store this component @uses has its initial state written after the root (the client reads the first of them).
+    format(out, "fn component(out: u8[>..]&, gw_p: const Props&) { nest(out, gw_p, \"\", \"\"); ");
+    for u in ruses {
+        format(out, "{ var gw_t = ", u.name, "::Props { .. }; let gw_v = ", u.name, "::gw_init(gw_t); ",
+               "out.append(\"<script type=\\\"application/json\\\" data-store=\\\"", u.name, "\\\">\"); ",
+               u.name, "::gw_json(out, gw_t, gw_v); out.append(\"</script>\"); } ");
+    }
+    format(out, "out.append(\"<script type=\\\"module\\\" src=\\\"/_gw/", name, ".js\\\"></script>\"); }\n");
 }
 
 fn check_structs() {
@@ -2562,10 +5920,160 @@ fn check_structs() {
     }
 }
 
+// ---------------------------------------------------------------- warnings
+
+fn id_ch(c: u8) -> bool { return is_alpha(c) || (c >= '0' && c <= '9'); }
+
+// Does code write the array field f other than by push and clear: `.f.remove_at(`, `.f[i] = ...` or `.f = ...`?
+fn writes_array(code: const u8[:], f: const u8[:]) -> bool {
+    var pat: u8[>..] = [];
+    format(pat, ".", f);
+    var p = 0;
+    while p < code.len {
+        let k = find(code[p..], pat);
+        if k < 0 { return false; }
+        var q = p + k + pat.len;
+        p = q;
+        if q < code.len && id_ch(code[q]) { continue; }
+        if starts_with(code[q..], ".remove_at(") { return true; }
+        if q < code.len && code[q] == '[' {
+            var depth = 0;
+            while q < code.len {
+                if code[q] == '[' { depth += 1; }
+                if code[q] == ']' { depth -= 1; if depth == 0 { q += 1; break; } }
+                q += 1;
+            }
+        }
+        while q < code.len && (code[q] == ' ' || code[q] == '\t') { q += 1; }
+        if q < code.len && code[q] == '=' && !(q + 1 < code.len && code[q + 1] == '=') { return true; }
+    }
+    return false;
+}
+
+// Is the first element tag after text[at..] (up to the matching {/for}) without gw-key? Scans at most 12 lines.
+fn first_tag_unkeyed(li: i64, at: i64) -> bool {
+    var from = at;
+    var l = li;
+    var tag: u8[>..] = [];
+    var open = false;
+    var braces = 0;
+    while l < line_start.len && l < li + 12 {
+        let ln = text[line_start[l]..line_end[l]];
+        var i = if l == li { from } else { 0 };
+        while i < ln.len {
+            let c = ln[i];
+            if !open {
+                if starts_with(ln[i..], "{/for}") { return false; }
+                if c == '<' && i + 1 < ln.len && is_alpha(ln[i + 1]) { open = true; }
+            } else {
+                if c == '{' { braces += 1; }
+                if c == '}' && braces > 0 { braces -= 1; }
+                if c == '>' && braces == 0 { return find(tag, "gw-key") < 0; }
+                tag.push(c);
+            }
+            i += 1;
+        }
+        if open { tag.push(' '); }
+        l += 1;
+    }
+    return false;
+}
+
+// unkeyed-for (legacy components): a {#for x in s.F} over the State array whose script writes F other than by
+// push and clear, and whose first element tag has no gw-key. A heuristic on the text; it errs towards silence.
+fn warn_unkeyed(close: i64, warns: u8[>..]&) {
+    let si = find_struct("State");
+    if si < 0 { return; }
+    var f: u8[>..] = [];
+    for k in structs[si].n {
+        let fl = fields[structs[si].first + k];
+        if fl.kind == Kind.Array { f.append(fl.name); }
+    }
+    if f.len == 0 || close < 1 { return; }
+    if !writes_array(text[line_start[1]..line_start[close]], f) { return; }
+    var want: u8[>..] = [];
+    format(want, "s.", f);
+    let first = close + 1;
+    let total = line_start.len;
+    for li in first..total {
+        let ln = text[line_start[li]..line_end[li]];
+        var p = 0;
+        while p < ln.len {
+            let k = find(ln[p..], "{#for ");
+            if k < 0 { break; }
+            let a = p + k;
+            let e = find(ln[a..], "}");
+            if e < 0 { break; }
+            p = a + e + 1;
+            let head = ln[a + 6..a + e];
+            let kin = find(head, " in ");
+            if kin < 0 || trim(head[kin + 4..]) != want { continue; }
+            if first_tag_unkeyed(li, p) {
+                var m: u8[>..] = [];
+                format(m, "{#for} over ", want, " needs gw-key on its elements: the list can reorder or lose an item");
+                format(warns, "unkeyed-for\t", src_path, ":", li + 1, ": warning: ", m, "\n");
+            }
+        }
+    }
+}
+
 // The parity tests of the component compile() last read, one name per line.
 fn test_names() -> u8[>..] {
     var r: u8[>..] = [];
     for f in fns { if f.test && f.body >= 0 { r.append(f.name); r.push('\n'); } }
+    return r;
+}
+
+// The @props of the component compile() last read: `name\tdefault source or empty\n` each.
+fn props_of() -> u8[>..] {
+    var r: u8[>..] = [];
+    r.append(props_buf);
+    return r;
+}
+
+fn is_reactive() -> bool { return reactive; }
+
+// gweb tells compile() which components exist (registry_add, in any order) and compiles a component after the
+// components it calls; compile() records each one's props here, which a caller's arguments are checked against.
+fn registry_clear() {
+    reg.clear();
+    reg_stores.clear();
+    reg_props.clear();
+    reg_events.clear();
+}
+
+fn registry_add(name: const u8[:]) {
+    var c = RegC { name: "", done: 0 };
+    c.name.append(name);
+    reg.push(c);
+}
+
+// 1 when the module calls a child component (and so imports gwc.js).
+fn children_used() -> i64 { return if kids.len > 0 { 1 } else { 0 }; }
+
+// The string-literal urls of the http calls compile() last read: `METHOD\tLINE\turl\n` each.
+fn http_urls() -> u8[>..] {
+    var r: u8[>..] = [];
+    r.append(http_urls_buf);
+    return r;
+}
+
+// 1 when the module uses http::get, 2 http::post (and so imports gwh.js).
+fn http_used() -> i64 { return http_use; }
+
+// 1 when the module calls life() (and so imports gwl.js).
+fn life_used() -> i64 { return life_use; }
+fn mods_used() -> i64 { return mods_use; }
+fn trans_used() -> i64 { return trans_use; }
+
+// For each test of test_names, in its order: 1 when it is called test(gw_p, gw_s), 0 when with no arguments.
+fn test_args() -> u8[>..] {
+    var r: u8[>..] = [];
+    for i in fns.len {
+        if !fns[i].test || fns[i].body < 0 { continue; }
+        r.append(if reactive && takes_state(i) { "1" } else { "0" });
+        r.push('\n');
+    }
     return r;
 }
 
@@ -2595,6 +6103,63 @@ fn reset() {
     gtext.clear();
     gline.clear();
     cat_open = false;
+    reactive = false;
+    store_mode = store_next;
+    store_next = false;
+    store_local.clear();
+    store_at = -1;
+    store_end = -1;
+    rdecls.clear();
+    rblocks.clear();
+    ruses.clear();
+    rorder.clear();
+    rmarks.clear();
+    mk_r = 0;
+    rw_r = 0;
+    rw_w = 0;
+    rw_wide = 0;
+    rw_soft = false;
+    rw_rep = false;
+    rw_ctx = 0;
+    warns_buf.clear();
+    edits.clear();
+    props_buf.clear();
+    parts.clear();
+    pcode.clear();
+    letcode.clear();
+    pspans.clear();
+    ptag = 0;
+    ptag_phase = 0;
+    pr_open = -1;
+    pr_acc = 0;
+    pr_ra = 0;
+    pr_flow = 0;
+    n_flow = 0;
+    mk_after = 0;
+    var_r.clear();
+    ev_types.clear();
+    stubs.clear();
+    decs.clear();
+    dec_bits = 0;
+    http_urls_buf.clear();
+    http_use = 0;
+    life_use = 0;
+    mods_use = 0;
+    trans_use = 0;
+    await_ctx.clear();
+    rw_noasync.clear();
+    rw_async = false;
+    rw_awaited = -1;
+    kids.clear();
+    child_use = 0;
+}
+
+// A store (stores/Name.gshtml): compiled like a component without props or markup (Addendum 12 section 7.7). gweb
+// compiles every store before the components, which read what it leaves in reg_stores. Same arguments as compile().
+fn compile_store(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: bool,
+                 goose_out: u8[>..]&, js_out: u8[>..]&, errs: u8[>..]&, warns: u8[>..]&) -> bool {
+    store_next = true;
+    return compile(name, path, src, compact_js, goose_out, js_out, errs, warns);
 }
 
 // The first 8 hex digits of gweb's ETag hash (FNV-1a 64), so the URL here is the one gweb serves.
@@ -2608,9 +6173,10 @@ fn js_hash8(data: const u8[:]) -> u8[..8] {
 }
 
 // Errors go to errs as `path:LINE: error: MSG` lines; false when there were any.
+// Warnings go to warns as `code\tpath:LINE: warning: MSG` lines.
 // goose_out is written even then, so the Goose compiler can report its own errors.
-fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: bool, rt_file: const u8[:],
-           goose_out: u8[>..]&, js_out: u8[>..]&, errs: u8[>..]&) -> bool {
+fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: bool,
+           goose_out: u8[>..]&, js_out: u8[>..]&, errs: u8[>..]&, warns: u8[>..]&) -> bool {
     reset();
     compact = compact_js;
     src_path.clear();
@@ -2618,6 +6184,7 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
     isl.clear();
     isl.append(name);
     text.append(src);
+    if find(src, "gw-enter") >= 0 || find(src, "gw-leave") >= 0 { trans_use = 1; }
     var s = 0;
     for i in text.len + 1 {
         if i == text.len || text[i] == '\n' {
@@ -2641,52 +6208,207 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
         errs.append(errs_buf);
         return false;
     }
-    format(goose_out, "namespace ", name, "; import std; import json; import web; import web.template;\n");
-    for li in 1..close {
-        goose_out.append(text[line_start[li]..line_end[li]]);
-        goose_out.push('\n');
-    }
-    goose_out.append("fn render(out: u8[>..]&, s: const State&) {\n");
+    let ri = reg_find(name);
+    if ri >= 0 { reg[ri].done = 1; }
     parse_script(1, close);
-    check_structs();
+    if !store_mode && close + 1 < nlines {
+        var aw: u8[>..] = [];
+        html::check(text, line_start[close + 1], close + 2, true, aw);
+        for l in split(aw, '\n') {
+            let f = split(l, '\t');
+            if f.len != 2 { continue; }
+            let ln, ok = parse_int(f[0]);
+            if ok { warn_buf("unknown-attribute", ln, f[1]); }
+        }
+    }
+    if store_mode {
+        for li in close + 1..nlines {
+            if trim(text[line_start[li]..line_end[li]]).len > 0 { report(li + 1, "a store has no markup"); break; }
+        }
+    }
+    // The header: a reactive component imports the components its markup calls (they were compiled before it).
+    format(goose_out, "namespace ", name, "; import std; import json; import web; import web.template;");
+    if reactive {
+        for li in close + 1..nlines {
+            let l = text[line_start[li]..line_end[li]];
+            for i in l.len {
+                if l[i] != '@' { continue; }
+                let o = tscan::call_open(l, i);
+                if o < 0 { continue; }
+                let cn = l[i + 1..o];
+                let rj = reg_find(cn);
+                if rj < 0 || reg[rj].done != 2 || cn == name { continue; }
+                var imp: u8[>..] = [];
+                format(imp, " import ", cn, ";");
+                if find(goose_out, imp) < 0 { goose_out.append(imp); }
+            }
+        }
+    }
+    for u in ruses { format(goose_out, " import ", u.name, ";"); }
+    goose_out.push('\n');
+    if reactive { check_rmodel(); } else { check_structs(); }
     for &f in fns {
-        if f.n > 0 && params[f.first].mref && params[f.first].ty.name == "State" {
+        if !reactive && f.n > 0 && params[f.first].mref && params[f.first].ty.name == "State" {
             f.test = starts_with(f.name, "test_") && f.n == 1;
             f.handler = !f.test;
         }
     }
     assign_module_names();
     for i in fns.len { check_fn(i); }
-    for i in fns.len { if fns[i].body >= 0 { emit_js_fn(i); } }
-    compile_markup(close + 1, close + 1, goose_out);
-    if close + 1 >= nlines { goose_out.append("}\n"); }
-    emit_zero();
-    emit_component_call();
-    goose_out.append("fn gw_check(s: const State&) { var gw_w = State { .. };\n");
-    goose_out.append(chk);
-    goose_out.append("}\n");
-    emit_json_writer(goose_out);
+    if reactive { check_reactive(); rec_script(); }
+    if reactive && ri >= 0 { reg[ri].done = 2; }
+    // The script lines, line for line; a reactive component's are rewritten (section 3.1).
+    for li in 1..close {
+        if reactive { goose_out.append(rewrite(line_start[li], line_end[li])); }
+        else { goose_out.append(text[line_start[li]..line_end[li]]); }
+        goose_out.push('\n');
+    }
+    if store_mode { goose_out.append(""); }
+    else if reactive { goose_out.append("fn render(out: u8[>..]&, gw_p: const Props&, gw_s: const State&) {\n"); }
+    else { goose_out.append("fn render(out: u8[>..]&, s: const State&) {\n"); }
+    if reactive {
+        for d in rdecls {
+            if d.kind != R_PROP { continue; }
+            format(props_buf, d.name, "\t");
+            if d.init >= 0 { props_buf.append(text[span_s(d.init)..span_e(d.init)]); }
+            props_buf.push('\n');
+            // The registry line for the components that call this one: its type and its default, in Goose and JavaScript.
+            format(reg_props, name, "\t", d.name, "\t", d.ty.t, "\t", d.ty.cap, "\t");
+            if d.init >= 0 { reg_props.append(text[span_s(d.init)..span_e(d.init)]); }
+            reg_props.push('\t');
+            if d.init >= 0 && nerr == 0 {
+                let keep = js.len;
+                emit_expr(d.init, true);
+                reg_props.append(js[keep..js.len]);
+                js.resize(keep);
+            }
+            reg_props.push('\n');
+        }
+    }
+    if reactive {
+        for f in fns {
+            if !f.event { continue; }
+            format(reg_events, name, "\t", f.name, "\t");
+            for p in f.first..f.first + f.n {
+                if p > f.first { reg_events.push(','); }
+                format(reg_events, params[p].ty.t);
+            }
+            reg_events.push('\n');
+        }
+    }
+    if !reactive || nerr == 0 { for i in fns.len { if fns[i].body >= 0 { emit_js_fn(i); } } }
+    if !store_mode {
+        await_ctx.clear();
+        await_ctx.append("markup");
+        compile_markup(close + 1, close + 1, goose_out);
+        await_ctx.clear();
+        if close + 1 >= nlines { goose_out.append("}\n"); }
+    }
+    if !reactive {
+        emit_zero();
+        emit_component_call();
+    } else if nerr == 0 {
+        emit_decoders();
+        emit_reactive_update();
+        let has_watch = emit_reactive_watch();
+        emit_reactive_init();
+        emit_reactive_call(has_watch);
+    }
+    if reactive {
+        emit_reactive_tail(name, goose_out);
+    } else {
+        goose_out.append("fn gw_check(s: const State&) { var gw_w = State { .. };\n");
+        goose_out.append(chk);
+        goose_out.append("}\n");
+        emit_json_writer(goose_out);
+        format(goose_out, "fn component(out: u8[>..]&, s: const State&) { out.append(\"<div data-component=\\\"", name,
+               "\\\">\"); render(out, s); out.append(\"</div><script type=\\\"application/json\\\">\"); gw_json(out, s); ",
+               "out.append(\"</script><script type=\\\"module\\\" src=\\\"/_gw/", name, ".js\\\"></script>\"); }\n");
+    }
     if compact {
         js_out.append("import{");
         var first = true;
-        for h in 9 {
+        for h in HN {
             if !helper_used[h] { continue; }
             if !first { js_out.push(','); }
             first = false;
             format(js_out, HELPERS[h], " as ", helper_js[h]);
         }
-        js_out.append("}from\"./"); js_out.append(rt_file); js_out.append("\";");
+        js_out.append("}from\"./gwi.js\";");
+        if (http_use & 3) != 0 {
+            js_out.append("import{");
+            if (http_use & 1) != 0 { js_out.append("get as $g"); }
+            if (http_use & 3) == 3 { js_out.push(','); }
+            if (http_use & 2) != 0 { js_out.append("post as $p"); }
+            js_out.append("}from\"./gwh.js\";");
+        }
+        if life_use != 0 { js_out.append("import{life as $l}from\"./gwl.js\";"); }
+        if mods_use != 0 { js_out.append("import\"./gwm.js\";"); }
+        if trans_use != 0 { js_out.append("import\"./gwt.js\";"); }
+        if store_mode { js_out.append("import{store as $s}from\"./gws.js\";"); }
+        for u in ruses { format(js_out, "import $", u.name, " from\"./", u.name, ".js\";"); }
+        for k in kids { format(js_out, "import\"./", k, ".js\";"); }
+        if child_use != 0 {
+            js_out.append("import{");
+            var firstc = true;
+            for bit in [1, 2, 4] {
+                if (child_use & bit) == 0 { continue; }
+                if !firstc { js_out.push(','); }
+                firstc = false;
+                format(js_out, if bit == 1 { "H" } else if bit == 2 { "Q" } else { "M" }, " as ", gwc_name(bit));
+            }
+            js_out.append("}from\"./gwc.js\";");
+        }
     } else {
         js_out.append("// Generated by gweb from ");
         js_out.append(path);
-        js_out.append(". Do not edit.\nimport { component, esc, at, set, rm, blen, cap, idiv, imod } from \"./");
-        js_out.append(rt_file);
-        js_out.append("\";\n");
+        js_out.append(". Do not edit.\nimport { component, esc, at, set, rm, blen, cap, idiv, imod, ");
+        js_out.append(if reactive { "T, A, B" } else { "swap" });
+        js_out.append(" } from \"./gwi.js\";\n");
+        if (http_use & 3) != 0 {
+            js_out.append("import { ");
+            if (http_use & 1) != 0 { js_out.append("get as gw_get"); }
+            if (http_use & 3) == 3 { js_out.append(", "); }
+            if (http_use & 2) != 0 { js_out.append("post as gw_post"); }
+            js_out.append(" } from \"./gwh.js\";\n");
+        }
+        if life_use != 0 { js_out.append("import { life } from \"./gwl.js\";\n"); }
+        if mods_use != 0 { js_out.append("import \"./gwm.js\";\n"); }
+        if trans_use != 0 { js_out.append("import \"./gwt.js\";\n"); }
+        if store_mode { js_out.append("import { store as gw_store } from \"./gws.js\";\n"); }
+        for u in ruses { format(js_out, "import gw_", u.name, " from \"./", u.name, ".js\";\n"); }
+        for k in kids { format(js_out, "import \"./", k, ".js\";\n"); }
+        if child_use != 0 {
+            js_out.append("import { ");
+            var firstc = true;
+            for bit in [1, 2, 4] {
+                if (child_use & bit) == 0 { continue; }
+                if !firstc { js_out.append(", "); }
+                firstc = false;
+                format(js_out, if bit == 1 { "H" } else if bit == 2 { "Q" } else { "M" }, " as ", gwc_name(bit));
+            }
+            js_out.append(" } from \"./gwc.js\";\n");
+        }
     }
     js_out.append(js);
-    format(goose_out, "fn component(out: u8[>..]&, s: const State&) { out.append(\"<div data-component=\\\"", name,
-           "\\\">\"); render(out, s); out.append(\"</div><script type=\\\"application/json\\\">\"); gw_json(out, s); ",
-           "out.append(\"</script><script type=\\\"module\\\" src=\\\"/_gw/", name, ".", js_hash8(js_out), ".js\\\"></script>\"); }\n");
+    if store_mode {
+        // What the components that @use this store read: `U` the store, `S` each scalar name with its type and bit,
+        // `F` each function that changes its state, with the bits.
+        format(reg_stores, "U\t", name, "\n");
+        for d in rdecls {
+            if d.ty.t == T_INT || d.ty.t == T_BOOL || (d.ty.t == T_STR && d.ty.cap > 0) {
+                format(reg_stores, "S\t", name, "\t", d.name, "\t", d.ty.t, "\t", d.ty.cap, "\t", d.bit, "\n");
+            }
+        }
+        for f in fns {
+            if f.body >= 0 && !f.test && f.w != 0 && f.ret.t == T_VOID { format(reg_stores, "F\t", name, "\t", f.name, "\t", f.w, "\n"); }
+        }
+    }
     errs.append(errs_buf);
+    if nerr == 0 {
+        if reactive { warn_reactive(); }
+        warns.append(warns_buf);
+        warn_unkeyed(close, warns);
+    }
     return nerr == 0;
 }

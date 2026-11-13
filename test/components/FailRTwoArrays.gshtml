@@ -1,0 +1,7 @@
+<script goose>
+// expect: components/FailRTwoArrays.gshtml:5: error: a component may hold one array @state
+struct Item { v: i64 }
+@state var a: Item[>..<] = [];
+@state var b: Item[>..<] = [];
+</script>
+<p>x</p>

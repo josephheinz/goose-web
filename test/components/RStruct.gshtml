@@ -1,0 +1,17 @@
+<script goose>
+// Struct state, array state under gw-key, push and remove_at, a write into contents.
+struct Pt { x: i64, y: i64 }
+struct Row { id: i64, label: u8[..16], at: Pt }
+@state var p: Pt = Pt { x: 1, y: 2 };
+@state var rows: Row[>..<] = [];
+@computed let dist: i64 = abs(p.x) + abs(p.y);
+fn shift(dx: i64) { p.x += dx; }
+fn add(id: i64) { rows.push(Row { id: id, label: "r<1>", at: p }); }
+fn drop(i: i64) { rows.remove_at(i); }
+fn nudge() { rows[0].at.y = 9; }
+fn test_struct() { shift(3); add(1); add(2); add(3); p.y = -4; nudge(); drop(1); }
+fn test_clear() { add(7); rows.clear(); p.x = 0; }
+</script>
+<p>{p.x},{p.y} d={dist}</p>
+<button on:click="shift(2)">right</button><button on:click="add(rows.len + 10)">add</button><button on:click="nudge">nudge</button>
+<ul>{#for r, i in rows}<li gw-key="{r.id}">{r.label}{r.id}:{r.at.x}/{r.at.y} <button on:click="drop(i)">x</button></li>{/for}</ul>

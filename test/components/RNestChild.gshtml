@@ -1,0 +1,11 @@
+<script goose>
+// The child of RNest (Addendum 12, 7.5): props with a default, its own state, a computed and a handler.
+@prop const label: u8[:];
+@prop const n: i64 = 1;
+@prop const on: bool = false;
+@state var taps: i64 = 0;
+@computed let total: i64 = n * 10 + taps;
+fn tap() { taps += 1; }
+fn test_tap() { tap(); tap(); }
+</script>
+<span class="kid">{label}</span> <button on:click="tap">{n}/{taps}/{total}</button>{#if on} <em>on</em>{/if}

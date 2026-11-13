@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRHttpUrl.gshtml:4: error: http::get needs a string url
+@state var n: i64 = 0;
+fn f() { n = await http::get(n); }
+</script>
+<p>x</p>

@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailROnArgs.gshtml:6: error: on:click handler 'add' is called with 0 arguments; it takes 1
+@state var n: i64 = 0;
+fn add(k: i64) { n += k; }
+</script>
+<button on:click="add">x</button>

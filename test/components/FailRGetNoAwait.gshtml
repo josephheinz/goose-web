@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRGetNoAwait.gshtml:4: error: http::get needs await
+@state var n: i64 = 0;
+fn f() { n = http::get("/a"); }
+</script>
+<p>x</p>

@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRHttpRoute.gshtml:4: error: http::get: no route GET /api/x
+@state var n: i64 = 0;
+fn f() { n = await http::get("/api/x"); }
+</script>
+<p>x</p>

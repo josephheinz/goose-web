@@ -1,0 +1,5 @@
+<script goose>
+// expect: components/FailRTextarea.gshtml:5: error: use bind:value on <textarea>
+@state var note: u8[..40] = "";
+</script>
+<textarea>{note}</textarea>

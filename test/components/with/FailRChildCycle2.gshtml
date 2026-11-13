@@ -1,0 +1,4 @@
+<script goose>
+@state var n: i64 = 0;
+</script>
+@FailRChildCycle()

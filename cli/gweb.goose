@@ -7,12 +7,16 @@
 //   gweb [-C dir] dev [server flags...]
 //   gweb [-C dir] test | check | lsp
 //   gweb version
+//
+// gen, build, start and test also take --strict (any warning fails the run) and
+// --diagnostics json (stderr as JSON Lines: severity, file, line, code, message[, detail]).
 
 import std;
 import os;
 import component;
 import i18n;
 import tscan;
+import html;
 import pins;
 
 // ---------------------------------------------------------------- C helpers (proc.c)
@@ -100,8 +104,6 @@ var map_text: u8[>..];
 var srcmap_text: u8[>..];
 var gen_root: u8[>..];
 var minify = false;                    // gweb build, start and gen turn it on; dev and test leave it off
-var rt_js: u8[>..];                    // the client runtime, hashed before any page or component names it
-var rt_file: u8[>..];                  // its file name, gwi.<hash>.js
 // gweb test must never touch BUILD_DIR: a built server or a running gweb dev depends on it.
 let TEST_DIR = ".gooseweb.test";
 let BUILD_DIR = ".gooseweb";
@@ -112,31 +114,213 @@ var overlay_tmp: u8[>..];
 var start_cwd: u8[>..];                // the folder gweb started in, before any -C
 var component_names: u8[..64][>..<];
 var component_paths: u8[..512][>..<];   // component_paths[i] is the source file of component_names[i]
+var store_names: u8[..64][>..<];       // stores/Name.gshtml (Addendum 12 section 7.7)
 var component_lines: i64[>..<];
+var component_reactive: i64[>..<];     // 1 for a component with @ declarations (parallel to component_names)
+var component_props: u8[>..];          // `Name\tprop\tdefault source\n` for each @prop of each reactive component
 var component_errors = 0;              // translator errors of this gen; the build still runs goose
 var uses_fragments = false;
 var has_locales = false;              // locales/ exists: .gooseweb/t.goose is generated
 var locale_notes: u8[>..];             // the 'lacks' lines, printed after a successful build
 var locale_count = 0;
+var uses_boost = false;               // a layout or page has <body gw-boost> (serves gwn.js)
+var uses_trans = false;               // markup uses gw-enter or gw-leave (serves gwt.js)
+var uses_sse = false;                 // markup uses gw-sse (serves gwe.js, and gws.js which it imports)
+var uses_mods = false;                // a component imports gwm.js (on: modifiers)
+var uses_life = false;                // a component calls life() (imports gwl.js)
+var uses_children = false;            // a component calls a child component (imports gwc.js)
+var uses_stores = false;              // the site has a store (stores/*.gshtml, serves gws.js)
+var uses_http = false;                 // a component imports gwh.js (http::get or http::post)
+var http_calls: Target[>..<];          // each string-literal url of an http call (post: POST, name: get or post)
 var targets: Target[>..<];
 var tpl_script = false;
+var tpl_boost = false;
+var tpl_trans = false;
+var tpl_sse = false;
 var last_errors: u8[>..];
 var test_files: u8[..80][>..<];        // t_<name>, one per tests/<name>.goose
 var test_fns: TestFn[>..<];
+var warnings = 0;
+var last_warnings: u8[>..];
+var strict = false;                    // --strict: warnings fail the run
+var json_diag = false;                 // --diagnostics json
+var debug_flag = false;                // build --debug
 
 fn note_errors(text: const u8[:]) {
     let room = 16384 - last_errors.len;
     if room > 0 { last_errors.append(text[..min(text.len, room)]); }
 }
 
+fn note_warnings(text: const u8[:]) {
+    let room = 16384 - last_warnings.len;
+    if room > 0 { last_warnings.append(text[..min(text.len, room)]); }
+}
+
 // ---------------------------------------------------------------- small helpers
 
-fn err(path: const u8[:], line: i64, msg: const u8[:]) {
+// One diagnostic: sev is "error" or "warning". Text mode prints path:line: sev: msg; json mode
+// one JSON object. dev reads the text form from last_errors and last_warnings.
+fn diag(sev: const u8[:], path: const u8[:], line: i64, code: const u8[:], msg: const u8[:]) {
     var s: u8[>..] = [];
-    if line > 0 { format(s, path, ":", line, ": error: ", msg, "\n"); } else { format(s, path, ": error: ", msg, "\n"); }
-    write_stderr(s);
-    note_errors(s);
-    errors += 1;
+    if line > 0 { format(s, path, ":", line, ": ", sev, ": ", msg, "\n"); } else { format(s, path, ": ", sev, ": ", msg, "\n"); }
+    if json_diag {
+        var j: u8[>..] = [];
+        json_head(j, sev, path, line, code, msg);
+        j.append("}\n");
+        write_stderr(j);
+    } else {
+        write_stderr(s);
+    }
+    if sev == "error" { note_errors(s); errors += 1; } else { note_warnings(s); warnings += 1; }
+}
+
+fn err(path: const u8[:], line: i64, msg: const u8[:]) { diag("error", path, line, "", msg); }
+
+fn warn(path: const u8[:], line: i64, code: const u8[:], msg: const u8[:]) { diag("warning", path, line, code, msg); }
+
+// A gweb line that is not about a file: text as is, a JSON object with an empty file in json mode. Not counted.
+fn say_error(msg: const u8[:]) {
+    if !json_diag { write_stderr(msg); write_stderr("\n"); return; }
+    var j: u8[>..] = [];
+    json_head(j, "error", "", 0, "", msg);
+    j.append("}\n");
+    write_stderr(j);
+}
+
+fn json_str(out: u8[>..]&, s: const u8[:]) {
+    let hex = "0123456789abcdef";
+    out.push('"');
+    for c in s {
+        if c == '"' { out.append("\\\""); }
+        else if c == '\\' { out.append("\\\\"); }
+        else if c == '\n' { out.append("\\n"); }
+        else if c == '\t' { out.append("\\t"); }
+        else if c == '\r' { out.append("\\r"); }
+        else if c < 32 { out.append("\\u00"); out.push(hex[c >> 4]); out.push(hex[c & 15]); }
+        else { out.push(c); }
+    }
+    out.push('"');
+}
+
+// The object up to and including "message"; the caller adds "detail" and the closing brace.
+fn json_head(out: u8[>..]&, sev: const u8[:], path: const u8[:], line: i64, code: const u8[:], msg: const u8[:]) {
+    format(out, "{\"severity\":\"", sev, "\",\"file\":");
+    json_str(out, path);
+    format(out, ",\"line\":", line, ",\"code\":");
+    json_str(out, code);
+    out.append(",\"message\":");
+    json_str(out, msg);
+}
+
+fn last_colon(s: const u8[:]) -> i64 {
+    var i = s.len;
+    while i > 0 { i -= 1; if s[i] == ':' { return i; } }
+    return -1;
+}
+
+// Splits `path:line[:col]: (error|warning): message`; false when line is not of that shape.
+fn split_diag(line: const u8[:], path: u8[>..]&, ln: i64&, is_err: bool&, msg: u8[>..]&) -> bool {
+    let ke = find(line, ": error: ");
+    let kw = find(line, ": warning: ");
+    var k = ke;
+    var klen = 9;
+    var e = true;
+    if kw >= 0 && (ke < 0 || kw < ke) { k = kw; klen = 11; e = false; }
+    if k < 0 { return false; }
+    let head = line[..k];
+    var lnum = 0;
+    var hp = head;
+    let a = last_colon(head);
+    if a >= 0 {
+        let n1, ok1 = parse_int(head[a + 1..]);
+        if ok1 {
+            lnum = n1;
+            hp = head[..a];
+            let b = last_colon(hp);
+            if b >= 0 {
+                let n2, ok2 = parse_int(hp[b + 1..]);
+                if ok2 { lnum = n2; hp = hp[..b]; }
+            }
+        }
+    }
+    path.append(hp);
+    ln = lnum;
+    is_err = e;
+    msg.append(line[k + klen..]);
+    return true;
+}
+
+fn flush_diag(out: u8[>..]&, head: u8[>..]&, detail: u8[>..]&) {
+    if head.len == 0 { return; }
+    out.append(head);
+    if detail.len > 0 { out.append(",\"detail\":"); json_str(out, detail); }
+    out.append("}\n");
+    head.clear();
+    detail.clear();
+}
+
+// Compiler output (Goose's or the component translator's) to stderr: as is, or as JSON Lines in
+// json mode, where a line that is not a diagnostic goes into the previous object's "detail".
+fn print_compiler(text: const u8[:]) {
+    if !json_diag { write_stderr(text); return; }
+    var out: u8[>..] = [];
+    var head: u8[>..] = [];
+    var detail: u8[>..] = [];
+    for line in split(text, '\n') {
+        if line.len == 0 { continue; }
+        var path: u8[>..] = [];
+        var msg: u8[>..] = [];
+        var ln = 0;
+        var is_err = true;
+        if split_diag(line, path, ln, is_err, msg) {
+            flush_diag(out, head, detail);
+            json_head(head, if is_err { "error" } else { "warning" }, path, ln, "", msg);
+        } else if head.len == 0 {
+            json_head(head, "error", "", 0, "", line);
+        } else {
+            if detail.len > 0 { detail.push('\n'); }
+            detail.append(line);
+        }
+    }
+    flush_diag(out, head, detail);
+    write_stderr(out);
+}
+
+// Component warnings: `code\tpath:LINE: warning: MSG` lines.
+fn emit_component_warnings(w: const u8[:]) {
+    for line in split(w, '\n') {
+        let code, rest, ok = split_once(line, '\t');
+        if !ok { continue; }
+        var path: u8[>..] = [];
+        var msg: u8[>..] = [];
+        var ln = 0;
+        var is_err = false;
+        if split_diag(rest, path, ln, is_err, msg) { warn(path, ln, code, msg); }
+    }
+}
+
+// Takes gweb's own flags out of rest; the rest of rest is not looked at.
+fn parse_flags(rest: u8[:][:], allow_debug: bool) {
+    var i = 0;
+    while i < rest.len {
+        if rest[i] == "--strict" { strict = true; }
+        else if rest[i] == "--debug" && allow_debug { debug_flag = true; }
+        else if rest[i] == "--diagnostics" {
+            if i + 1 >= rest.len || rest[i + 1] != "json" { say_error("gweb: --diagnostics takes json"); exit(2); }
+            json_diag = true;
+            i += 1;
+        }
+        i += 1;
+    }
+}
+
+// After everything is printed: under --strict, warnings fail the run.
+fn strict_ok() -> bool {
+    if !strict || warnings == 0 { return true; }
+    var m: u8[>..] = [];
+    format(m, "gweb: --strict: ", warnings, " warnings stop the build");
+    say_error(m);
+    return false;
 }
 
 fn is_ident(s: const u8[:]) -> bool {
@@ -817,6 +1001,39 @@ fn scan_components() {
     }
 }
 
+// stores/Name.gshtml: a store's name follows the rule for a component's, and no component has it too.
+fn scan_stores() {
+    store_names.clear();
+    var names: u8[>..] = [];
+    if !list_dir("stores", names) { return; }
+    var found: u8[..64][>..<] = [];
+    for f in split(names, '\n') {
+        if f.len == 0 || f[0] == '.' || !ends_with(f, ".gshtml") { continue; }
+        let n = f[..f.len - 7];
+        var ok = n.len > 0 && n.len <= 64 && n[0] >= 'A' && n[0] <= 'Z';
+        for c in n { if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) { ok = false; } }
+        var p: u8[>..] = [];
+        format(p, "stores/", f);
+        if !ok { err(p, 0, "a store's name is [A-Z][A-Za-z0-9]*, as in stores/Cart.gshtml"); continue; }
+        if has_component(n) { err(p, 0, "a store and a component cannot have the same name"); continue; }
+        var t: u8[..64] = "";
+        t.append(n);
+        found.push(t);
+    }
+    sort(found) { a, b => compare(a, b) < 0 };
+    for t in found { store_names.push(t); }
+}
+
+fn component_index(name: const u8[:]) -> i64 {
+    for n, i in component_names { if n == name { return i; } }
+    return -1;
+}
+
+fn is_reactive_component(name: const u8[:]) -> bool {
+    let i = component_index(name);
+    return i >= 0 && i < component_reactive.len && component_reactive[i] == 1;
+}
+
 fn has_component(name: const u8[:]) -> bool {
     for n in component_names { if n == name { return true; } }
     return false;
@@ -861,6 +1078,7 @@ fn scan() {
         }
     }
     scan_components();
+    scan_stores();
     // A public file may not shadow a route at the same literal URL.
     for d in dirs {
         if !d.route && !d.page_html { continue; }
@@ -1158,6 +1376,11 @@ fn add_default_imports(imports: u8[>..]&) {
         if find(imports, imp) < 0 { imports.append(imp); imports.push(' '); }
     }
     if has_locales && find(imports, "import t;") < 0 { imports.append("import t; "); }
+    for n in store_names {
+        var imp: u8[>..] = [];
+        format(imp, "import ", n, ";");
+        if find(imports, imp) < 0 { imports.append(imp); imports.push(' '); }
+    }
 }
 
 // ---------------------------------------------------------------- templates
@@ -1326,12 +1549,161 @@ fn template_tag(path: const u8[:], ln: i64, inner: const u8[:], line: const u8[:
     }
 }
 
+let GW_PRELOAD = "<link rel=\"modulepreload\" href=\"/_gw/gwi.js\">";
+let GW_FRAG = "<script type=\"module\" src=\"/_gw/gwf.js\"></script>";
+let GW_TRANS = "<script type=\"module\" src=\"/_gw/gwt.js\"></script>";
+let GW_SSE = "<script type=\"module\" src=\"/_gw/gwe.js\"></script>";
+let GW_NAV = "<script type=\"module\" src=\"/_gw/gwn.js\"></script>";
+
+// The module tags of the template being compiled: gwf.js for gw-target, gwn.js for <body gw-boost>.
 fn script_tag(out: u8[>..]&) {
-    out.append("out.append(\"");
-    lit(out, "<script type=\"module\" src=\"/_gw/");
-    lit(out, rt_file);
-    lit(out, "\"></script>");
-    out.append("\"); ");
+    var t: u8[>..] = [];
+    t.append(GW_PRELOAD);
+    if tpl_script { t.append(GW_FRAG); }
+    if tpl_boost { t.append(GW_NAV); }
+    if tpl_trans { t.append(GW_TRANS); }
+    if tpl_sse { t.append(GW_SSE); }
+    out.append("out.append(\""); lit(out, t); out.append("\"); ");
+}
+
+// Whether a <body ...> tag of src carries gw-boost.
+fn has_boost(src: const u8[:]) -> bool {
+    var from = 0;
+    while from < src.len {
+        let k = find(src[from..], "<body");
+        if k < 0 { return false; }
+        let rest = src[from + k + 5..];
+        if rest.len == 0 { return false; }
+        let c = rest[0];
+        if c == ' ' || c == '\n' || c == '\t' || c == '>' || c == '\r' {
+            let e = find(rest, ">");
+            let tag = if e < 0 { rest } else { rest[..e] };
+            if find(tag, "gw-boost") >= 0 { return true; }
+        }
+        from = from + k + 5;
+    }
+    return false;
+}
+
+// The start and end of each argument of a call: the pieces between its top-level commas.
+fn split_call_args(args: const u8[:], starts: i64[>..]&, ends: i64[>..]&) {
+    var depth = 0;
+    var from = 0;
+    var i = 0;
+    while i < args.len {
+        let c = args[i];
+        if c == '"' || c == '\'' {
+            let j = tscan::skip_literal(args, i);
+            if j > i { i = j; continue; }
+        }
+        if c == '(' || c == '[' || c == '{' { depth += 1; }
+        else if c == ')' || c == ']' || c == '}' { depth -= 1; }
+        else if c == ',' && depth == 0 {
+            starts.push(from);
+            ends.push(i);
+            from = i + 1;
+        }
+        i += 1;
+    }
+    starts.push(from);
+    ends.push(args.len);
+}
+
+// The length of a leading `name:` (one colon, not ::) in arg, or 0 when arg is not a named argument.
+fn named_arg_len(arg: const u8[:]) -> i64 {
+    var i = 0;
+    if arg.len == 0 || !tscan::ident_start(arg[0]) { return 0; }
+    while i < arg.len && tscan::ident_char(arg[i]) { i += 1; }
+    let n = i;
+    while i < arg.len && (arg[i] == ' ' || arg[i] == '\t') { i += 1; }
+    if i < arg.len && arg[i] == ':' && !(i + 1 < arg.len && arg[i + 1] == ':') { return n; }
+    return 0;
+}
+
+// @Name(a: e1, b: e2) for a reactive component: { let gw_p = Name::Props { a: e1, b: e2, c: DEFAULT }; Name::component(out, gw_p); }
+fn reactive_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:], out: u8[>..]&) {
+    var mine: u8[>..] = [];                 // `prop\tdefault\n` for this component, in declaration order
+    for l in split(component_props, '\n') {
+        if l.len <= name.len + 1 || !starts_with(l, name) || l[name.len] != '\t' { continue; }
+        mine.append(l[name.len + 1..]);
+        mine.push('\n');
+    }
+    let props = split(mine, '\n');
+    var np = 0;
+    for l in props { if l.len > 0 { np += 1; } }
+    var vals: u8[>..] = [];                 // the values given, one after the other
+    var vs: i64[>..] = [];                  // where each prop's value starts and ends in vals, or -1
+    var ve: i64[>..] = [];
+    for k in np { vs.push(-1); ve.push(-1); }
+    var starts: i64[>..] = [];
+    var ends: i64[>..] = [];
+    split_call_args(args, starts, ends);
+    let before = errors;
+    for pi in starts.len {
+        let part = args[starts[pi]..ends[pi]];
+        let arg = trim(part);
+        if arg.len == 0 {
+            if starts.len > 1 && pi + 1 < starts.len { err(path, ln, "an empty argument; write @Name(a: 1, b: 2)"); }
+            continue;
+        }
+        let nlen = named_arg_len(arg);
+        if nlen == 0 {
+            var m: u8[>..] = [];
+            var first: u8[>..] = [];
+            if np > 0 { first.append(props[0][..find(props[0], "\t")]); } else { first.append("x"); }
+            format(m, "@", name, " takes named props: @", name, "(", first, ": 3)");
+            err(path, ln, m);
+            return;
+        }
+        let pname = arg[..nlen];
+        var found = -1;
+        for k in np {
+            let l = props[k];
+            if l[..find(l, "\t")] == pname { found = k; }
+        }
+        var m: u8[>..] = [];
+        if found < 0 {
+            format(m, name, " has no prop ", pname);
+            err(path, ln, m);
+            continue;
+        }
+        if vs[found] >= 0 {
+            format(m, "@", name, " passes prop ", pname, " twice");
+            err(path, ln, m);
+            continue;
+        }
+        let colon = find(arg, ":");
+        let value = trim(arg[colon + 1..]);
+        if value.len == 0 {
+            format(m, "@", name, " prop ", pname, " needs a value");
+            err(path, ln, m);
+            continue;
+        }
+        vs[found] = vals.len;
+        vals.append(value);
+        ve[found] = vals.len;
+    }
+    var call: u8[>..] = [];
+    format(call, "{ let gw_p = ", name, "::Props { ");
+    for k in np {
+        let l = props[k];
+        let tab = find(l, "\t");
+        let pname = l[..tab];
+        let dflt = l[tab + 1..];
+        if k > 0 { call.append(", "); }
+        if vs[k] >= 0 { format(call, pname, ": ", vals[vs[k]..ve[k]]); }
+        else if dflt.len > 0 { format(call, pname, ": ", dflt); }
+        else {
+            var m: u8[>..] = [];
+            format(m, "@", name, " needs prop ", pname);
+            err(path, ln, m);
+            format(call, pname, ": 0");
+        }
+    }
+    if np == 0 { call.append(".. "); }
+    // A temporary cannot bind to the const Props& parameter, so the props get a name first.
+    format(call, "}; ", name, "::component(out, gw_p); } ");
+    if errors == before { out.append(call); }
 }
 
 // -1, after reporting the error, when no public file has this URL.
@@ -1618,7 +1990,7 @@ fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:
     if name == "slot" {
         if kind != K_LAYOUT { err(path, ln, "@slot() is for layout.html only"); }
         if args.len > 0 { err(path, ln, "@slot() takes no arguments"); }
-        if kind == K_LAYOUT && tpl_script { script_tag(out); }
+        if kind == K_LAYOUT && (tpl_script || tpl_boost || tpl_trans || tpl_sse) { script_tag(out); }
         out.append("F(); ");
     } else if name == "asset" {
         asset_call(path, ln, args, out);
@@ -1638,6 +2010,8 @@ fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:
             var m: u8[>..] = [];
             format(m, "no component named ", name, " (there is no components/", name, ".gshtml); for a literal @ write &#64;");
             err(path, ln, m);
+        } else if is_reactive_component(name) {
+            reactive_call(path, ln, name, args, out);
         } else {
             seg_add(segs, out_col(out), name_col, name.len);
             out.append(name);
@@ -1663,9 +2037,15 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
                     frags: u8[>..]&, out: u8[>..]&, recs: u8[>..]&) -> bool {
     let before = errors;
     tpl_script = find(src, "gw-target=\"") >= 0;
+    tpl_boost = has_boost(src);
+    if tpl_boost { uses_boost = true; }
+    tpl_trans = find(src, "gw-enter") >= 0 || find(src, "gw-leave") >= 0;
+    if tpl_trans { uses_trans = true; }
+    tpl_sse = find(src, "gw-sse") >= 0;
+    if tpl_sse { uses_sse = true; }
     out.append(header);
     if wrap { out.append("if gw_part == 0 { "); }
-    if tpl_script && kind != K_LAYOUT { script_tag(out); }
+    if (tpl_script || tpl_boost || tpl_trans || tpl_sse) && kind != K_LAYOUT { script_tag(out); }
     var stack: u8[>..] = [];      // 'i' for if, 'f' for for, 'g' for fragment
     var stack_lines: i64[>..] = [];
     var raw = tscan::MARKUP;
@@ -1748,11 +2128,24 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
     return errors == before;
 }
 
+// unknown-attribute (Addendum 12, 8.2): the open tags of a page, layout or error page against the HTML lists.
+fn warn_attributes(path: const u8[:], src: const u8[:]) {
+    var w: u8[>..] = [];
+    html::check(src, 0, 1, false, w);
+    for l in split(w, '\n') {
+        let f = split(l, '\t');
+        if f.len != 2 { continue; }
+        let ln, ok = parse_int(f[0]);
+        if ok { warn(path, ln, "unknown-attribute", f[1]); }
+    }
+}
+
 fn gen_template(src_path: const u8[:], ns: const u8[:], file_base: const u8[:], signature: const u8[:],
                 imports: const u8[:], kind: i64, own: i64, frags: u8[>..]&) {
     var src: u8[>..] = [];
     if !read(src_path, src) { return; }
     scan_targets(src_path, src, own);
+    warn_attributes(src_path, src);
     // The pre-scan is a guess; a wrong guess is compiled again.
     var wrap = kind == K_PAGE && find(src, "{#fragment ") >= 0;
     var out: u8[>..] = [];
@@ -2011,6 +2404,27 @@ fn check_targets() {
             app_path(goose, d, "page.goose");
             var m: u8[>..] = [];
             format(m, "gw-target: method=\"post\" needs fn POST( in ", goose);
+            err(t.path, t.line, m);
+        }
+    }
+}
+
+// A string-literal url of http::get or http::post must reach a route.goose that answers that method, found the
+// way a gw-target url finds its page. Urls that are not literals are not checked.
+fn check_http() {
+    for t in http_calls {
+        let url: u8[..512] = t.url;
+        let meth = if t.post { "POST" } else { "GET" };
+        var m: u8[>..] = [];
+        if url.len == 0 || url[0] != '/' {
+            format(m, "http::", if t.post { "post" } else { "get" }, ": a literal url starts with / (the same site): ", url);
+            err(t.path, t.line, m);
+            continue;
+        }
+        let di = match_url(url);
+        let bit = if t.post { 2 } else { 0 };
+        if di < 0 || !dirs[di].route || ((dirs[di].methods >> bit) & 1) == 0 {
+            format(m, "http::", if t.post { "post" } else { "get" }, ": no route ", meth, " ", url);
             err(t.path, t.line, m);
         }
     }
@@ -3022,16 +3436,45 @@ fn pkg_source(which: i32) -> u8[>..] {
 
 let RT_PRETTY = embed_file("../client/gwi.js");
 let RT_MIN = embed_file("../client/gwi.min.js");
+let RT_FRAG_PRETTY = embed_file("../client/gwf.js");
+let RT_FRAG_MIN = embed_file("../client/gwf.min.js");
+let RT_HTTP_PRETTY = embed_file("../client/gwh.js");
+let RT_HTTP_MIN = embed_file("../client/gwh.min.js");
+let RT_LIFE_PRETTY = embed_file("../client/gwl.js");
+let RT_LIFE_MIN = embed_file("../client/gwl.min.js");
+let RT_MODS_PRETTY = embed_file("../client/gwm.js");
+let RT_MODS_MIN = embed_file("../client/gwm.min.js");
+let RT_CHILD_PRETTY = embed_file("../client/gwc.js");
+let RT_CHILD_MIN = embed_file("../client/gwc.min.js");
+let RT_TRANS_PRETTY = embed_file("../client/gwt.js");
+let RT_TRANS_MIN = embed_file("../client/gwt.min.js");
+let RT_NAV_PRETTY = embed_file("../client/gwn.js");
+let RT_NAV_MIN = embed_file("../client/gwn.min.js");
+let RT_STORE_PRETTY = embed_file("../client/gws.js");
+let RT_STORE_MIN = embed_file("../client/gws.min.js");
+let RT_SSE_PRETTY = embed_file("../client/gwe.js");
+let RT_SSE_MIN = embed_file("../client/gwe.min.js");
 
-fn runtime_js(min: bool, out: u8[>..]&) {
+// which: 0 is gwi.js (the core), 1 is gwf.js (fragments), 2 is gwh.js (typed fetch), 3 is gwl.js (lifecycle), 4 is gwm.js (modifiers), 5 is gwc.js (child components), 6 is gwn.js (client navigation), 7 is gws.js (stores), 8 is gwt.js (transitions), 9 is gwe.js (server push).
+fn runtime_js(which: i64, min: bool, out: u8[>..]&) {
     let home = goose_web_home();
     if home.len > 0 {
         var p: u8[>..] = [];
-        format(p, home, if min { "/client/gwi.min.js" } else { "/client/gwi.js" });
+        let base = if which == 1 { "/client/gwf" } else if which == 2 { "/client/gwh" } else if which == 3 { "/client/gwl" } else if which == 4 { "/client/gwm" } else if which == 5 { "/client/gwc" } else if which == 6 { "/client/gwn" } else if which == 7 { "/client/gws" } else if which == 8 { "/client/gwt" } else if which == 9 { "/client/gwe" } else { "/client/gwi" };
+        format(p, home, base, if min { ".min.js" } else { ".js" });
         if read(p, out) { return; }
     }
     out.clear();
-    out.append(if min { RT_MIN } else { RT_PRETTY });
+    if which == 1 { out.append(if min { RT_FRAG_MIN } else { RT_FRAG_PRETTY }); }
+    else if which == 2 { out.append(if min { RT_HTTP_MIN } else { RT_HTTP_PRETTY }); }
+    else if which == 3 { out.append(if min { RT_LIFE_MIN } else { RT_LIFE_PRETTY }); }
+    else if which == 4 { out.append(if min { RT_MODS_MIN } else { RT_MODS_PRETTY }); }
+    else if which == 5 { out.append(if min { RT_CHILD_MIN } else { RT_CHILD_PRETTY }); }
+    else if which == 6 { out.append(if min { RT_NAV_MIN } else { RT_NAV_PRETTY }); }
+    else if which == 7 { out.append(if min { RT_STORE_MIN } else { RT_STORE_PRETTY }); }
+    else if which == 8 { out.append(if min { RT_TRANS_MIN } else { RT_TRANS_PRETTY }); }
+    else if which == 9 { out.append(if min { RT_SSE_MIN } else { RT_SSE_PRETTY }); }
+    else { out.append(if min { RT_MIN } else { RT_PRETTY }); }
 }
 
 let EMBEDDED_VERSION = embed_file("../VERSION");
@@ -3271,23 +3714,106 @@ fn push_gw_static(url: const u8[:], file: const u8[:], data: const u8[:]) {
     statics.push(s);
 }
 
-// Hashed before components and templates, which name the file; written only when something uses it.
-fn prepare_runtime(dev: bool) {
-    rt_js.clear();
-    runtime_js(!dev, rt_js);
-    rt_file.clear();
-    let e = etag_of(rt_js);
-    format(rt_file, "gwi.", e[1..9], ".js");
+fn gen_runtime_file(which: i64, name: const u8[:], dev: bool, gw_dir: const u8[:]) {
+    var rt: u8[>..] = [];
+    runtime_js(which, !dev, rt);
+    var js_path: u8[>..] = [];
+    format(js_path, gw_dir, "/", name);
+    write(js_path, rt);
+    var url: u8[>..] = [];
+    format(url, "/_gw/", name);
+    push_gw_static(url, js_path, rt);
 }
 
-fn gen_runtime() {
+// gwi.js serves components and fragments (gwf.js imports it); gwf.js only when the site uses fragments.
+fn gen_runtime(dev: bool) {
     var gw_dir: u8[>..] = [];
     format(gw_dir, gen_root, "/_gw");
     make_dir(gw_dir);
-    var js_path: u8[>..] = [];
-    format(js_path, gw_dir, "/gwi.js");
-    write(js_path, rt_js);
-    push_gw_static("/_gw/gwi.js", js_path, rt_js);
+    gen_runtime_file(0, "gwi.js", dev, gw_dir);
+    if uses_fragments { gen_runtime_file(1, "gwf.js", dev, gw_dir); }
+    if uses_http { gen_runtime_file(2, "gwh.js", dev, gw_dir); }
+    if uses_life { gen_runtime_file(3, "gwl.js", dev, gw_dir); }
+    if uses_mods { gen_runtime_file(4, "gwm.js", dev, gw_dir); }
+    if uses_children { gen_runtime_file(5, "gwc.js", dev, gw_dir); }
+    if uses_boost { gen_runtime_file(6, "gwn.js", dev, gw_dir); }
+    if uses_stores || uses_sse { gen_runtime_file(7, "gws.js", dev, gw_dir); }
+    if uses_trans { gen_runtime_file(8, "gwt.js", dev, gw_dir); }
+    if uses_sse { gen_runtime_file(9, "gwe.js", dev, gw_dir); }
+}
+
+// The indices of component_names, each component after the components its markup calls with @Name( (a cycle is cut at
+// the first component of it; that one reports `components cannot contain themselves`).
+fn component_order() -> i64[>..] {
+    let n = component_names.len;
+    var dep: i64[>..] = [];                // dep[a * n + b] is 1 when a calls b
+    for k in n * n { dep.push(0); }
+    for a in n {
+        var src: u8[>..] = [];
+        if !read(component_paths[a], src) { continue; }
+        for i in src.len {
+            if src[i] != '@' { continue; }
+            let o = tscan::call_open(src, i);
+            if o < 0 { continue; }
+            let b = component_index(src[i + 1..o]);
+            if b >= 0 && b != a { dep[a * n + b] = 1; }
+        }
+    }
+    var done: i64[>..] = [];
+    for k in n { done.push(0); }
+    var order: i64[>..] = [];
+    while order.len < n {
+        var pick = -1;
+        for a in n {
+            if done[a] == 1 || pick >= 0 { continue; }
+            var ready = true;
+            for b in n { if dep[a * n + b] == 1 && done[b] == 0 { ready = false; } }
+            if ready { pick = a; }
+        }
+        if pick < 0 { for a in n { if done[a] == 0 && pick < 0 { pick = a; } } }
+        done[pick] = 1;
+        order.push(pick);
+    }
+    return order;
+}
+
+// Tells component.goose which components exist; it records each one's props as it compiles it.
+fn registry_begin() {
+    component::registry_clear();
+    for n in component_names { component::registry_add(n); }
+}
+
+// Every store is compiled before any component: a component reads what its stores left in the registry.
+fn gen_stores(dev: bool, gw_dir: const u8[:]) {
+    for n in store_names {
+        var path: u8[>..] = [];
+        format(path, "stores/", n, ".gshtml");
+        var src: u8[>..] = [];
+        if !read(path, src) { continue; }
+        var g: u8[>..] = [];
+        var j: u8[>..] = [];
+        var e: u8[>..] = [];
+        var w: u8[>..] = [];
+        let compiled = component::compile_store(n, path, src, !dev, g, j, e, w);
+        uses_stores = true;
+        emit_component_warnings(w);
+        if !compiled {
+            print_compiler(e);
+            note_errors(e);
+            for c in e { if c == '\n' { component_errors += 1; } }
+            if e.len == 0 { component_errors += 1; }
+        }
+        var dst: u8[>..] = [];
+        format(dst, gen_root, "/", n, ".goose");
+        write(dst, g);
+        format(map_text, n, ".goose\t", path, "\n");
+        dst.clear();
+        format(dst, gw_dir, "/", n, ".js");
+        write(dst, j);
+        var url: u8[>..] = [];
+        format(url, "/_gw/", n, ".js");
+        push_gw_static(url, dst, j);
+    }
 }
 
 // A hashed URL may not collide with another file's URLs or a literal route.
@@ -3319,24 +3845,53 @@ fn check_hashed() {
 // gen goes on after translator errors, so the Goose compiler reports its errors too.
 fn gen_components(dev: bool) {
     component_lines.clear();
-    if component_names.len == 0 { return; }
+    component_reactive.clear();
+    component_props.clear();
+    if component_names.len == 0 && store_names.len == 0 { return; }
     var gw_dir: u8[>..] = [];
     format(gw_dir, gen_root, "/_gw");
     make_dir(gw_dir);
-    for n, ci in component_names {
-        let path = component_paths[ci];
+    registry_begin();
+    gen_stores(dev, gw_dir);
+    for k in component_names.len { component_lines.push(0); component_reactive.push(0); }
+    for oi in component_order() {
+        let n = component_names[oi];
+        let path = component_paths[oi];
         var src: u8[>..] = [];
-        component_lines.push(0);
         if !read(path, src) { continue; }
         var lines = 1;
         for c in src { if c == '\n' { lines += 1; } }
-        component_lines[component_lines.len - 1] = lines;
+        component_lines[oi] = lines;
         scan_targets(path, src, -1);
         var g: u8[>..] = [];
         var j: u8[>..] = [];
         var e: u8[>..] = [];
-        if !component::compile(n, path, src, !dev, rt_file, g, j, e) {
-            write_stderr(e);
+        var w: u8[>..] = [];
+        let compiled = component::compile(n, path, src, !dev, g, j, e, w);
+        if component::is_reactive() {
+            component_reactive[oi] = 1;
+            let props = component::props_of();
+            for l in split(props, '\n') {
+                if l.len > 0 { format(component_props, n, "\t", l, "\n"); }
+            }
+        }
+        emit_component_warnings(w);
+        if component::http_used() != 0 { uses_http = true; }
+        if component::life_used() != 0 { uses_life = true; }
+        if component::mods_used() != 0 { uses_mods = true; }
+        if component::trans_used() != 0 { uses_trans = true; }
+        if component::children_used() != 0 { uses_children = true; }
+        for l in split(component::http_urls(), '\n') {
+            let f = split(l, '\t');
+            if f.len != 3 || f[2].len >= 512 { continue; }
+            let ln, ok = parse_int(f[1]);
+            var t = Target { path: "", line: ln, url: "", name: "", post: f[0] == "POST", own: -1 };
+            t.path.append(path);
+            t.url.append(f[2]);
+            http_calls.push(t);
+        }
+        if !compiled {
+            print_compiler(e);
             note_errors(e);
             for c in e { if c == '\n' { component_errors += 1; } }
             if e.len == 0 { component_errors += 1; }
@@ -3370,8 +3925,16 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     uses_keys = false;
     component_errors = 0;
     uses_fragments = false;
+    uses_boost = false;
+    uses_http = false;
+    uses_mods = false;
+    uses_trans = false;
+    uses_sse = false;
+    uses_life = false;
+    uses_children = false;
+    uses_stores = false;
     targets.clear();
-    prepare_runtime(dev);
+    http_calls.clear();
     gen_components(dev);
     if is_dir("locales") { gen_locales(); }
     if is_dir("lib") { scan_lib_for_sqlite("lib"); }
@@ -3534,8 +4097,9 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
         }
     }
     check_targets();
+    check_http();
     if errors > 0 { return false; }
-    if component_names.len > 0 || uses_fragments { gen_runtime(); }
+    if component_names.len > 0 || store_names.len > 0 || uses_fragments || uses_boost || uses_trans || uses_sse { gen_runtime(dev); }
     check_hashed();
     gen_variants();
     var main_file: u8[>..] = [];
@@ -3644,6 +4208,8 @@ fn component_lines_back(text: const u8[:]) -> u8[>..] {
 fn build(debug: bool, dev: bool) -> bool {
     let t0 = clock();
     last_errors.clear();
+    last_warnings.clear();
+    warnings = 0;
     if !gen(dev, BUILD_DIR) { return false; }
     var cwd: u8[>..] = [];
     c_cwd(cwd);
@@ -3663,16 +4229,16 @@ fn build(debug: bool, dev: bool) -> bool {
     let status = c_run(cmd, out);
     let shown = rewrite_errors(out, cwd);
     if status != 0 {
-        write_stderr(shown);
+        print_compiler(shown);
         note_errors(shown);
         if shown.len == 0 {
-            write_stderr("gweb: goose build failed; is goose on PATH, or GOOSE set?\n");
+            say_error("gweb: goose build failed; is goose on PATH, or GOOSE set?");
             note_errors("gweb: goose build failed; is goose on PATH, or GOOSE set?\n");
         }
         return false;
     }
     if component_errors > 0 {
-        write_stderr("gweb: the component errors above stop the build\n");
+        say_error("gweb: the component errors above stop the build");
         return false;
     }
     var routes = 0;
@@ -3680,7 +4246,9 @@ fn build(debug: bool, dev: bool) -> bool {
     for d in dirs { if d.route { routes += 1; } if d.page_html { pages += 1; } }
     var msg: u8[>..] = [];
     format(msg, "gweb: built .gooseweb/server: ", routes, " routes, ", pages, " pages, ", statics.len, " static files (",
-           ((clock() - t0) * 10.0) as i64 as f64 / 10.0, " s)\n");
+           ((clock() - t0) * 10.0) as i64 as f64 / 10.0, " s)");
+    if warnings > 0 { format(msg, " (", warnings, " warnings)"); }
+    msg.push('\n');
     write_stdout(msg);
     write_stdout(locale_notes);
     return true;
@@ -3857,17 +4425,29 @@ fn route_tests() -> bool {
     return status == 0;
 }
 
+// In the compiler's messages, the parity folder's link to name.goose is the file in the test folder.
+fn to_test_dir(fixed: u8[>..]&, parity: const u8[:], n: const u8[:]) {
+    var from: u8[>..] = [];
+    format(from, parity, "/", n, ".goose");
+    var to: u8[>..] = [];
+    format(to, TEST_DIR, "/", n, ".goose");
+    var next: u8[>..] = [];
+    format_replaced(next, fixed, from, to);
+    fixed.clear();
+    fixed.append(next);
+}
+
 fn test_cmd() -> bool {
     if !gen(false, TEST_DIR) { return false; }
-    if component_errors > 0 { write_stderr("gweb test: fix the component errors above\n"); return false; }
+    if component_errors > 0 { say_error("gweb test: fix the component errors above"); return false; }
     let has_tests = is_dir("tests");
-    if component_names.len == 0 && !has_tests {
-        write_stdout("gweb test: no components/*.gshtml here\n");
+    if component_names.len == 0 && store_names.len == 0 && !has_tests {
+        write_stdout("gweb test: no components/*.gshtml or stores/*.gshtml here\n");
         write_stdout("gweb test: no tests/*.goose here\n");
         return true;
     }
     var ok = true;
-    if component_names.len > 0 && !component_parity() { ok = false; }
+    if (component_names.len > 0 || store_names.len > 0) && !component_parity() { ok = false; }
     if has_tests && !route_tests() { ok = false; }
     return ok;
 }
@@ -3884,6 +4464,7 @@ fn component_parity() -> bool {
     main.append("import web from \""); lit(main, pkg_source(0)); main.append("\";\n");
     main.append("import net from \""); lit(main, pkg_source(1)); main.append("\";\n");
     main.append("import net.http;\nimport web.template;\n");
+    for n in store_names { format(main, "import ", n, ";\n"); }
     for n in component_names { format(main, "import ", n, ";\n"); }
     main.append("fn main() {\n    var out: u8[>..] = [];\n");
     var mjs_components: u8[>..] = [];
@@ -3894,21 +4475,50 @@ fn component_parity() -> bool {
         format(dir, parity, "/js-", if compact { "compact" } else { "pretty" });
         make_dir(dir);
         var rt: u8[>..] = [];
-        runtime_js(compact, rt);
+        runtime_js(0, compact, rt);
         var p: u8[>..] = [];
         format(p, dir, "/gwi.real.js");
         write(p, rt);
         p.clear();
         format(p, dir, "/gwi.js");
         write(p, GWI_SHIM);
-        for n, ci in component_names {
-            let path = component_paths[ci];
+        var hp: u8[>..] = [];
+        runtime_js(2, compact, hp);
+        p.clear();
+        format(p, dir, "/gwh.js");
+        write(p, hp);
+        // The parity run starts no timers and has no document to query: a module's life() is a stub here.
+        p.clear();
+        format(p, dir, "/gwl.js");
+        write(p, "export function life() {}\n");
+        p.clear();
+        format(p, dir, "/gwm.js");
+        write(p, "\n");
+        p.clear();
+        format(p, dir, "/gwt.js");
+        write(p, "\n");
+        var cp: u8[>..] = [];
+        runtime_js(5, compact, cp);
+        p.clear();
+        format(p, dir, "/gwc.js");
+        write(p, cp);
+        var sp: u8[>..] = [];
+        runtime_js(7, compact, sp);
+        p.clear();
+        format(p, dir, "/gws.js");
+        write(p, sp);
+        registry_begin();
+        // The stores first: a component reads what its stores leave in the registry.
+        for n in store_names {
+            var path: u8[>..] = [];
+            format(path, "stores/", n, ".gshtml");
             var src: u8[>..] = [];
             if !read(path, src) { return false; }
             var g: u8[>..] = [];
             var j: u8[>..] = [];
             var e: u8[>..] = [];
-            component::compile(n, path, src, compact, "gwi.js", g, j, e);
+            var w: u8[>..] = [];
+            component::compile_store(n, path, src, compact, g, j, e, w);
             p.clear();
             format(p, dir, "/", n, ".js");
             write(p, j);
@@ -3916,9 +4526,59 @@ fn component_parity() -> bool {
             if mjs_components.len > 0 { mjs_components.push(','); }
             format(mjs_components, "\"", n, "\"");
             let tests = component::test_names();
-            for t in concat(split("zero\n", '\n')[..1], split(tests, '\n')) {
+            let test_takes = component::test_args();
+            let takes = split(test_takes, '\n');
+            for t, ti in concat(split("zero\n", '\n')[..1], split(tests, '\n')) {
                 if t.len == 0 { continue; }
                 cases += 1;
+                format(main, "    { var p = ", n, "::Props { .. }; var s = ", n, "::gw_init(p); ");
+                if t != "zero" {
+                    if takes[ti - 1] == "1" { format(main, n, "::", t, "(p, s); "); } else { format(main, n, "::", t, "(); "); }
+                    format(main, n, "::gw_flush(p, s); ");
+                }
+                // A store has no render: the output keeps the shape of a component's, with nothing after the JSON.
+                format(main, "out.append(\"== ", n, " ", t, "\\n\"); ", n, "::gw_json(out, p, s); out.append(\"\\n\\n== end\\n\"); }\n");
+            }
+            var link: u8[>..] = [];
+            format(link, parity, "/", n, ".goose");
+            var target: u8[>..] = [];
+            format(target, "../", n, ".goose");
+            c_symlink(target, link);
+        }
+        for oi in component_order() {
+            let n = component_names[oi];
+            let path = component_paths[oi];
+            var src: u8[>..] = [];
+            if !read(path, src) { return false; }
+            var g: u8[>..] = [];
+            var j: u8[>..] = [];
+            var e: u8[>..] = [];
+            var w: u8[>..] = [];
+            component::compile(n, path, src, compact, g, j, e, w);
+            p.clear();
+            format(p, dir, "/", n, ".js");
+            write(p, j);
+            if mode == 1 { continue; }
+            if mjs_components.len > 0 { mjs_components.push(','); }
+            format(mjs_components, "\"", n, "\"");
+            let tests = component::test_names();
+            let test_takes = component::test_args();
+            let takes = split(test_takes, '\n');
+            let reactive = component::is_reactive();
+            for t, ti in concat(split("zero\n", '\n')[..1], split(tests, '\n')) {
+                if t.len == 0 { continue; }
+                cases += 1;
+                if reactive {
+                    // Props are zero here; a test that neither reads nor writes takes no arguments.
+                    format(main, "    { var p = ", n, "::Props { .. }; var s = ", n, "::gw_init(p); ");
+                    if t != "zero" {
+                        if takes[ti - 1] == "1" { format(main, n, "::", t, "(p, s); "); } else { format(main, n, "::", t, "(); "); }
+                        format(main, n, "::gw_flush(p, s); ");
+                    }
+                    format(main, "out.append(\"== ", n, " ", t, "\\n\"); ", n, "::gw_json(out, p, s); out.push('\\n'); ",
+                           n, "::render(out, p, s); out.append(\"\\n== end\\n\"); }\n");
+                    continue;
+                }
                 format(main, "    { var s = ", n, "::State { .. }; ");
                 if t != "zero" { format(main, n, "::", t, "(s); "); }
                 format(main, "out.append(\"== ", n, " ", t, "\\n\"); ", n, "::gw_json(out, s); out.push('\\n'); ",
@@ -3951,16 +4611,8 @@ fn component_parity() -> bool {
     if c_run(cmd, out) != 0 {
         var fixed: u8[>..] = [];
         fixed.append(out);
-        for n in component_names {
-            var from: u8[>..] = [];
-            format(from, parity, "/", n, ".goose");
-            var to: u8[>..] = [];
-            format(to, TEST_DIR, "/", n, ".goose");
-            var next: u8[>..] = [];
-            format_replaced(next, fixed, from, to);
-            fixed.clear();
-            fixed.append(next);
-        }
+        for n in store_names { to_test_dir(fixed, parity, n); }
+        for n in component_names { to_test_dir(fixed, parity, n); }
         write_stderr(rewrite_errors(fixed, cwd));
         write_stderr("gweb test: the parity program did not build\n");
         return false;
@@ -4002,7 +4654,7 @@ export function component(name, def) { globalThis.__gw[name] = def; register(nam
 let RUN_MJS = """
 // Generated by gweb test: runs each case in JavaScript and compares it with goose.out.
 import fs from "node:fs";
-globalThis.document = { addEventListener() {} };
+globalThis.document = { addEventListener() {}, querySelector() { return null; } };
 const text = fs.readFileSync(new URL("./goose.out", import.meta.url), "utf8");
 const cases = [];
 for (const part of text.split("\n== end\n")) {
@@ -4026,6 +4678,7 @@ function firstDiff(a, b) {
   }
   return null;
 }
+const STUB = { m() {}, f() {}, e() {} };
 let failed = 0, run = 0;
 for (const mode of ["pretty", "compact"]) {
   globalThis.__gw = {};
@@ -4036,9 +4689,17 @@ for (const mode of ["pretty", "compact"]) {
     const label = `${c.component} ${c.test} (${mode})`;
     let s, html;
     try {
-      s = def.zero();
-      if (c.test !== "zero") def.tests[c.test](s);
-      html = def.render(s);
+      if (def.i) {
+        // A reactive component: the state from zero props, the test, then the computeds again (no DOM, no watches).
+        s = def.i();
+        if (c.test !== "zero") def.t[c.test](s, STUB);
+        def.u(s, -1 >>> 1);
+        html = def.r ? def.r(s) : "";
+      } else {
+        s = def.zero();
+        if (c.test !== "zero") def.tests[c.test](s);
+        html = def.render(s);
+      }
     } catch (err) {
       failed++;
       console.log(`FAIL ${label}: the JavaScript threw ${err}`);
@@ -4167,18 +4828,26 @@ fn server_cmd(extra: u8[:][:], dev: bool) -> u8[>..] {
         // A fresh build id per spawn: open pages poll it and reload when it changes.
         format(cmd, " --dev-id ", (time() * 1000.0) as i64);
     }
-    for a in extra { if a != "--no-minify" { cmd.push(' '); shq(cmd, a); } }
+    // gweb's own flags stay out of the server's command line.
+    var skip = false;
+    for a in extra {
+        if skip { skip = false; continue; }
+        if a == "--strict" || a == "--no-minify" { continue; }
+        if a == "--diagnostics" { skip = true; continue; }
+        cmd.push(' ');
+        shq(cmd, a);
+    }
     return cmd;
 }
 
 fn stamp() -> i64 {
     var count = 0;
     var newest = 0;
-    for dir in ["app", "lib", "public", "components", "locales"] { newest = max(newest, c_tree_stamp(dir, count)); }
+    for dir in ["app", "lib", "public", "components", "locales", "stores"] { newest = max(newest, c_tree_stamp(dir, count)); }
     // Path packages are edited beside the project; a git package is a cached tag and never changes.
     for pk in pkgs {
         if pk.git { continue; }
-        for sub in ["app", "lib", "public", "components"] {
+        for sub in ["app", "lib", "public", "components", "stores"] {
             var dir: u8[>..] = [];
             format(dir, pk.dir, "/", sub);
             newest = max(newest, c_tree_stamp(dir, count));
@@ -4231,6 +4900,11 @@ fn write_dev_errors(text: const u8[:]) {
     write_file(".gooseweb.dev/errors.txt", text);
 }
 
+fn write_dev_warnings(text: const u8[:]) {
+    make_dir(".gooseweb.dev");
+    write_file(".gooseweb.dev/warnings.txt", text);
+}
+
 fn dev(extra: u8[:][:]) {
     // Hidden, for tests: one build, errors.txt written, exit 0 or 1; no server and no watching.
     for a in extra {
@@ -4244,11 +4918,14 @@ fn dev(extra: u8[:][:]) {
     var pid: i64 = -1;
     var last = stamp();
     write_dev_errors("");
-    if build(false, true) {
+    write_dev_warnings("");
+    let first_ok = build(false, true);
+    write_dev_warnings(last_warnings);
+    if first_ok {
         pid = c_spawn(server_cmd(extra, true));
     } else {
         write_dev_errors(excerpts(last_errors));
-        write_stderr("gweb dev: fix the errors above; watching app/, lib/, public/ and components/\n");
+        write_stderr("gweb dev: fix the errors above; watching app/, lib/, public/, components/ and stores/\n");
     }
     if pkgs.len > 0 { last = stamp(); }     // the package folders were not known before the first build
     loop {
@@ -4262,7 +4939,9 @@ fn dev(extra: u8[:][:]) {
         sleep_ms(50);          // let an editor finish writing
         last = stamp();
         write_stdout("gweb dev: change seen, rebuilding\n");
-        if !build(false, true) {
+        let built = build(false, true);
+        write_dev_warnings(last_warnings);
+        if !built {
             write_dev_errors(excerpts(last_errors));
             write_stderr("gweb dev: build failed; the old server keeps running\n");
             continue;
@@ -4388,10 +5067,12 @@ usage: gweb [-C dir] <command>
   new <dir>         make a starter project
   gen               write .gooseweb/ only
   build [--debug]   gen, then goose build to .gooseweb/server
+                    gen, build, start and test also take --strict (warnings fail the run)
+                    and --diagnostics json (stderr as JSON Lines)
   start [flags]     build, then run the server (flags go to it: --port N --workers N --log ...)
   --no-minify       with gen, build or start: serve public/**/*.css as written
   export [-o DIR]   build, then write the site as static files to DIR (default out/)
-  dev [flags]       build, run on port 60053 (unless --port), and rebuild on every change under app/, lib/, public/, components/, locales/
+  dev [flags]       build, run on port 60053 (unless --port), and rebuild on every change under app/, lib/, public/, components/, locales/, stores/
   routes            print the route table
   version           print the version and the package sources a build declares
   check             generate into .gooseweb.check/ and run goose check; errors name .gshtml and page.html lines
@@ -4418,15 +5099,22 @@ fn main() {
     if cmd == "new" { if rest.len != 1 { usage(); } scaffold(rest[0]); return; }
     if cmd == "test-css" { if !test_css() { exit(1); } return; }
     minify = !has_flag(rest, "--no-minify");
-    if cmd == "gen" { if !gen(false, BUILD_DIR) || component_errors > 0 { exit(1); } write_stdout("gweb: wrote .gooseweb/\n"); return; }
+    if cmd == "gen" {
+        parse_flags(rest, false);
+        if !gen(false, BUILD_DIR) || component_errors > 0 { exit(1); }
+        write_stdout("gweb: wrote .gooseweb/\n");
+        if !strict_ok() { exit(1); }
+        return;
+    }
     if cmd == "lsp-gen" { lsp_gen_cmd(rest); return; }
-    if cmd == "check" { if !check_cmd() { exit(1); } return; }
+    if cmd == "check" { parse_flags(rest, false); if !check_cmd() || !strict_ok() { exit(1); } return; }
     if cmd == "lsp" { lsp_cmd(a[0]); return; }
-    if cmd == "test" { if !test_cmd() { exit(1); } return; }
-    if cmd == "build" { if !build(has_flag(rest, "--debug"), false) { exit(1); } return; }
+    if cmd == "test" { parse_flags(rest, false); if !test_cmd() || !strict_ok() { exit(1); } return; }
+    if cmd == "build" { parse_flags(rest, true); if !build(debug_flag, false) || !strict_ok() { exit(1); } return; }
     if cmd == "routes" { print_routes(); return; }
     if cmd == "start" {
-        if !build(false, false) { exit(1); }
+        parse_flags(rest, false);
+        if !build(false, false) || !strict_ok() { exit(1); }
         c_exec(server_cmd(rest, false));
         write_stderr("gweb: could not start .gooseweb/server\n");
         exit(1);

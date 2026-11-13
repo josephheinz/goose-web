@@ -1,13 +1,18 @@
 #!/bin/sh
-# Regenerates client/gwi.min.js from client/gwi.js (DESIGN-ADDENDUM-3,
-# follow-up 1). For goose-web maintainers: needs node and npx. The banner
-# carries the FNV-1a hash of gwi.js, so test/components.sh can tell when the
-# minified file is stale. ESBUILD may name a local esbuild 0.28.2 binary.
+# Regenerates every client/NAME.min.js from client/NAME.js for each client/gw*.js
+# (DESIGN-ADDENDUM-3 follow-up 1, DESIGN-ADDENDUM-12 section 9). For goose-web
+# maintainers: needs node and npx. The banner `/* NAME HASH */` carries the FNV-1a
+# hash of the source, so test/runtime.sh can tell when a minified file is stale.
+# ESBUILD may name a local esbuild 0.28.2 binary.
 set -eu
 cd "$(dirname "$0")/.."
-HASH=$(node client/fnv.mjs client/gwi.js)
-if [ -n "${ESBUILD:-}" ]; then
-  "$ESBUILD" client/gwi.js --minify --format=esm --banner:js="/* gwi $HASH */" --outfile=client/gwi.min.js
-else
-  npx --yes esbuild@0.28.2 client/gwi.js --minify --format=esm --banner:js="/* gwi $HASH */" --outfile=client/gwi.min.js
-fi
+for src in client/gw*.js; do
+  case "$src" in *.min.js) continue ;; esac
+  name=$(basename "$src" .js)
+  HASH=$(node client/fnv.mjs "$src")
+  if [ -n "${ESBUILD:-}" ]; then
+    "$ESBUILD" "$src" --minify --format=esm --banner:js="/* $name $HASH */" --outfile="client/$name.min.js"
+  else
+    npx --yes esbuild@0.28.2 "$src" --minify --format=esm --banner:js="/* $name $HASH */" --outfile="client/$name.min.js"
+  fi
+done

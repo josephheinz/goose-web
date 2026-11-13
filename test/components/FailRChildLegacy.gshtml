@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRChildLegacy.gshtml:6: error: '@Copies()' is not available in client code
+// with: Copies
+@state var n: i64 = 0;
+</script>
+@Copies()

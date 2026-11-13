@@ -1,0 +1,5 @@
+<script goose>
+// expect: components/FailRInitType.gshtml:3: error: the initializer of @state n has the wrong type
+@state var n: i64 = true;
+</script>
+<p>x</p>

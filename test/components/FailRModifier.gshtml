@@ -1,0 +1,7 @@
+<script goose>
+// expect: components/FailRModifier.gshtml:7: error: unknown modifier .once on on:click
+@state var n: i64 = 0;
+fn hit() { n += 1; }
+</script>
+<p>{n}</p>
+<button on:click.once="hit">+</button>

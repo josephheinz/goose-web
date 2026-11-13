@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRChildLegacyParent.gshtml:6: error: '@RNestChild()' is not available in client code
+// with: RNestChild
+struct State { n: i64 }
+</script>
+@RNestChild(label: "x")

@@ -1,0 +1,7 @@
+<script goose>
+// expect: components/FailRTestAsync.gshtml:5: error: 'test_a' is async; a test runs without a network
+@state var u: u8[..8] = "/a";
+@state var n: i64 = 0;
+fn test_a() { n = await http::get(u); }
+</script>
+<p>x</p>

@@ -1,0 +1,39 @@
+<script goose>
+// Typed fetch (Addendum 12 section 7.3): http::get into state, a typed local and a bool, http::post with and
+// without a reply, an optimistic push, a flag set before the wait, and async propagating through calls.
+// The urls are state, so gweb does not look for routes; the tests below stay synchronous (no network).
+struct Item { id: i64, title: u8[..24], done: bool }
+struct Reply { ok: bool, note: u8[..16] }
+@state var url: u8[..32] = "/api/items";
+@state var curl: u8[..32] = "/api/count";
+@state var items: Item[>..<] = [];
+@state var count: i64 = 0;
+@state var loading: bool = false;
+@state var note: u8[..16] = "";
+@state var busy: bool = false;
+fn load() {
+    loading = true;
+    items = await http::get(url);
+    loading = false;
+}
+fn add(id: i64) {
+    let it = Item { id: id, title: "new", done: false };
+    items.push(it);
+    let r: Reply = await http::post(url, it);
+    note = r.note;
+}
+fn refresh() {
+    count = await http::get(curl);
+    busy = await http::get(curl);
+}
+fn ping() { await http::post(curl, count); }
+fn both() {
+    await load();
+    await ping();
+}
+fn mark() { busy = true; }
+fn test_sync() { loading = true; count = 3; note = "t<&>"; mark(); items.push(Item { id: 1, title: "x", done: true }); }
+</script>
+<p class="{if loading { "wait" } else { "idle" }}">{#if loading}loading{#else}ready{/if} {count} {note} {busy}</p>
+<button on:click="load">load</button><button on:click="add(items.len + 1)">add</button><button on:click="refresh">refresh</button><button on:click="both">both</button><button on:click="mark">mark</button>
+<ul>{#for t, i in items}<li gw-key="{t.id}">{t.title}{t.id}</li>{/for}</ul>

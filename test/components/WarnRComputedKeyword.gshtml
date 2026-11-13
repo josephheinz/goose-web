@@ -1,0 +1,7 @@
+<script goose>
+// warn: components/WarnRComputedKeyword.gshtml:5: warning: a computed value should be let
+// code: computed-keyword
+@state var n: i64 = 0;
+@computed const c: i64 = n * 2;
+</script>
+<p>{c}</p>

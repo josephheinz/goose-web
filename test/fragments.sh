@@ -67,7 +67,7 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     req list GET / -H 'GW-Fragment: list' -H "Cookie: gw_csrf=$TK"
     check "$([ "$(status list)" = 200 ] && has_header list 'gw-fragment: list' && echo ok)" "fragment list: 200 and the GW-Fragment echo"
     check "$(has_header list 'cache-control: no-store' && echo ok)" "fragment list: Cache-Control: no-store"
-    check "$(! body_has list '__gweb/id' && ! body_has list '<html' && ! body_has list '/_gw/gwi.' && echo ok)" "fragment list: no dev script, no layout, no runtime tag"
+    check "$(! body_has list '__gweb/id' && ! body_has list '<html' && ! body_has list 'gwi.js' && ! body_has list 'gwf.js' && echo ok)" "fragment list: no dev script, no layout, no script tag"
     check "$(substring list whole && echo ok)" "fragment list: its bytes are a substring of the whole page"
     check "$(body_has whole '__gweb/id' && echo ok)" "the whole page has the dev script"
     check "$(body_has list '<form method="post" action="/" gw-target="list">' && ! body_has list 'whole page only' && echo ok)" "fragment list: the region and nothing else"
@@ -110,15 +110,24 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     GWI=$(grep -o '/_gw/gwi\.[0-9a-f]\{8\}\.js' "$WORK/whole.b" | head -1)
     check "$([ -n "$GWI" ] && echo ok)" "GET /: the runtime tag names /_gw/gwi.<8 hex>.js"
     # The script tag: once for each template that has a gw-target.
-    check "$([ "$(body_count whole "src=\"$GWI\"")" = 2 ] && echo ok)" "GET /: the runtime tag twice (layout and page)"
+    check "$([ "$(body_count whole 'src="/_gw/gwf.js"')" = 2 ] && echo ok)" "GET /: the fragment script tag twice (layout and page)"
     req plain GET /plain
-    check "$([ "$(body_count plain "src=\"$GWI\"")" = 1 ] && echo ok)" "GET /plain: the runtime tag once (layout only)"
-    check "$(body_has whole "<script type=\"module\" src=\"$GWI\"></script><h1>Fragments</h1>" && echo ok)" "the page's tag comes first in the page"
+    check "$([ "$(body_count plain 'src="/_gw/gwf.js"')" = 1 ] && echo ok)" "GET /plain: the fragment script tag once (layout only)"
+    check "$(body_has whole '<link rel="modulepreload" href="/_gw/gwi.js"><script type="module" src="/_gw/gwf.js"></script><h1>Fragments</h1>' && echo ok)" "the page's tag comes first in the page"
     req rt GET /_gw/gwi.js
-    check "$([ "$(status rt)" = 200 ] && has_header rt 'content-type: text/javascript' && has_header rt 'cache-control: public, max-age=0, must-revalidate' && echo ok)" "a project with no component serves /_gw/gwi.js, revalidating"
-    req rth GET "$GWI"
-    check "$([ "$(status rth)" = 200 ] && has_header rth 'cache-control: public, max-age=31536000, immutable' && cmp -s "$WORK/rt.b" "$WORK/rth.b" && echo ok)" "the hashed runtime URL serves the same bytes, immutable"
+    check "$([ "$(status rt)" = 200 ] && has_header rt 'content-type: text/javascript' && echo ok)" "a project with no component serves /_gw/gwi.js"
+    req rf GET /_gw/gwf.js
+    check "$([ "$(status rf)" = 200 ] && has_header rf 'content-type: text/javascript' && echo ok)" "a project with fragments serves /_gw/gwf.js"
     check "$([ ! -d "$WORK/ok/components" ] && echo ok)" "the site has no components folder"
+    check "$(! body_has whole 'gwn.js' && ! body_has plain 'gwn.js' && echo ok)" "a site without gw-boost: no gwn.js tag"
+    req nonav GET /_gw/gwn.js
+    check "$([ "$(status nonav)" = 404 ] && echo ok)" "a site without gw-boost does not serve /_gw/gwn.js"
+check "$(! body_has whole 'gwt.js' && ! body_has plain 'gwt.js' && echo ok)" "a site without gw-enter or gw-leave: no gwt.js tag"
+req notrans GET /_gw/gwt.js
+check "$([ "$(status notrans)" = 404 ] && echo ok)" "a site without gw-enter or gw-leave does not serve /_gw/gwt.js"
+check "$(! body_has whole 'gwe.js' && ! body_has plain 'gwe.js' && echo ok)" "a site without gw-sse: no gwe.js tag"
+req nosse GET /_gw/gwe.js
+check "$([ "$(status nosse)" = 404 ] && echo ok)" "a site without gw-sse does not serve /_gw/gwe.js"
 
     req tk0 GET /
     check "$([ "$(grep -c '^set-cookie: gw_csrf=[0-9a-f]\{32\}; path=/; httponly; samesite=lax$' "$WORK/tk0.h")" = 1 ] && [ "$(grep -c '^set-cookie:' "$WORK/tk0.h")" = 1 ] && has_header tk0 'cache-control: no-store' && body_has tk0 'name="_csrf" value="' && echo ok)" "GET / without a cookie: one gw_csrf cookie, no-store, a _csrf field"
@@ -150,6 +159,104 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
   else bad "p5_plain_html.goose differs from the stored copy:"; diff "$HERE/fragments/expect_p5_plain_html.goose" "$WORK/ok/.gooseweb/p5_plain_html.goose" | sed 's/^/    /'; fi
 else
   bad "gweb build of the site"; echo "$out"
+fi
+
+# 1b. A site whose layout has <body gw-boost> (DESIGN-ADDENDUM-12, item 8).
+cp -R "$HERE/fragments/boost" "$WORK/boost"
+if out=$("$GWEB" -C "$WORK/boost" build 2>&1); then
+  BPORT=$((PORT + 1))
+  "$WORK/boost/.gooseweb/server" --port "$BPORT" >/dev/null 2>&1 &
+  PID=$!
+  URL="http://127.0.0.1:$BPORT"
+  up=""
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.5
+    if curl -s -o /dev/null "$URL/"; then up=yes; break; fi
+  done
+  if [ -z "$up" ]; then
+    bad "the gw-boost server did not answer on port $BPORT"
+  else
+    req bhome GET /
+    check "$([ "$(status bhome)" = 200 ] && [ "$(body_count bhome 'src="/_gw/gwn.js"')" = 1 ] && body_has bhome '<link rel="modulepreload" href="/_gw/gwi.js"><script type="module" src="/_gw/gwn.js"></script><h1>Boosted home</h1>' && ! body_has bhome 'gwf.js' && echo ok)" "gw-boost: / has the gwn.js tag (once, with the gwi.js preload, no gwf.js)"
+    req babout GET /about
+    check "$(body_has babout 'src="/_gw/gwn.js"' && echo ok)" "gw-boost: /about has the gwn.js tag"
+    req bnav GET /about -H 'GW-Nav: 1'
+    check "$([ "$(status bnav)" = 200 ] && body_has bnav '<h1>Boosted about</h1>' && body_has bnav '<body gw-boost>' && echo ok)" "gw-boost: a GW-Nav request gets the whole page"
+    req bjs GET /_gw/gwn.js
+    check "$([ "$(status bjs)" = 200 ] && has_header bjs 'content-type: text/javascript' && body_has bjs 'GW-Nav' && echo ok)" "gw-boost: /_gw/gwn.js is served as javascript"
+    req bjsi GET /_gw/gwi.js
+    check "$([ "$(status bjsi)" = 200 ] && echo ok)" "gw-boost: /_gw/gwi.js is served"
+  fi
+  kill "$PID" 2>/dev/null
+  wait "$PID" 2>/dev/null
+  PID=""
+  URL="http://127.0.0.1:$PORT"
+else
+  bad "gweb build of the gw-boost site"; echo "$out"
+fi
+
+# 1c. gwt.js (DESIGN-ADDENDUM-12, item 11): the tag and the file only where gw-enter or gw-leave is used.
+cp -R "$HERE/fragments/trans" "$WORK/trans"
+if out=$("$GWEB" -C "$WORK/trans" build 2>&1); then
+  TPORT=$((PORT + 2))
+  "$WORK/trans/.gooseweb/server" --port "$TPORT" >/dev/null 2>&1 &
+  PID=$!
+  URL="http://127.0.0.1:$TPORT"
+  up=""
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.5
+    if curl -s -o /dev/null "$URL/"; then up=yes; break; fi
+  done
+  if [ -z "$up" ]; then
+    bad "the gw-enter server did not answer on port $TPORT"
+  else
+    req thome GET /
+    check "$([ "$(body_count thome 'src="/_gw/gwt.js"')" = 1 ] && ! body_has thome 'gwf.js' && ! body_has thome 'gwn.js' && echo ok)" "gw-enter: / has the gwt.js tag (once)"
+    req tleave GET /leave
+    check "$(body_has tleave 'src="/_gw/gwt.js"' && echo ok)" "gw-leave: /leave has the gwt.js tag"
+    req tplain GET /plain
+    check "$(! body_has tplain 'gwt.js' && echo ok)" "a page without gw-enter or gw-leave has no gwt.js tag"
+    req tjs GET /_gw/gwt.js
+    check "$([ "$(status tjs)" = 200 ] && has_header tjs 'content-type: text/javascript' && body_has tjs 'gw-leaving' && echo ok)" "gw-enter: /_gw/gwt.js is served as javascript"
+  fi
+  kill "$PID" 2>/dev/null
+  wait "$PID" 2>/dev/null
+  PID=""
+  URL="http://127.0.0.1:$PORT"
+else
+  bad "gweb build of the gw-enter site"; echo "$out"
+fi
+
+# 1d. gwe.js (DESIGN-ADDENDUM-12, item 10): the tag and the file only where gw-sse is used (it imports gws.js).
+cp -R "$HERE/fragments/sse" "$WORK/sse"
+if out=$("$GWEB" -C "$WORK/sse" build 2>&1); then
+  EPORT=$((PORT + 3))
+  "$WORK/sse/.gooseweb/server" --port "$EPORT" >/dev/null 2>&1 &
+  PID=$!
+  URL="http://127.0.0.1:$EPORT"
+  up=""
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.5
+    if curl -s -o /dev/null "$URL/"; then up=yes; break; fi
+  done
+  if [ -z "$up" ]; then
+    bad "the gw-sse server did not answer on port $EPORT"
+  else
+    req ehome GET /
+    check "$([ "$(body_count ehome 'src="/_gw/gwe.js"')" = 1 ] && body_has ehome '<link rel="modulepreload" href="/_gw/gwi.js"><script type="module" src="/_gw/gwe.js"></script>' && ! body_has ehome 'gwf.js' && echo ok)" "gw-sse: / has the gwe.js tag (once, with the gwi.js preload)"
+    req eplain GET /plain
+    check "$(! body_has eplain 'gwe.js' && echo ok)" "a page without gw-sse has no gwe.js tag"
+    req ejs GET /_gw/gwe.js
+    check "$([ "$(status ejs)" = 200 ] && has_header ejs 'content-type: text/javascript' && body_has ejs 'EventSource' && echo ok)" "gw-sse: /_gw/gwe.js is served as javascript"
+    req ejss GET /_gw/gws.js
+    check "$([ "$(status ejss)" = 200 ] && echo ok)" "gw-sse: /_gw/gws.js (imported by gwe.js) is served"
+  fi
+  kill "$PID" 2>/dev/null
+  wait "$PID" 2>/dev/null
+  PID=""
+  URL="http://127.0.0.1:$PORT"
+else
+  bad "gweb build of the gw-sse site"; echo "$out"
 fi
 
 # 2. Expected failures. The page is <p>x</p>, the case on line 2, <p>y</p>.

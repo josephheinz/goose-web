@@ -1,0 +1,14 @@
+<script goose>
+// warn: components/WarnUnkeyed.gshtml:13: warning: {#for} over s.items needs gw-key on its elements: the list can reorder or lose an item
+struct Item { id: i64 }
+struct State { items: Item[>..<] }
+
+fn test_drop(s: State&) {
+    s.items.push(Item { id: 1 });
+    s.items.push(Item { id: 2 });
+    s.items.remove_at(0);
+}
+</script>
+<ul>
+{#for t in s.items}<li>{t.id}</li>{/for}
+</ul>

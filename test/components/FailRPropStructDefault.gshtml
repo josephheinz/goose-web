@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRPropStructDefault.gshtml:4: error: @prop p cannot have a default; it is required at every call site
+struct Item { v: i64 }
+@prop const p: Item = Item { v: 1 };
+</script>
+<p>x</p>

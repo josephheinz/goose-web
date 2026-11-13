@@ -1,0 +1,29 @@
+<script goose>
+// Every known event and modifier (Addendum 12, 7.2b): the markup attributes carry the modifiers in source order.
+// An element's data-args are shared by all its handlers, so an element with several events takes no arguments.
+@state var text: u8[..40] = "";
+@state var last: u8[..40] = "";
+@state var n: i64 = 0;
+fn hit() { n += 1; }
+fn note(what: const u8[:]) { last = what; n += 1; }
+fn focused() { last = "focus"; }
+fn blurred() { last = "blur"; }
+fn changed() { last = "change"; }
+fn entered() { last = "enter"; }
+fn escaped() { last = "esc"; }
+fn test_events() { hit(); note("enter"); text = "x<y"; }
+</script>
+<button on:click.prevent.stop="hit">click</button>
+<button on:dblclick='note("dbl")'>dbl</button>
+<input bind:value="text" on:input.300ms="hit" on:change="changed" on:focus="focused" on:blur="blurred">
+<input on:keydown.enter.prevent="entered" on:keyup.escape="escaped">
+<input on:keydown.space='note("space")'>
+<input on:keydown.tab='note("tab")'>
+<input on:keyup.up='note("up")'>
+<input on:keydown.down='note("down")'>
+<input on:keyup.left.stop='note("left")'>
+<input on:keydown.right='note("right")'>
+<input on:keydown.backspace='note("back")'>
+<input on:keyup.delete='note("del")'>
+<form on:submit.prevent="hit"><button>go</button></form>
+<p>{last} {n} [{text}]</p>

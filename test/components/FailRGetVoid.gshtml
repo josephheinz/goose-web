@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRGetVoid.gshtml:4: error: http::get needs a place for its reply
+@state var u: u8[..8] = "/a";
+fn f() { await http::get(u); }
+</script>
+<p>x</p>

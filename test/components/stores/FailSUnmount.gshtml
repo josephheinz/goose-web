@@ -1,0 +1,5 @@
+<script goose>
+// expect: stores/FailSUnmount.gshtml:4: error: a store cannot have @unmount; it has no lifecycle
+@state var n: i64 = 0;
+@unmount { n = 1; }
+</script>

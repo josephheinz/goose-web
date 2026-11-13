@@ -1,0 +1,5 @@
+<script goose>
+// expect: stores/FailSEvent.gshtml:4: error: a store cannot have @event; it has no parent
+@state var n: i64 = 0;
+@event fn changed(v: i64);
+</script>

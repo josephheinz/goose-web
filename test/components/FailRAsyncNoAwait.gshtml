@@ -1,0 +1,7 @@
+<script goose>
+// expect: components/FailRAsyncNoAwait.gshtml:5: error: 'load' is async: write await load()
+@state var n: i64 = 0;
+fn load() { n = await http::get("/a"); }
+fn f() { load(); }
+</script>
+<p>x</p>

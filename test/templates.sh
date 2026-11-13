@@ -168,6 +168,11 @@ expect_fail $P '@slot()' 2 "@slot() is for layout.html only"
 expect_fail app/layout.html '@slot(1)' 2 "@slot() takes no arguments"
 expect_fail bare:app/layout.html '<main>x</main>' 0 "a layout needs @slot() where the page goes"
 expect_fail components/C.gshtml '@C(s)' 5 "'@C()' is not available in client code (components v1)"
+# Reactive components (Addendum 12 section 3.1): named props.
+expect_fail $P '@RCounter(stat: 1, label: "x")' 2 "RCounter has no prop stat"
+expect_fail $P '@RCounter(label: "x")' 2 "@RCounter needs prop start"
+expect_fail $P '@RCounter(start: 1, label: "x", start: 2)' 2 "@RCounter passes prop start twice"
+expect_fail $P '@RCounter(3, "x")' 2 "@RCounter takes named props: @RCounter(start: 3)"
 # Section 5: an empty tag word, an element that never closes.
 expect_fail $P '{#raw }' 2 "{#raw e} needs an expression"
 expect_fail $P '<script>var a = 1;' 2 "<script> is never closed with </script>"
@@ -202,6 +207,27 @@ rm -f "$WORK/f/public/site.$h.css"
 
 # A Goose error inside a tag reports the template's own line.
 expect_fail $P '{ctx.nope}' 2 "struct Ctx has no field nope"
+
+# 3. Warnings: the build succeeds, stderr has the line, --strict fails. The case is on line 2 of the page.
+expect_warn() {
+  text=$1; line=$2; msg=$3
+  cp "$HERE/templates/site/app/layout.html" "$WORK/f/app/layout.html"
+  rm -f "$WORK/f/components/C.gshtml"
+  printf "$PAGE" "$text" > "$WORK/f/app/page.html"
+  want="app/page.html:$line: warning: $msg"
+  if out=$("$GWEB" -C "$WORK/f" build 2>&1 >/dev/null); then
+    case "$out" in *"$want"*) ok ;; *) bad "'$text': wanted '$want', got:"; echo "$out" | sed 's/^/    /' ;; esac
+  else
+    bad "'$text': gweb build failed on a warning"; echo "$out" | sed 's/^/    /'
+  fi
+  if "$GWEB" -C "$WORK/f" build --strict >/dev/null 2>&1; then bad "'$text': --strict succeeded"; else ok; fi
+}
+
+expect_warn '<div clas="x">y</div>' 2 "unknown attribute 'clas' on <div>"
+expect_warn '<input type="text" nam="q">' 2 "unknown attribute 'nam' on <input>"
+# Accepted: data-, aria-, custom elements, svg, on:, gw-*, names built by an expression.
+printf "$PAGE" '<div data-a="1" aria-label="b" gw-key="k"><x-y z="1"></x-y><svg viewBox="0 0 1 1"><path d="M0"/></svg><a href="/" {"x"}="1">a</a></div>' > "$WORK/f/app/page.html"
+if "$GWEB" -C "$WORK/f" build --strict >/dev/null 2>&1; then ok; else bad "accepted attributes: --strict failed"; fi
 
 echo "templates.sh: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

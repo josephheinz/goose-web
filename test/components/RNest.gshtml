@@ -1,0 +1,24 @@
+<script goose>
+// Nested components (Addendum 12, 7.5): a child call at the top level is a part; one in a block is rendered with
+// the block and keyed by `key:`. Prop expressions read the parent's names; the children keep their own state.
+struct Item { id: i64, name: u8[..24] }
+@prop const title: u8[:];
+@state var count: i64 = 1;
+@state var next: i64 = 10;
+@state var hot: bool = false;
+@state var items: Item[>..<] = [];
+fn bump() { count += 1; }
+fn flip() { hot = !hot; }
+fn add() { items.push(Item { id: next, name: "<kid&" }); next += 1; }
+fn rotate() { let f = items[0]; items.remove_at(0); items.push(f); }
+fn back() { var k = 1; let n = items.len; while k < n { rotate(); k += 1; } }
+fn drop(i: i64) { items.remove_at(i); }
+fn test_nest() { bump(); add(); add(); flip(); }
+fn test_rotate() { add(); add(); add(); rotate(); drop(1); }
+fn test_back() { add(); add(); add(); back(); }
+</script>
+<h2>{title}</h2>
+@RNestChild(label: title, n: count, on: hot)
+<button on:click="bump">bump {count}</button> <button on:click="flip">flip</button> <button on:click="add">add</button> <button on:click="rotate">rotate</button> <button on:click="back">back</button>
+<ul>{#for it, i in items}@RNestChild(key: it.id, label: it.name, n: it.id + count)<button on:click="drop(i)">x{it.id}</button>{/for}</ul>
+{#if hot}<section>@RNestChild(label: "lit", n: 7)</section>{/if}

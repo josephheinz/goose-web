@@ -1,0 +1,13 @@
+<script goose>
+// Lifecycle: @every, @mount, @unmount and a watch. gweb test runs none of them, on either side.
+@state var ticks: i64 = 0;
+@state var started: bool = false;
+@state var parity: bool = false;
+@watch { parity = ticks % 2 == 1; }
+@mount { started = true; }
+@unmount { }
+@every(1000) { ticks += 1; }
+fn bump() { ticks += 1; }
+fn test_bump() { bump(); bump(); bump(); }
+</script>
+<p>{ticks} {started} {parity}</p><button on:click="bump">+</button>

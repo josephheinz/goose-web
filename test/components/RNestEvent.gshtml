@@ -1,0 +1,17 @@
+<script goose>
+// Child events (Addendum 12, 7.6): on:EVENT="handler" on a child call; the handler is a function of this component.
+struct Item { id: i64 }
+@state var got: i64 = 0;
+@state var said: u8[..16] = "";
+@state var loud: bool = false;
+@state var items: Item[>..<] = [];
+fn picked(v: i64) { got = v; }
+fn heard(t: const u8[:], ok: bool) { said = t; loud = ok; }
+fn boom(v: i64) { got = 77; let it = items[v + 5]; }
+fn test_picked() { picked(3); heard("x", true); }
+</script>
+<p>{got} {said} {loud}</p>
+@RNestEventChild(start: 1, on:change="picked", on:named="heard")
+@RNestEventChild(start: 10)
+<section>@RNestEventChild(start: 20, on:change="boom")</section>
+{#if loud}<aside>@RNestEventChild(start: 30, on:change="picked")</aside>{/if}

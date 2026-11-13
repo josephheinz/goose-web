@@ -1,0 +1,6 @@
+<script goose>
+// expect: components/FailRPostArgs.gshtml:4: error: http::post takes a url and a value
+@state var u: u8[..8] = "/a";
+fn f() { await http::post(u); }
+</script>
+<p>x</p>

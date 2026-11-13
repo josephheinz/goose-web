@@ -1,0 +1,5 @@
+<script goose>
+// expect: stores/FailSMarkup.gshtml:5: error: a store has no markup
+@state var n: i64 = 0;
+</script>
+<p>{n}</p>

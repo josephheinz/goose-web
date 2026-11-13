@@ -1,0 +1,11 @@
+<script goose>
+// Literal urls are checked against the routes of the site (app/api/items/route.goose answers both).
+struct Item { id: i64, title: u8[..24] }
+struct Reply { ok: bool }
+@state var items: Item[>..<] = [];
+@state var ok: bool = false;
+fn load() { items = await http::get("/api/items"); }
+fn save() { let r: Reply = await http::post("/api/items?x=1", items[0]); ok = r.ok; }
+</script>
+<button on:click="load">load</button><button on:click="save">save</button>
+<ul>{#for t, i in items}<li gw-key="{t.id}">{t.title}</li>{/for}</ul>{ok}

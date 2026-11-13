@@ -1,0 +1,7 @@
+<script goose>
+// expect: components/FailRKeyFilter.gshtml:7: error: .enter works on on:keydown and on:keyup only
+@state var n: i64 = 0;
+fn hit() { n += 1; }
+</script>
+<p>{n}</p>
+<button on:click.enter="hit">+</button>

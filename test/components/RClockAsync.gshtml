@@ -1,0 +1,9 @@
+<script goose>
+// An async @mount and @every: they run through run() like handlers.
+@state var u: u8[..16] = "/api/count";
+@state var n: i64 = 0;
+@state var busy: bool = false;
+@mount { busy = true; n = await http::get(u); busy = false; }
+@every(500) { n = await http::get(u); }
+</script>
+<p>{n} {busy}</p>

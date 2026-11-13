@@ -81,6 +81,15 @@ meta_test() {
   "$WORK/meta/meta_test"
 }
 
+sse_test() {
+  mkdir "$WORK/sse"
+  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+      -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
+      "$HERE/sse_test.goose" > "$WORK/sse/sse_test.goose"
+  "$GOOSE" build -o "$WORK/sse/sse_test" "$WORK/sse/sse_test.goose"
+  "$WORK/sse/sse_test"
+}
+
 catchall_test() {
   mkdir "$WORK/catchall"
   sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
@@ -142,7 +151,9 @@ step env_test.c c_test env_test "$ROOT/src/sys.c"
 step rate_test.c c_test rate_test "$ROOT/src/rate.c" -lpthread
 step testing_test testing_test
 step i18n_test i18n_test
+step sse_test sse_test
 step components sh "$HERE/components.sh"
+step runtime sh "$HERE/runtime.sh"
 step templates sh "$HERE/templates.sh"
 step fragments env PORT="${PORT:-3991}" sh "$HERE/fragments.sh"
 step catchall env PORT="${PORT:-3994}" sh "$HERE/catchall.sh"
@@ -170,7 +181,7 @@ step ops_c sh "$HERE/c/run.sh"
 gweb_new() {
   mkdir "$WORK/lone"
   cp "$ROOT/gweb" "$WORK/lone/gweb"
-  (cd "$WORK/lone" && ./gweb new site && ./gweb -C site build)
+  (cd "$WORK/lone" && ./gweb new site && ./gweb -C site build --strict)
 }
 step "lone gweb new and build" gweb_new
 

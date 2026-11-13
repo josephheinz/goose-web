@@ -334,6 +334,48 @@ fn apply_cookies(ctx: Ctx&, res: http::Response&) -> bool {
     return true;
 }
 
+// ---------------------------------------------------------------- server-sent events (Addendum 12 section 7.9)
+
+// Appends one SSE event: `event: E`, then each line of data as `data: LINE` (a line ends at \n, \r\n or \r, so
+// data with a trailing newline ends in an empty data line and the browser joins it back), then a blank line.
+// E must not contain a line break.
+fn sse_event(out: u8[>..]&, event: const u8[:], data: const u8[:]) {
+    out.append("event: ");
+    out.append(event);
+    out.append("\n");
+    var start = 0;
+    var i = 0;
+    while i <= data.len {
+        if i == data.len || data[i] == '\n' || data[i] == '\r' {
+            out.append("data: ");
+            out.append(data[start..i]);
+            out.append("\n");
+            if i < data.len && data[i] == '\r' && i + 1 < data.len && data[i + 1] == '\n' { i += 1; }
+            start = i + 1;
+        }
+        i += 1;
+    }
+    out.append("\n");
+}
+
+// The `fragment` event: gwe.js morphs #name with html.
+fn sse_fragment(out: u8[>..]&, name: const u8[:], html: const u8[:]) {
+    var d: u8[>..] = [];
+    d.append(name);
+    d.append("\n");
+    d.append(html);
+    sse_event(out, "fragment", d);
+}
+
+// The `store` event: gwe.js writes the values json names into the store.
+fn sse_store(out: u8[>..]&, store: const u8[:], json: const u8[:]) {
+    var d: u8[>..] = [];
+    d.append(store);
+    d.append("\n");
+    d.append(json);
+    sse_event(out, "store", d);
+}
+
 // ---------------------------------------------------------------- responses
 
 fn html(res: http::Response&, status: http::Status) {
@@ -985,32 +1027,39 @@ fn dev_status(res: http::Response&, dev_id: i64) {
     http::text(res, http::Status.Ok, "");
     format(res.body, dev_id);
     var errs: u8[>..] = [];
-    if read_file(".gooseweb.dev/errors.txt", errs) && errs.len > 0 {
-        res.body.push('\n');
-        res.body.append(errs);
+    var warns: u8[>..] = [];
+    res.body.push('\n');
+    if read_file(".gooseweb.dev/errors.txt", errs) && errs.len > 0 { res.body.append(errs); }
+    if read_file(".gooseweb.dev/warnings.txt", warns) && warns.len > 0 {
+        res.body.append("\x0c");
+        res.body.append(warns);
     }
     http::set_header(res, "Cache-Control", "no-store");
 }
 
 // Appends the dev script that polls /__gweb/id: reload on a new id, error overlay otherwise.
+// The poll body is `id\n` + errors, then `\f` + warnings when there are any. Warnings show in a small
+// box at the bottom right, dismissed by a click and shown again only when their text changes.
 // Two overlay slots: sys (build failed or server down; the poll sets and clears it) and isl
 // (page errors; cleared by a click or reload). sys shows first.
 fn dev_inject(res: http::Response&, dev_id: i64, nonce: const u8[:]) {
     if dev_id == 0 || !starts_with(res.content_type, "text/html") { return; }
     if nonce.len > 0 { format(res.body, "<script nonce=\"", nonce, "\">"); } else { res.body.append("<script>"); }
-    format(res.body, "(function(){var id=\"", dev_id, "\",fails=0,box,sys=\"\",isl=\"\";\n");
+    format(res.body, "(function(){var id=\"", dev_id, "\",fails=0,box,sys=\"\",isl=\"\",wbox,wtxt=\"\",wdis=\"\";\n");
     res.body.append("""function draw(){var t=sys||isl;if(!t){if(box){box.remove();box=null}return}""");
     res.body.push('\n');
     res.body.append("""if(!box){box=document.createElement("pre");box.style.cssText="position:fixed;inset:0;margin:0;padding:24px;background:rgba(20,0,0,.92);color:#fff;font:13px/1.5 monospace;white-space:pre-wrap;overflow:auto;z-index:2147483647";box.onclick=function(){isl="";draw()};document.body.appendChild(box)}""");
     res.body.push('\n');
     res.body.append("""if(box.textContent!==t)box.textContent=t}""");
     res.body.push('\n');
+    res.body.append("""function wdraw(w){w=w.trim();if(!w){wdis="";if(wbox){wbox.remove();wbox=null}return}if(w===wdis)return;if(!wbox){wbox=document.createElement("pre");wbox.style.cssText="position:fixed;right:12px;bottom:12px;max-width:50vw;max-height:30vh;overflow:auto;margin:0;padding:8px 12px;background:rgba(60,45,0,.95);color:#fff;font:12px monospace;white-space:pre-wrap;cursor:pointer;z-index:2147483646";wbox.onclick=function(){wdis=wtxt;wbox.remove();wbox=null};document.body.appendChild(wbox)}wtxt=w;if(wbox.textContent!==w)wbox.textContent=w}""");
+    res.body.push('\n');
     res.body.append("""addEventListener("gw:error",function(e){isl+=(isl?"\n":"page error (click to dismiss)\n\n")+e.detail;draw()});""");
     res.body.push('\n');
     // A server error page carries its detail (errors.goose, D13) in <script type="application/json" id="gw-dev-error">.
     res.body.append("""addEventListener("load",function(){var s=document.getElementById("gw-dev-error");if(s){try{isl="server error (click to dismiss)\n\n"+JSON.parse(s.textContent)}catch(x){}draw()}});""");
     res.body.push('\n');
-    res.body.append("""setInterval(function(){fetch("/__gweb/id",{cache:"no-store"}).then(function(r){return r.text()}).then(function(t){fails=0;var n=t.indexOf("\n"),cur=n<0?t:t.slice(0,n),errs=n<0?"":t.slice(n+1);if(cur!==id){location.reload();return}sys=errs.trim()?"build failed\n\n"+errs:"";draw()}).catch(function(){if(++fails>=4){sys="gweb dev: the server is not responding";draw()}})},500)})();</script>""");
+    res.body.append("""setInterval(function(){fetch("/__gweb/id",{cache:"no-store"}).then(function(r){return r.text()}).then(function(t){fails=0;var n=t.indexOf("\n"),cur=n<0?t:t.slice(0,n),rest=n<0?"":t.slice(n+1),f=rest.indexOf("\f"),errs=f<0?rest:rest.slice(0,f),warns=f<0?"":rest.slice(f+1);if(cur!==id){location.reload();return}sys=errs.trim()?"build failed\n\n"+errs:"";draw();wdraw(warns)}).catch(function(){if(++fails>=4){sys="gweb dev: the server is not responding";draw()}})},500)})();</script>""");
 }
 
 fn no_static(i: i64) -> const u8[:] { "" }

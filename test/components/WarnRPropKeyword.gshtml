@@ -1,0 +1,6 @@
+<script goose>
+// warn: components/WarnRPropKeyword.gshtml:4: warning: a prop should be const
+// code: prop-keyword
+@prop let x: i64;
+</script>
+<p>{x}</p>

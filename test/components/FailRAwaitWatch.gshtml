@@ -1,0 +1,8 @@
+<script goose>
+// expect: components/FailRAwaitWatch.gshtml:6: error: @watch cannot await
+@state var u: u8[..8] = "/a";
+@state var n: i64 = 0;
+@state var m: i64 = 0;
+@watch { m = await http::get(u); }
+</script>
+<p>x</p>

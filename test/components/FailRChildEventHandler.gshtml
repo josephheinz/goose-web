@@ -1,0 +1,8 @@
+<script goose>
+// expect: components/FailRChildEventHandler.gshtml:8: error: on:change on a component takes a handler name
+// with: RNestEventChild
+@state var n: i64 = 0;
+fn picked(v: i64) { n = v; }
+</script>
+@RNestEventChild(start: 1, on:change="picked")
+@RNestEventChild(start: 1, on:change="picked(n)")

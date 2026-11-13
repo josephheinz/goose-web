@@ -8,18 +8,22 @@ const { JSDOM } = createRequire(process.env.JSDOM_DIR + "/")("jsdom");
 const dom = new JSDOM("<!doctype html><body><div id=root></div></body>");
 const { window } = dom, document = window.document, root = document.getElementById("root");
 
-// Pulls morph, and the key helper above it, out of a source file without importing it; v1.js has no key helper.
+// Pulls morph, the key helper above it and (when there is one) patch out of a source file without importing
+// it; v1.js has no key helper and no patch.
+function block(lines, from) {
+  const s = lines.findIndex(from);
+  return s < 0 ? [] : lines.slice(s, lines.findIndex((l, i) => i > s && l == "}") + 1);
+}
 function extract(path) {
   const lines = fs.readFileSync(new URL(path, here), "utf8").split("\n");
   const s = lines.findIndex((l) => l.startsWith("const key =") || (path.endsWith("v1.js") && l.startsWith("function morph(")));
   const m = lines.findIndex((l) => l.startsWith("function morph("));
-  const e = m < 0 ? -1 : lines.findIndex((l, i) => i > m && l == "}");
-  if (s < 0 || m < 0 || e < 0) throw new Error("cannot extract morph from " + path);
-  return lines.slice(s, e + 1).join("\n");
+  if (s < 0 || m < 0) throw new Error("cannot extract morph from " + path);
+  return [...lines.slice(s, m), ...block(lines, (l) => l.startsWith("function morph(")), ...block(lines, (l) => l.startsWith("function patch("))].join("\n");
 }
 function load(path) {
   const calls = [];
-  const morph = new Function("D", "oops", extract(path) + "; return morph;")(document, (m) => calls.push(String(m)));
+  const morph = new Function("D", "oops", "hooks", "cn", extract(path) + "; return morph;")(document, (m) => calls.push(String(m)), {}, (n) => n.dataset.component);
   return { morph, calls };
 }
 const N = load("../client/gwi.js"), O = load("morph/v1.js");

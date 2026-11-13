@@ -2,7 +2,7 @@
 // client/gwi.min.js is this file minified by client/build.sh.
 
 const D = document;
-const defs = {};
+export const defs = {};
 const live = new WeakMap();
 const E = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 const enc = new TextEncoder();
@@ -23,26 +23,36 @@ export const imod = (a, b) => {
   return r < 0 ? r + Math.abs(b) : r;
 };
 
-export function component(name, def) { defs[name] = def; }
+// Optional modules (lifecycle, child components, transitions, effects) fill this; see Addendum 12 section 5.
+export const hooks = {};
+
+export function component(name, def) {
+  defs[name] = def;
+  for (const t of ["click", "change", "input", ...(def.e ? def.e.split(" ") : [])]) listen(t);
+}
+
+const cn = (n) => n.dataset.component;
 
 // A child's key is its tag plus its gw-key; a tag change under the same gw-key is a different child.
 const key = (n, k = n.getAttribute?.("gw-key")) => k && n.nodeName + " " + k;
 
-// Makes from's children match to's. A child with gw-key is matched to the old child with the same key
-// wherever it is; the others are matched in order among themselves. value and checked sync after
-// recursing so a <select> has its new options first; the focused control keeps its value unless force is set.
-function morph(from, to, force) {
+// Makes from's children match to's, or only those after s and before z (z null: to the end). A child with
+// gw-key is matched to the old child with the same key wherever it is; the others are matched in order
+// among themselves. A new keyed child is told to hooks.t on insert, an old one before it is removed.
+function morph(from, to, force, s, z = null) {
   const want = new Set(), old = new Map();
   for (const n of to.childNodes) {
     const k = key(n);
     if (k) want.has(k) ? oops("duplicate gw-key " + k) : want.add(k);
   }
+  const first = s ? s.nextSibling : from.firstChild;
   // Old keyed children that are not wanted leave first, so every keyed child still here is claimed below.
-  for (const n of [...from.childNodes]) {
+  for (let n = first, nn; n != z; n = nn) {
+    nn = n.nextSibling;
     const k = key(n);
-    if (k) want.has(k) && !old.has(k) ? old.set(k, n) : n.remove();
+    if (k) want.has(k) && !old.has(k) ? old.set(k, n) : hooks.t?.(n, 0) || n.remove();
   }
-  let a = from.firstChild, b = to.firstChild;
+  let a = s ? s.nextSibling : from.firstChild, b = to.firstChild;
   while (b) {
     const nb = b.nextSibling, k = key(b);
     let o;
@@ -61,119 +71,137 @@ function morph(from, to, force) {
         }
       }
     } else {
-      while (a && key(a)) a = a.nextSibling;
-      o = a;
+      while (a != z && key(a)) a = a.nextSibling;
+      o = a != z && a;
     }
-    if (!o) from.insertBefore(b, a);
+    if (!o) { from.insertBefore(b, a); k && hooks.t?.(b, 1); }
     else {
       if (o == a) a = a.nextSibling;
       if (o.nodeName != b.nodeName) o.replaceWith(b);
       else if (o.nodeType != 1) { if (o.data != b.data) o.data = b.data; }
-      else {
-        for (const { name } of [...o.attributes]) if (!b.hasAttribute(name)) o.removeAttribute(name);
-        for (const { name, value } of b.attributes) if (o.getAttribute(name) != value) o.setAttribute(name, value);
-        morph(o, b, force);
-        if ("form" in o) {
-          if ((o != D.activeElement || force) && o.value != b.value) o.value = b.value;
-          o.checked = b.checked;
-        }
-      }
+      else if (!(cn(o) && hooks.c?.(o, b))) patch(o, b, force);
     }
     b = nb;
   }
-  while (a) { b = a.nextSibling; a.remove(); a = b; }
+  // A keyed child left here was held back by hooks.t; it is not ours to remove.
+  while (a != z) { b = a.nextSibling; key(a) || a.remove(); a = b; }
+}
+
+// Element o takes b's attributes, children (unless top) and form state. value and checked sync after
+// recursing so a <select> has its new options first; the focused control keeps its value unless force is set.
+function patch(o, b, force, top) {
+  for (const { name } of [...o.attributes]) if (!b.hasAttribute(name)) o.removeAttribute(name);
+  for (const { name, value } of b.attributes) if (o.getAttribute(name) != value) o.setAttribute(name, value);
+  top || morph(o, b, force);
+  if ("form" in o) {
+    if ((o != D.activeElement || force) && o.value != b.value) o.value = b.value;
+    o.checked = b.checked;
+  }
 }
 
 // Logs the error and raises gw:error for gweb dev's overlay.
-function oops(err) {
+export function oops(err) {
   console.error(err);
   dispatchEvent(new CustomEvent("gw:error", { detail: String(err) }));
 }
 
-function swap(root, html, force) {
-  const tp = D.createElement("template");
-  tp.innerHTML = html;
-  morph(root, tp.content, force);
+export function swap(root, html, force) {
+  morph(root, tpl(html), force);
+  hooks.a?.();
 }
 
-// On a throw the state goes back to its copy and the DOM is left as it is.
-function on(type, binds) {
-  const attr = "data-on-" + type, sel = "[" + attr + "]";
-  D.addEventListener(type, (e) => {
-    const t = e.target, root = t.closest?.("[data-component]");
-    const def = root && defs[root.dataset.component];
-    if (!def) return;
-    const inside = (n) => n && root.contains(n) ? n : null;
-    const el = inside(t.closest(sel)), bound = binds && inside(t.closest("[data-bind]"));
-    if (!el && !bound) return;
-    let s = live.get(root);
-    if (!s) live.set(root, s = JSON.parse(root.nextElementSibling.textContent));
-    const keep = structuredClone(s);
-    const f = inside(D.activeElement), k = f && f.dataset.bind;
-    let force = 0, before, html;
+export function state(root) {
+  let s = live.get(root);
+  if (!s) live.set(root, s = JSON.parse(root.nextElementSibling.textContent));
+  return s;
+}
+
+const parts = new WeakMap();
+// The root's own "g" comments in document order, not those of nested components.
+function anchors(root) {
+  let p = parts.get(root);
+  if (!p) {
+    parts.set(root, p = []);
+    const w = D.createTreeWalker(root, 128);
+    for (let n; n = w.nextNode();) if (n.data == "g" && n.parentNode.closest("[data-component]") == root) p.push(n);
+  }
+  return p;
+}
+const tpl = (h) => { const t = D.createElement("template"); t.innerHTML = h; return t.content; };
+// Text part: the node after the marker; it is inserted when the server sent an empty value.
+export const T = (a, v) => { const n = a.nextSibling; n?.nodeType == 3 ? n.data != v && (n.data = v) : a.after(v); };
+// Attribute part: the element after the marker takes the attribute list v.
+export const A = (a, v, f) => patch(a.nextSibling, tpl("<" + a.nextSibling.nodeName + " " + v + ">").firstChild, f, 1);
+// Block part: keyed morph between the marker and its end marker.
+export const B = (a, v, f) => { let z = a; do z = z.nextSibling; while (z.data != "/g"); morph(a.parentNode, tpl(v), f, a, z); };
+
+// One dispatch: bind, handler, phase 1 (def.u, may throw), phase 2 (DOM writes), watches. A sync failure
+// restores the whole copy and leaves the DOM alone; an async one restores only the keys the handler
+// writes (def.x) and shows that rollback. m0 starts the dirty bits (gwl.js passes -1 for the first watch run).
+export function run(root, def, name, args, e, bound, m0) {
+  const s = state(root), keep = structuredClone(s);
+  const f = D.activeElement, k = root.contains(f) && f.dataset.bind;
+  let m = m0 | 0, force = 0, before, applied, dead;
+  const c = { m: (b) => m |= b, f: () => flush(1), r: root, e: (n, a) => hooks.e?.(root, n, a) };
+  // Rounds 1 to 8: a watch that marks bits makes another round.
+  const flush = (x) => {
+    const b = m;
+    m = 0;
     try {
-      if (bound) {
-        const k = bound.dataset.bind, v = bound.value;
-        if (bound.type == "checkbox") s[k] = bound.checked;
-        else if (typeof s[k] == "number") s[k] = Math.trunc(v) || 0;
-        else if (!(blen(v) > bound.dataset.cap)) s[k] = v;
-        else force = 1;
-      }
-      before = k && s[k];
-      if (el) {
-        if (type == "submit") e.preventDefault();
-        def.handlers[el.getAttribute(attr)](s, ...JSON.parse(el.dataset.args || "[]"));
-      }
-      html = def.render(s);
-    } catch (err) {
-      live.set(root, keep);
-      return oops(err);
+      const go = def.u(s, b);
+      applied = 1;
+      go(anchors(root), root, force);
+    } catch (err) { return fail(err); }
+    try { def.w?.(s, b, c); } catch (err) { oops(err); }
+    hooks.a?.();
+    if (m) x < 8 ? flush(x + 1) : (m = 0, oops("watch loop in " + cn(root)));
+  };
+  const fail = (err) => {
+    if (dead) return oops(err);
+    dead = 1;
+    if (!applied) Object.assign(s, keep);
+    else {
+      const x = def.x?.[name] || 0;
+      for (const n in def.b) if (def.b[n] & x) { s[n] = keep[n]; m |= def.b[n]; }
+      m && flush(1);
     }
-    if (k && s[k] !== before) force = 1;
-    swap(root, html, force);
+    oops(err);
+  };
+  try {
+    if (bound) {
+      const k = bound.dataset.bind, v = bound.value;
+      if (bound.type == "checkbox") s[k] = bound.checked;
+      else if (typeof s[k] == "number") s[k] = Math.trunc(v) || 0;
+      else if (!(blen(v) > bound.dataset.cap)) s[k] = v;
+      else force = 1;
+      m |= def.b?.[k] || 0;
+    }
+    before = k && s[k];
+    if (name) {
+      if (e?.type == "submit") e.preventDefault();
+      def.h[name](s, c, ...args)?.then?.(() => dead || flush(1), fail);
+    }
+  } catch (err) { return fail(err); }
+  if (k && s[k] !== before) force = 1;
+  flush(1);
+}
+
+const L = new Set();
+
+// One capture listener per event type. data-on-TYPE="handler.mod.mod": gwm.js (hooks.m, imported by components
+// that use modifiers) handles the modifiers and calls go(name, bound) when the event passes.
+function listen(type) {
+  if (!type || L.has(type)) return;
+  L.add(type);
+  const attr = "data-on-" + type, bind = type == "change" || type == "input";
+  D.addEventListener(type, (e) => {
+    const t = e.target, root = t.closest?.("[data-component]"), def = root && defs[cn(root)];
+    if (!def) return;
+    const inside = (n) => n && root.contains(n) ? n : null, bound = bind && inside(t.closest("[data-bind]")),
+      el = inside(t.closest("[" + attr + "]"));
+    if (!el && !bound) return;
+    const [name, ...m] = el ? el.getAttribute(attr).split(".") : [],
+      go = (n, b) => run(root, def, n, JSON.parse(el?.dataset.args || "[]"), e, b);
+    m[0] && hooks.m ? hooks.m(e, m, el, bound, go, name) : go(el && name, bound);
   }, true);
 }
-
-on("click");
-on("change", 1);
-on("input", 1);
-on("submit");
-
-// A reply without the GW-Fragment echo (a redirect to another page) becomes a normal navigation;
-// the last request for a target wins. A 422 with the echo is morphed like a 200; a multipart form posts FormData;
-// after 150 ms a link, or a form with gw-loading, fills the box with its loading template, restored on failure.
-function frag(type, sel, attr, form) {
-  D.addEventListener(type, async (e) => {
-    const el = e.target.closest?.(sel);
-    const name = el && el.getAttribute("gw-target"), box = name && D.getElementById(name);
-    if (!box || box.closest("[data-component]") || e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey) return;
-    e.preventDefault();
-    const url = new URL(el.getAttribute(attr) || "", location.href);
-    const post = form && /^post$/i.test(el.getAttribute("method")), fd = form && new FormData(el, e.submitter);
-    const data = form && (post && el.enctype[0] == "m" ? fd : new URLSearchParams(fd));
-    if (data && !post) url.search = data;
-    const n = box.gw = -~box.gw;
-    box.setAttribute("aria-busy", "true");
-    let saved;
-    const L = el.getAttribute("gw-loading"), tm = (!form || L != null) && setTimeout(() => {
-      const t = D.getElementById(L || "gw-loading");
-      if (t && box.gw == n) saved = [...box.childNodes], box.replaceChildren(t.content.cloneNode(true));
-    }, 150);
-    try {
-      const r = await fetch(url, { method: post ? "POST" : "GET", body: post ? data : null, headers: { "GW-Fragment": name } });
-      if (!r.ok && !(r.status == 422 && r.headers.get("GW-Fragment") == name)) throw Error("fragment " + name + ": " + r.status + " from " + url.pathname);
-      if (r.headers.get("GW-Fragment") != name) return location.assign(r.url);
-      const html = await r.text();
-      if (box.gw == n) swap(box, html, 1);
-    } catch (err) {
-      if (saved) box.replaceChildren(...saved);
-      oops(err);
-    } finally {
-      clearTimeout(tm);
-      if (box.gw == n) box.removeAttribute("aria-busy");
-    }
-  });
-}
-
-frag("click", "a[gw-target]", "href");
-frag("submit", "form[gw-target]", "action", 1);

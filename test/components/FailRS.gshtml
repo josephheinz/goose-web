@@ -1,0 +1,5 @@
+<script goose>
+// expect: components/FailRS.gshtml:5: error: 's' does not exist in a reactive component; name the state directly
+@state var n: i64 = 0;
+</script>
+<p>{s.n}</p>
