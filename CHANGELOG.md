@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.0 (unreleased)
+
+A minor release: additions, and fixes that keep documented behaviour.
+
+- New: Goose packages for an app. `package NAME SOURCE` in `gweb.packages` (or in a package's `gweb.package`) declares a library such as goose-postgres in the generated root, so app files say `import pg;`. Works for build, `test`, `check`, `lsp-gen` and `export`. A path, `owner/repo@tag` or a git URL. `GWEB_PKG_NAME` overrides a source. Conflicting versions and reserved names are errors at the line. See `docs/site/packages.md`. Tests: `test/pkgdeps.sh` (a C-free package) and `test/pgdeps.sh` (goose-postgres, skipped without a checkout, libpq or `pg_ctl`).
+
 ## v1.0.0
 
 The API freeze. `docs/site/stability.md` lists exactly what is stable. Every `Breaking:` line below is covered by

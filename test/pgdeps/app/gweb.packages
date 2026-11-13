@@ -1,0 +1,2 @@
+# Postgres. test/pgdeps.sh sets GWEB_PKG_PG to the local goose-postgres checkout.
+package pg josephheinz/goose-postgres@v0.1.0

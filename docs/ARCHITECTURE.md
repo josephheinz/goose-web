@@ -392,7 +392,7 @@ readable `gwi.js`.
 | `http/push.goose` | `subscribe`, `websocket`, `publish`, `send` and the Origin check; the hub side of `run_worker`. |
 | `cli/gzip.c`, `cli/gzip_core.[ch]` | Build-time gzip for gweb (zlib; the server never links it). |
 | `site/template.goose` | Runtime helpers that compiled templates call (`put`, `raw`, `arg`, JSON). |
-| `cli/gweb.goose` | The CLI: scan, generate, build, dev loop, routes, tests. |
+| `cli/gweb.goose` | The CLI: scan, generate, build, dev loop, routes, tests. Reads `gweb.packages` (gweb packages and `package NAME SOURCE` Goose packages) and writes the root's `import` lines. |
 | `cli/tscan.goose` | The template scanner shared by both compilers: braces, `@` calls, script and style blocks. |
 | `cli/component.goose` | The `.gshtml` compiler: Goose subset parser, type checker, JS emitter. |
 | `cli/html.goose` | The HTML attribute lists and the open-tag scan behind the `unknown-attribute` warning. |

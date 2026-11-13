@@ -33,11 +33,16 @@ jobs:
         with: { repository: josephheinz/goose-net, ref: '${{ steps.ref.outputs.ref }}', path: lab/goose-net }
       - uses: actions/checkout@v4
         with: { repository: josephheinz/goose-sqlite, ref: '${{ steps.ref.outputs.ref }}', path: lab/goose-sqlite }
+      - uses: actions/checkout@v4   # test/pgdeps.sh; it skips itself when this is missing
+        with: { repository: josephheinz/goose-postgres, ref: v0.1.0, path: lab/goose-postgres }
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - name: Linux packages
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev zlib1g-dev
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev zlib1g-dev libpq-dev postgresql
+      - name: libpq (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libpq
       - name: Install goose
         run: |
           case "$RUNNER_OS" in

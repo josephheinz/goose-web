@@ -37,6 +37,44 @@ The address may hold letters, digits and `. _ - + ~ / :`, and no `..` segment.
   and called as `NAME::fn()`.
 - `gweb dev` also watches path packages. `gweb routes` lists package routes.
 
+## Goose packages
+
+A Goose package is a library such as `goose-postgres`, with no `gweb.package`. Only the root file may declare it,
+and gweb writes the root. Declare it in `gweb.packages`:
+
+```
+package pg josephheinz/goose-postgres@v0.1.0
+package blob ../vendor/blob
+package cms file:///srv/repos/cms-lib.git@v2
+```
+
+`package NAME SOURCE`. Then any `app/` or `lib/` file writes `import pg;`. The root gets
+`import pg from "SOURCE";`, in the server build, `gweb test`, `check`, `lsp-gen` and `export`.
+
+- **Source.** A path (relative to the project, or absolute) must hold `NAME.goose`. Or `owner/repo@REF`,
+  `file:///abs/path/repo.git@REF` or `https://host/path@REF`, written as it stands. Goose fetches git sources.
+  gweb checks the syntax and does not clone.
+- **`GWEB_PKG_NAME`** (the name in capitals, as `GWEB_PKG_PG`) replaces the source. Use it for a local checkout.
+- **Refused.** A name that gweb or the root already uses (`lib`, `std`, `os`, `gweb`, `web`, `net`, `sqlite`, `main`,
+  `state`, `t`, `views`, `jobs`, `config`, `site`, `nf`, `smap`, `socket`), a name a gweb package has, and a name
+  declared with two sources. The error is at the line and names both sources and who asked for them.
+- A line `package at /x` still means a folder named `package`, mounted.
+- A Goose package that needs C (libpq) needs its library on the machine. `gweb build` fails the way `goose build` does.
+
+A gweb package may need Goose packages. Its `gweb.package` has the same lines, and a relative path is relative to
+the package folder:
+
+```
+name cms
+gweb 1.1
+package blob josephheinz/goose-blob@v0.1.0
+```
+
+gweb merges them into the project's list. The same source twice is one line. Two versions of one name is an error:
+`blob: two sources: A (gweb.packages:2) and B (package cms, /path/gweb.package:3); declare one version`. Declare the
+one you want in the project's `gweb.packages` and change the package, or set `GWEB_PKG_BLOB`. A package with `package`
+lines says `gweb 1.1`, since gweb 1.0 refuses the line.
+
 ## Write one
 
 A package is laid out like a project, with a `gweb.package` file at its root:
@@ -56,7 +94,7 @@ gweb 0.3
 
 `name` is a Goose identifier. `gweb` is the lowest gweb version it needs: `MAJOR.MINOR`, `MAJOR.MINOR.PATCH` or
 with a prerelease (`1.0.0-rc1`). `gweb 1.0` accepts 1.0.0 and every later 1.x and 2.x. Versions are compared as numbers
-(0.10 is above 0.7), and a prerelease is below its release.
+(0.10 is above 0.7), and a prerelease is below its release. `package NAME SOURCE` lines are the third kind of line (see above).
 
 Files in `lib/` start with `namespace NAME;`:
 

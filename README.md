@@ -508,6 +508,11 @@ A package is a folder with `gweb.package`, and components, routes, public
 files and `lib/` code. List one in `gweb.packages`: a path, `owner/repo@tag` (GitHub), or a git URL
 (`file:///path/to/repo.git@tag` or `https://host/path@tag`), with `at /prefix` to mount its routes. See [docs/site/packages.md](docs/site/packages.md).
 
+A plain Goose library (goose-postgres, goose-blob) is declared by `package NAME SOURCE` in the same file, for example
+`package pg josephheinz/goose-postgres@v0.1.0`. Files then say `import pg;`. gweb writes the line into the generated
+root for the build, `gweb test`, `check`, `lsp-gen` and `export`. A package's `gweb.package` may list the ones it needs.
+`GWEB_PKG_NAME` points a name at a local checkout.
+
 A package's `views/` folder joins the project's views, like its `components/`. A package may be mounted inside
 another package's mount (`../shop at /admin/shop` beside `../admin at /admin`), when the outer package has no folder
 of that name.

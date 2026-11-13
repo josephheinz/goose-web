@@ -27,7 +27,7 @@ Under the project root:
 | `app/state.goose`, `app/jobs.goose`, `app/config.goose`, `app/sitemap.goose`, `app/socket.goose` | state owner, jobs, startup check, sitemap and robots, WebSockets |
 | `components/`, `stores/<Name>.gshtml`, `views/<group>/<Name>.goose` and `.html`, `locales/default`, `locales/<tag>.txt` | components, client stores, views, message catalogs |
 | `lib/**.goose`, `public/**`, `tests/*.goose` | your modules, static files, route tests |
-| `gweb.packages` (project), `gweb.package` (package) | package list; a package's `name` and `gweb` minimum |
+| `gweb.packages` (project), `gweb.package` (package) | package list, with `package NAME SOURCE` lines for Goose packages (1.1); a package's `name` and `gweb` minimum |
 
 The filenames are exact: `jobs.goose`, `config.goose`, `socket.goose`, `sitemap.goose`, `error.html`, `loading.html`,
 `not-found.html`. Folders named `[id]`, `[...slug]`, `[[...slug]]` are dynamic segments and catch-alls; folders that
@@ -110,7 +110,7 @@ The template tags in the README Templates table (`{expr}`, `{#raw}`, `{#if}`, `{
   `GWEB_SECURITY_HEADERS`, `GWEB_HSTS`, `GWEB_SESSION_IDLE`, `GWEB_SESSION_MAX`, `GWEB_LOG_FORMAT`, `GWEB_LOG_LEVEL`,
   `GWEB_METRICS`, `GWEB_DRAIN_MS`, `GWEB_DRAIN_DELAY_MS`, `GWEB_JOB_RUNNERS`, `GWEB_JOB_QUEUE`, `GWEB_JOB_ATTEMPTS`,
   `GWEB_SCHEDULE`, `GWEB_SECRET`, `GWEB_ENV`; for the tool: `GOOSE`, `GWEB_HOME`, `GWEB_SRC`, `GWEB_NET`,
-  `GWEB_SQLITE`, `GWEB_REF`; build-time `SITE_URL`.
+  `GWEB_SQLITE`, `GWEB_REF`, `GWEB_PKG_<NAME>` (1.1); build-time `SITE_URL`.
 - Precedence: flag, then environment (real, then `.env` files), then default. A bad value exits 2 and names its source.
 - Exit status: 0 success, 1 a failed check or test, 2 a bad command line or config.
 - `gweb dev` defaults to `127.0.0.1`, port 60053, 2 workers and the access log; flags and variables still win.

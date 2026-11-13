@@ -183,6 +183,8 @@ step ops env PORT="${PORT:-4003}" sh "$HERE/ops.sh"
 step ops_unit goose_test ops_unit
 step config env PORT="${PORT:-4010}" sh "$HERE/config.sh"
 step migrate sh "$HERE/migrate.sh"
+step pkgdeps env PORT="${PORT:-4021}" sh "$HERE/pkgdeps.sh"
+step pgdeps env PORT="${PORT:-4022}" sh "$HERE/pgdeps.sh"
 step ops_c sh "$HERE/c/run.sh"
 
 gweb_new() {

@@ -61,6 +61,10 @@ struct Dir {
 // A gweb package (DESIGN-ADDENDUM-18, D6). mount is the URL prefix without its leading slash, "" when the package has no `at`.
 struct Pkg { name: u8[..64], dir: u8[..512], mount: u8[..512], git: bool, line: i64 }
 
+// A Goose package an app declares with `package NAME SOURCE` (gweb 1.1). source is what the root writes after `from`:
+// a path is made absolute. origin says who declared it, for conflict messages: "gweb.packages:3" or "package admin, DIR/gweb.package:2".
+struct GoosePkg { name: u8[..64], source: u8[..512], origin: u8[..600] }
+
 // hashed is url with the first 8 hex digits of etag before the last extension; both URLs serve the same bytes.
 // embed is the file the binary embeds when that is not file (minified CSS); min says file must be minified to get the served bytes.
 // gz is the static_bytes index of the gzip variant, or -1.
@@ -85,6 +89,7 @@ let VARIANTS = ["Get", "Head", "Post", "Put", "Patch", "Delete", "Options"];
 var dirs: Dir[>..<];
 var statics: Static[>..<];
 var pkgs: Pkg[>..<];
+var goose_pkgs: GoosePkg[>..<];
 var errors = 0;
 var has_state = false;
 var has_state_init = false;
@@ -687,9 +692,103 @@ fn semver_cmd(rest: u8[:][:]) {
     write_stdout(out);
 }
 
+// Names a Goose package may not take: gweb's own modules, and the namespaces gweb generates in the root.
+let GPKG_RESERVED = ["lib", "std", "os", "gweb", "web", "net", "sqlite", "main", "state", "t", "views", "jobs", "config", "site", "nf", "smap", "socket"];
+
+// The syntax of a git source, without fetching it: owner/repo@tag or file:///path@tag or https://host/path@tag.
+fn git_source_ok(src: const u8[:]) -> bool {
+    if is_url_source(src) {
+        let at = rfind(src, "@");
+        let addr = src[..at];
+        return url_part_ok(addr[find(addr, "://") + 3..]) && git_part_ok(src[at + 1..], true);
+    }
+    let slash = find(src, "/");
+    let at = find(src, "@");
+    if at < slash { return false; }
+    return git_part_ok(src[..slash], false) && git_part_ok(src[slash + 1..at], false) && git_part_ok(src[at + 1..], true);
+}
+
+// `NAME SOURCE` after the word package, from gweb.packages or a package's gweb.package. A path is relative to base.
+// $GWEB_PKG_NAME (the name in capitals) replaces the source, as GWEB_SQLITE does for sqlite. origin is for messages.
+fn parse_goose_pkg(path: const u8[:], ln: i64, rest: const u8[:], base: const u8[:], origin: const u8[:], out: GoosePkg&) -> bool {
+    var m: u8[>..] = [];
+    var sp = -1;
+    for c, i in rest { if sp < 0 && (c == ' ' || c == '\t') { sp = i; } }
+    if sp < 0 { err(path, ln, "a line is `package NAME SOURCE`, as in package pg josephheinz/goose-postgres@v0.1.0"); return false; }
+    let name = rest[..sp];
+    var src: u8[>..] = [];
+    src.append(trim(rest[sp + 1..]));
+    if !is_ident(name) || name.len > 64 { err(path, ln, "package needs a Goose identifier for the name, as in package pg SOURCE"); return false; }
+    for r in GPKG_RESERVED {
+        if name == r { format(m, name, ": this package name is taken by a module; rename it"); err(path, ln, m); return false; }
+    }
+    if src.len == 0 || find(src, " ") >= 0 || find(src, "\t") >= 0 { err(path, ln, "a line is `package NAME SOURCE`; the source has no spaces"); return false; }
+    var from_env = false;
+    var key: u8[>..] = [];
+    key.append("GWEB_PKG_");
+    for c in name { key.push(if c >= 'a' && c <= 'z' { c - 32 } else { c }); }
+    var ov: u8[>..] = [];
+    if env(key, ov) && ov.len > 0 { src.clear(); src.append(ov); from_env = true; }
+    var final_src: u8[>..] = [];
+    if is_git_source(src) {
+        if !git_source_ok(src) {
+            format(m, name, ": ", src, " is not a git source: owner/repo@tag, file:///path/repo.git@tag or https://host/path@tag, with letters, digits, . _ - + ~ / : in the address");
+            err(path, ln, m);
+            return false;
+        }
+        final_src.append(src);
+    } else {
+        var abs: u8[>..] = [];
+        if src[0] == '/' { abs.append(src); }
+        else if from_env { var cwd: u8[>..] = []; c_cwd(cwd); format(abs, cwd, "/", src); }
+        else { format(abs, base, "/", src); }
+        clean_path(abs, final_src);
+        var probe: u8[>..] = [];
+        format(probe, final_src, "/", name, ".goose");
+        if final_src.len >= 500 || !is_dir(final_src) {
+            format(m, name, ": ", src, " is not a folder (a git source is owner/repo@tag)");
+            err(path, ln, m);
+            return false;
+        }
+        if !file_exists(probe) {
+            format(m, name, ": ", final_src, " has no ", name, ".goose");
+            err(path, ln, m);
+            return false;
+        }
+    }
+    out.name.clear();
+    out.name.append(name);
+    out.source.clear();
+    out.source.append(final_src);
+    out.origin.clear();
+    if from_env { out.origin.append("$"); out.origin.append(key); } else { out.origin.append(origin); }
+    return true;
+}
+
+// Adds a Goose package to the root's list. The same source twice is one line. Two sources for a name, or a name that a
+// gweb package already has, is an error at the line that came second.
+fn add_goose_pkg(path: const u8[:], ln: i64, gp: const GoosePkg&) {
+    var m: u8[>..] = [];
+    for o in goose_pkgs {
+        if o.name != gp.name { continue; }
+        if o.source == gp.source { return; }
+        format(m, gp.name, ": two sources: ", o.source, " (", o.origin, ") and ", gp.source, " (", gp.origin, "); declare one version");
+        err(path, ln, m);
+        return;
+    }
+    for k in pkgs {
+        if k.name == gp.name { format(m, gp.name, ": a gweb package has this name (", k.dir, "); rename one"); err(path, ln, m); return; }
+    }
+    var c = GoosePkg { name: "", source: "", origin: "" };
+    c.name.append(gp.name);
+    c.source.append(gp.source);
+    c.origin.append(gp.origin);
+    goose_pkgs.push(c);
+}
+
 // Reads PKG/gweb.package: `name IDENT` and `gweb VERSION` (the lowest gweb it needs: 1.0 means any 1.x, and also
 // accepts 1.2.3 and 1.0.0-rc1), # comments. Returns the name, or false after reporting.
-fn read_manifest(path: const u8[:], text: const u8[:], name: u8[..64]&) -> bool {
+fn read_manifest(path: const u8[:], text: const u8[:], name: u8[..64]&, base: const u8[:], reqs: GoosePkg[>..]&) -> bool {
     var have_name = false;
     var have_ver = false;
     var ver_line = 0;
@@ -708,8 +807,13 @@ fn read_manifest(path: const u8[:], text: const u8[:], name: u8[..64]&) -> bool 
         } else if key == "gweb" {
             if !semver_parse(val, want) { err(path, i + 1, "gweb needs a version like 1.0 or 1.2.3"); good = false; }
             else { have_ver = true; ver_line = i + 1; want_text.clear(); want_text.append(val); }
+        } else if key == "package" {
+            var gp = GoosePkg { name: "", source: "", origin: "" };
+            var w: u8[>..] = [];
+            format(w, path, ":", i + 1);
+            if parse_goose_pkg(path, i + 1, val, base, w, gp) { reqs.push(gp); } else { good = false; }
         } else {
-            err(path, i + 1, "a line is `name IDENT` or `gweb VERSION`");
+            err(path, i + 1, "a line is `name IDENT`, `gweb VERSION` or `package NAME SOURCE`");
             good = false;
         }
     }
@@ -741,6 +845,7 @@ fn clean_path(p: const u8[:], out: u8[>..]&) {
 
 fn load_packages() {
     pkgs.clear();
+    goose_pkgs.clear();
     if !file_exists(PKG_LIST) { return; }
     var text: u8[>..] = [];
     if !read(PKG_LIST, text) { return; }
@@ -750,6 +855,14 @@ fn load_packages() {
         let ln = i + 1;
         let t = trim(raw);
         if t.len == 0 || t[0] == '#' { continue; }
+        // `package NAME SOURCE` declares a Goose package. `package at /x` is still a folder named package, mounted.
+        if (starts_with(t, "package ") || starts_with(t, "package\t")) && !starts_with(trim(t[8..]), "at ") && trim(t[8..]) != "at" {
+            var gp = GoosePkg { name: "", source: "", origin: "" };
+            var w: u8[>..] = [];
+            format(w, PKG_LIST, ":", ln);
+            if parse_goose_pkg(PKG_LIST, ln, trim(t[8..]), cwd, w, gp) { add_goose_pkg(PKG_LIST, ln, gp); }
+            continue;
+        }
         var source: u8[>..] = [];
         var prefix: u8[>..] = [];
         let at = find(t, " at ");
@@ -786,7 +899,8 @@ fn load_packages() {
             continue;
         }
         var pk = Pkg { name: "", dir: "", mount: "", git: is_git_source(source), line: ln };
-        if !read_manifest(manifest, mtext, pk.name) { continue; }
+        var reqs: GoosePkg[>..] = [];
+        if !read_manifest(manifest, mtext, pk.name, dir, reqs) { continue; }
         pk.dir.append(dir);
         pk.mount.append(prefix);
         var m: u8[>..] = [];
@@ -829,7 +943,19 @@ fn load_packages() {
             }
         }
         if m.len > 0 { continue; }
+        for o in goose_pkgs {
+            if o.name == pk.name { format(m, pk.name, ": a Goose package has this name (", o.origin, "); rename one"); err(manifest, 0, m); }
+        }
+        if m.len > 0 { continue; }
         pkgs.push(pk);
+        // What the package needs. The origin names the package, so a conflict says who asked for which version.
+        for r in reqs {
+            var rr = GoosePkg { name: "", source: "", origin: "" };
+            rr.name.append(r.name);
+            rr.source.append(r.source);
+            format(rr.origin, "package ", pk.name, ", ", r.origin);
+            add_goose_pkg(PKG_LIST, ln, rr);
+        }
     }
     check_nested_mounts();
 }
@@ -3398,6 +3524,11 @@ fn gen_main_fn(m: u8[>..]&) {
     m.append("    gweb::_ops_shutdown();\n    exit(0);\n}\n");
 }
 
+// The Goose packages the app declared in gweb.packages, and those its gweb packages need (only the root may declare them).
+fn gen_goose_pkgs(m: u8[>..]&) {
+    for g in goose_pkgs { format(m, "import ", g.name, " from \""); lit(m, g.source); m.append("\";\n"); }
+}
+
 // The part of the generated main that the server and the route tests share, up to and including dispatch.
 fn gen_main_body(m: u8[>..]&, test: bool) {
     m.append("// Generated by gweb. Do not edit; it is rewritten on every build.\n");
@@ -3405,6 +3536,7 @@ fn gen_main_body(m: u8[>..]&, test: bool) {
     m.append("import gweb from \""); lit(m, pkg_source(0)); m.append("\";\n");
     m.append("import net from \""); lit(m, pkg_source(1)); m.append("\";\n");
     if uses_sqlite { m.append("import sqlite from \""); lit(m, pkg_source(2)); m.append("\";\n"); }
+    gen_goose_pkgs(m);
     m.append("import os;\nimport net.http;\nimport gweb.site.template;\nimport gweb.site.meta;\nimport gweb.site.sitemap;\nimport gweb.http.static;\nimport gweb.ops.owner;\nimport gweb.forms.form;\nimport gweb.auth.csrf;\nimport gweb.forms.valid;\nimport gweb.forms.upload;\nimport gweb.site.errors;\nimport gweb.auth.crypto;\nimport gweb.auth.session;\nimport gweb.auth.rate;\nimport gweb.auth.cors;\nimport gweb.http.cache;\nimport gweb.http.stream;\nimport gweb.http.push;\n");
     if uses_hub { m.append("import net.hub;\n"); }
     m.append("import gweb.ops.log;\n");
@@ -4660,6 +4792,7 @@ fn component_parity() -> bool {
     main.append("import std;\nimport os;\n");
     main.append("import gweb from \""); lit(main, pkg_source(0)); main.append("\";\n");
     main.append("import net from \""); lit(main, pkg_source(1)); main.append("\";\n");
+    gen_goose_pkgs(main);
     main.append("import net.http;\nimport gweb.site.template;\n");
     for n in store_names { format(main, "import ", n, ";\n"); }
     for n in component_names { format(main, "import ", n, ";\n"); }

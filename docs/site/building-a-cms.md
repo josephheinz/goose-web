@@ -41,7 +41,11 @@ file of glue for the store.
 # gweb.packages
 file:///srv/repos/cms.git@v0.1.0 at /admin        # or josephheinz/goose-cms@v0.1.0 at /admin
 ./admin/shop at /admin/shop                       # a module, inside the mount
+package pg josephheinz/goose-postgres@v0.1.0      # a Goose library the CMS's files import as `import pg;`
 ```
+
+The CMS's own `gweb.package` can carry the `package` lines it needs (`package blob josephheinz/goose-blob@v0.1.0`),
+and gweb declares them in the root.
 
 The package is cloned once into `~/.cache/gweb/pkgs` (or `$GWEB_PKG_CACHE`). Its `app/` becomes `app/admin/`, its
 `public/` becomes `/admin/`, its components and views join the app's. A layout or middleware above the mount wraps

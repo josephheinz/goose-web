@@ -1,0 +1,2 @@
+# a Goose package the app's files import by name
+package fakelib ../fakelib

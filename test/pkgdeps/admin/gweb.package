@@ -1,0 +1,3 @@
+name admin
+gweb 1.0
+package fakelib ../fakelib
