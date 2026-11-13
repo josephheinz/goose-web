@@ -263,7 +263,10 @@ if start s4 --workers 2 --no-schedule; then
   newtoken() { t=$(curl -s -m 5 "$URL/token"); [ -n "$t" ] && [ "$t" != "$tok1" ]; }
   check "$(poll 150 newtoken && echo ok)" "SIGUSR2: a new process answers (a new /token)"
   check "$(poll 150 gone "$OLD" && echo ok)" "SIGUSR2: the old process exits"
+  # Keep going until 20 requests are done: a slow machine sends fewer per second (CI sent 11 in the old fixed wait).
+  enough() { [ "$(wc -l < "$WORK/hammer.codes" 2>/dev/null | tr -d ' ')" -ge 20 ]; }
   sleep 0.5
+  poll 500 enough
   touch "$WORK/hammer.stop"
   wait "$HAMMER" 2>/dev/null
   HAMMER=""
