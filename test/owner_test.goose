@@ -1,8 +1,8 @@
 // The owner transport alone: 4 workers each ask the owner (main) 1000 times, then leave; owner_loop must return.
 //   goose build test/owner_test.goose && test/owner_test
-import web from "..";
+import gweb from "..";
 import net from "../../goose-net";
-import web.owner;
+import gweb.ops.owner;
 import std;
 
 struct Todo { id: i64, title: u8[..64], done: bool }
@@ -25,18 +25,18 @@ fn handle(m: Msg) -> Reply {
     }
 }
 
-thread_fn worker(i: i64, fd: i32, c: web::Channels) {
+thread_fn worker(i: i64, fd: i32, c: gweb::Channels) {
     var ok = 0;
     var last = 0;
     for k in 1000 {
         var title: u8[..64] = "";
         format(title, "w", i, "-", k);
-        let r, sent = web::owner_call_fd<Msg, Reply>(fd, Msg.Add { title: title });
+        let r, sent = gweb::owner_call_fd<Msg, Reply>(fd, Msg.Add { title: title });
         if sent && r.ok { ok += 1; last = r.n; }
     }
-    let l, lok = web::owner_call_fd<Msg, Reply>(fd, Msg.List);
+    let l, lok = gweb::owner_call_fd<Msg, Reply>(fd, Msg.List);
     qput(Done { worker: i, ok: ok, last: if lok { l.todos.len } else { -1 } });
-    web::owner_leave(c);
+    gweb::owner_leave(c);
 }
 
 thread_fn reporter(n: i64) {
@@ -49,12 +49,12 @@ thread_fn reporter(n: i64) {
 
 fn main() {
     let n = 4;
-    let c = web::owner_channels(n);
+    let c = gweb::owner_channels(n);
     
-    for i in n { thread_spawn(worker, i, web::worker_end(c, i), c); }
-    web::owner_leave(web::Channels { handle: 0, n: 0 });   // a no-op for a handle that was never made
+    for i in n { thread_spawn(worker, i, gweb::worker_end(c, i), c); }
+    gweb::owner_leave(gweb::Channels { handle: 0, n: 0 });   // a no-op for a handle that was never made
     let rid = thread_spawn(reporter, n);
-    web::owner_loop<Msg, Reply>(c, handle);   // returns once all four workers have left
+    gweb::owner_loop<Msg, Reply>(c, handle);   // returns once all four workers have left
     print("owner loop returned");
     thread_wait(rid);
 }

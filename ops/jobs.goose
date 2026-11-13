@@ -1,14 +1,14 @@
-// Part of goose-web. Import with `import web.jobs;`.
+// Part of gweb. Import with `import gweb.ops.jobs;`.
 // The in-memory job queue and scheduler (src/jobs.c). `gweb` generates the typed wrappers and the runner threads
 // on top of these: a job is opaque bytes here.
 
-namespace web;
+namespace gweb;
 
 import std;
 import net;
 import net.http;
-import web;
-import .ops;
+import gweb;
+import ops.log;
 
 extern fn c_jobs_init(runners: i32, cap: i64, attempts: i32) = "gweb_jobs_init";
 extern fn c_jobs_push(bytes: const u8[:], delay_ms: i64) -> i32 = "gweb_jobs_push";
@@ -60,9 +60,9 @@ fn job_take(slot: i64, timeout_ms: i64, out: u8[>..]&, sched: u8[>..]&) -> i64, 
 
 // The ctx a job runs with: worker is -1 - slot (never a request worker's index), owner_fd is the runner's owner
 // channel, job_id and attempt are set. name is the job's span name (kept in ctx.title); with tracing on the job
-// gets a trace of its own, sampled by the configured sampler. hub is cfg.hub, for web::publish.
+// gets a trace of its own, sampled by the configured sampler. hub is cfg.hub, for gweb::publish.
 fn job_ctx(slot: i64, owner_fd: i32, id: i64, attempt: i64, name: const u8[:] = "job", hub: u64 = 0) -> Ctx {
-    var ctx = new_ctx(-1 - slot, owner_fd, hub);   // jobs can web::publish to SSE and WebSocket clients
+    var ctx = new_ctx(-1 - slot, owner_fd, hub);   // jobs can gweb::publish to SSE and WebSocket clients
     ctx.job_id = id;
     ctx.attempt = attempt;
     ctx.start_us = c_now_us();

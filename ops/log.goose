@@ -1,12 +1,12 @@
-// Part of goose-web. Import with `import web.ops;`.
+// Part of gweb. Import with `import gweb.ops.log;`.
 // Structured logs, app metrics and spans for handlers and jobs; ops_init and ops_shutdown start and stop the C modules.
 
-namespace web;
+namespace gweb;
 
 import std;
 import net;
 import net.http;
-import web;
+import gweb;
 
 // A log line under construction. field adds to it, emit writes it; render gives the finished line.
 // line holds the head (and the fields so far) in the format in force when log made it.

@@ -1,12 +1,12 @@
-// Part of goose-web. Import with `import web.cache;`.
+// Part of gweb. Import with `import gweb.http.cache;`.
 
-namespace web;
+namespace gweb;
 
 import std;
 import net;
 import net.http;
-import web;
-import .form;
+import gweb;
+import forms.form;
 
 extern fn c_cache_get(key: const u8[:], out: u8[>..]&) -> i32 = "gweb_cache_get";
 extern fn c_cache_put(key: const u8[:], val: const u8[:], ttl_ms: i64) -> i32 = "gweb_cache_put";

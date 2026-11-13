@@ -1,8 +1,8 @@
 import std;
 import net.http;
-import web;
-import web.errors;
+import gweb;
+import gweb.site.errors;
 
-fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
-    web::fail(ctx, 429, "Slow down.");
+fn GET(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
+    gweb::fail(ctx, 429, "Slow down.");
 }

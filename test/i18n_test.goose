@@ -1,9 +1,9 @@
 // i18n runtime (DESIGN-ADDENDUM-17, Decision 4), without sockets.
 //   goose build test/i18n_test.goose && test/i18n_test
-import web from "..";
+import gweb from "..";
 import net from "../../goose-net";
 import net.http;
-import web.i18n;
+import gweb.site.i18n;
 import std;
 
 var failures = 0;
@@ -15,7 +15,7 @@ fn check_i(got: i64, want: i64, what: const u8[:]) {
 }
 
 fn plural(lang: const u8[:], n: i64, want: i64) {
-    let got = web::plural_index(lang, n);
+    let got = gweb::plural_index(lang, n);
     checks += 1;
     if got != want { failures += 1; print("FAIL plural ", lang, " ", n, ": got ", got, " want ", want); }
 }
@@ -25,7 +25,7 @@ fn pick(extra: const u8[:], tags: const u8[:][:]) -> i64 {
     var raw: u8[>..] = [];
     format(raw, "GET / HTTP/1.1\r\nHost: a\r\n", extra, "\r\n");
     let req, parsed = http::parse_request(raw);
-    return web::pick_locale(req, tags);
+    return gweb::pick_locale(req, tags);
 }
 
 fn main() {

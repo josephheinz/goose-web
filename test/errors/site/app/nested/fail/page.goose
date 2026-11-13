@@ -1,11 +1,11 @@
 import std;
 import net.http;
-import web;
-import web.errors;
+import gweb;
+import gweb.site.errors;
 
 struct Props { n: i64 }
 
-fn load(req: const http::Request&, ctx: web::Ctx&) -> Props {
-    web::fail(ctx, 409, "Conflict here.");
+fn load(req: const http::Request&, ctx: gweb::Ctx&) -> Props {
+    gweb::fail(ctx, 409, "Conflict here.");
     return Props { n: 0 };
 }

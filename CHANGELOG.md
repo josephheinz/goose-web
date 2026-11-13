@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.4.0
+
+Breaking: the package is `gweb` and its modules are in folders. `sh tools/migrate-v0.4.sh` in an app rewrites its imports and calls.
+
+- The repository is `josephheinz/gweb` (was `goose-web`). `import gweb from "josephheinz/gweb@v0.4.0";`
+- `web::` is `gweb::`, and `import web;` is `import gweb;`.
+- Modules moved:
+
+  | v0.3 | v0.4 |
+  |---|---|
+  | `web.session`, `crypto`, `csrf`, `rate`, `cors` | `gweb.auth.*` |
+  | `web.form`, `valid`, `upload` | `gweb.forms.*` |
+  | `web.cache`, `static`, `stream`, `push` | `gweb.http.*` |
+  | `web.template`, `meta`, `sitemap`, `i18n`, `errors` | `gweb.site.*` |
+  | `web.ops` | `gweb.ops.log` |
+  | `web.jobs`, `owner` | `gweb.ops.*` |
+  | `web.testing` | `gweb.testing` |
+
+- goose-net and goose-sqlite are tagged v0.4.0 with no code change.
+
 ## v0.3.0
 
 Needs the matching goose-net release (spool mode, `net::Hub`, `Loop.detach`, chunked responses, `http::accepts`, `net.lifecycle`).

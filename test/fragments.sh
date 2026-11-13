@@ -83,7 +83,7 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     req pw POST / -H "Cookie: gw_csrf=$TK" -d 'title=hello&_csrf='"$TK"
     check "$([ "$(status pw)" = 200 ] && body_has pw '<html' && body_has pw 'hello' && ! has_header pw 'gw-fragment' && echo ok)" "POST without the header: the whole page"
     req dec POST / -H 'GW-Fragment: list' -H "Cookie: gw_csrf=$TK" -d 'title=a+b%26c%3Cd%C3%A9x%25&_csrf='"$TK"
-    check "$(body_has dec 'a b&amp;c&lt;dé' && body_has dec 'x%' && echo ok)" "web::form decodes +, %26, %3C, UTF-8 and %25"
+    check "$(body_has dec 'a b&amp;c&lt;dé' && body_has dec 'x%' && echo ok)" "gweb::form decodes +, %26, %3C, UTF-8 and %25"
     req xs POST / -H 'GW-Fragment: list' -H 'Sec-Fetch-Site: cross-site' -H "Cookie: gw_csrf=$TK" -d 'title=hello&_csrf='"$TK"
     check "$([ "$(status xs)" = 403 ] && ! body_has xs 'hello' && body_has xs 'cross-site request refused' && echo ok)" "Sec-Fetch-Site: cross-site gives 403"
     req ss POST / -H 'GW-Fragment: list' -H 'Sec-Fetch-Site: same-origin' -H "Cookie: gw_csrf=$TK" -d 'title=hello&_csrf='"$TK"
@@ -147,7 +147,7 @@ check "$([ "$(status nosse)" = 404 ] && echo ok)" "a site without gw-sse does no
     check "$([ "$(status tk8)" = 200 ] && body_has tk8 'saved' && echo ok)" "POST /save with the cookie and header: 200"
     req tk9 POST /webhook -H 'Sec-Fetch-Site: cross-site'
     check "$([ "$(status tk9)" = 200 ] && body_has tk9 'hook' && echo ok)" "POST /webhook (const CSRF = false) with no token, cross-site: 200"
-    check "$(grep -qF '::CSRF && !web::csrf_ok(r, res)' "$WORK/ok/.gooseweb/main.goose" && echo ok)" "the generated main checks the CSRF constant"
+    check "$(grep -qF '::CSRF && !gweb::csrf_ok(r, res)' "$WORK/ok/.gooseweb/main.goose" && echo ok)" "the generated main checks the CSRF constant"
   fi
   kill "$PID" 2>/dev/null
   wait "$PID" 2>/dev/null
@@ -324,7 +324,7 @@ expect_fail $P "$NINE" 2 "a page has at most 8 fragments"
 expect_fail $P '<i id="a">{#fragment a}@C(1){/fragment}</i>' 2 "@C() cannot be inside {#fragment} (fragments v1)"
 expect_fail components/C.gshtml '<i id="a">{#fragment a}x{/fragment}</i>' 5 "unknown tag {#fragment a}"
 # Section 3: page.goose.
-expect_fail bare:app/page.goose 'fn POST(req: const http::Request&, ctx: web::Ctx&) -> i64 { return 0; }' 0 "fn POST( needs fn load( beside it"
+expect_fail bare:app/page.goose 'fn POST(req: const http::Request&, ctx: gweb::Ctx&) -> i64 { return 0; }' 0 "fn POST( needs fn load( beside it"
 # Section 5: gw-target and its URL.
 expect_fail $P '<div gw-target="a">x</div>' 2 'gw-target goes on <a href="..."> or <form>, with the whole opening tag on one line'
 expect_fail $P '<a href="/" gw-target="a"' 2 'gw-target goes on <a href="..."> or <form>, with the whole opening tag on one line'

@@ -1,14 +1,14 @@
-// Part of goose-web. Import with `import web.upload;`.
+// Part of gweb. Import with `import gweb.forms.upload;`.
 // Multipart bodies become a plain urlencoded form plus files on disk (DESIGN-ADDENDUM-14, D7).
 // struct Upload lives in web.goose, beside Ctx, which holds it.
 
-namespace web;
+namespace gweb;
 
 import std;
 import net;
 import net.http;
-import web;
-import .valid;
+import gweb;
+import forms.valid;
 
 extern fn c_up_getpid() -> i64 = "gweb_up_getpid";
 extern fn c_up_open_read(path: const u8[:]) -> i32 = "gweb_up_open_read";
@@ -292,7 +292,7 @@ fn multipart_fail(res: http::Response&, status: i64) {
 }
 
 // Parses the body (req.body, or the file ctx.spool when set). Text fields are appended to body, urlencoded, in order,
-// so web::form and web::csrf_ok see them; file parts are written to ctx.upload_dir/gw-<pid>-<worker>-<n> and listed in
+// so gweb::form and gweb::csrf_ok see them; file parts are written to ctx.upload_dir/gw-<pid>-<worker>-<n> and listed in
 // ctx.uploads, which run_worker deletes after the reply. False after writing 400 (malformed), 413 (over a limit) or 500.
 fn multipart_begin(req: const http::Request&, ctx: Ctx&, res: http::Response&, body: u8[>..]&) -> bool {
     let ct, has = http::header(req, "content-type");

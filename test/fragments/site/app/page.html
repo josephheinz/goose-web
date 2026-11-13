@@ -1,6 +1,6 @@
 <h1>Fragments</h1>
 <div id="list">{#fragment list}
-<form method="post" action="/" gw-target="list">@web::csrf_field(ctx)
+<form method="post" action="/" gw-target="list">@gweb::csrf_field(ctx)
 <p id="msg">{props.msg}</p>
 <ul>{#for i in 3}<li>{i}</li>{/for}</ul>
 </form>

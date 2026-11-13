@@ -1,15 +1,15 @@
-// Part of goose-web. Import with `import web.session;`.
+// Part of gweb. Import with `import gweb.auth.session;`.
 // Signed cookies, stateless sessions, login guards and password hashing (DESIGN-ADDENDUM-13, D3 to D5).
 
-namespace web;
+namespace gweb;
 
 import std;
 import net;
 import net.http;
-import web;
-import .crypto;
-import .csrf;
-import .form;
+import gweb;
+import auth.crypto;
+import auth.csrf;
+import forms.form;
 
 const SIGNED_MAX = 700;
 const SESSION_MAX_DATA = 256;

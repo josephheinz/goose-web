@@ -1,11 +1,11 @@
-// Part of goose-web. Import with `import web.form;`.
+// Part of gweb. Import with `import gweb.forms.form;`.
 
-namespace web;
+namespace gweb;
 
 import std;
 import net;
 import net.http;
-import web;
+import gweb;
 
 // Appends the URL-decoded field of a urlencoded form body to out; false when absent.
 fn form(req: const http::Request&, name: const u8[:], out: u8[>..]&) -> bool {

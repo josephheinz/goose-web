@@ -1,10 +1,10 @@
 import std;
 import net.http;
-import web;
-import web.push;
+import gweb;
+import gweb.http.push;
 
-fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
+fn GET(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
     res.content_type.clear();
     res.content_type.append("text/event-stream");
-    web::subscribe(req, ctx, res, "news", ": ping\n\n");
+    gweb::subscribe(req, ctx, res, "news", ": ping\n\n");
 }

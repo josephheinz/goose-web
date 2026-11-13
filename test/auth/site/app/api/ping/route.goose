@@ -1,15 +1,15 @@
 import std;
 import net.http;
-import web;
+import gweb;
 
 const CSRF = false;
 
-fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
+fn GET(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
     http::json_reply(res, http::Status.Ok);
     res.body.append("{\"ok\":true}");
 }
 
-fn POST(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
+fn POST(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
     http::json_reply(res, http::Status.Ok);
     res.body.append("{\"posted\":true}");
 }

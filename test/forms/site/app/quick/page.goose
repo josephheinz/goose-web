@@ -1,25 +1,25 @@
 import std;
 import net.http;
-import web;
-import web.form;
-import web.valid;
+import gweb;
+import gweb.forms.form;
+import gweb.forms.valid;
 
 struct QuickForm {
     email: u8[..200],
     name: u8[..80] = "",
 }
 
-struct Props { form: QuickForm, errs: web::FieldErrors, done: bool }
+struct Props { form: QuickForm, errs: gweb::FieldErrors, done: bool }
 
-fn load(req: const http::Request&, ctx: web::Ctx&) -> Props {
+fn load(req: const http::Request&, ctx: gweb::Ctx&) -> Props {
     ctx.title.append("Quick");
-    return Props { form: QuickForm { .. }, errs: web::no_errors(), done: false };
+    return Props { form: QuickForm { .. }, errs: gweb::no_errors(), done: false };
 }
 
-fn POST(req: const http::Request&, ctx: web::Ctx&) -> Props {
+fn POST(req: const http::Request&, ctx: gweb::Ctx&) -> Props {
     var p = load(req, ctx);
-    if !decode(req, ctx, p.form, p.errs) || !web::check_email(p.errs, "email", p.form.email) {
-        web::unprocessable(ctx);
+    if !decode(req, ctx, p.form, p.errs) || !gweb::check_email(p.errs, "email", p.form.email) {
+        gweb::unprocessable(ctx);
         return p;
     }
     p.done = true;

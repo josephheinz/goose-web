@@ -1,12 +1,12 @@
 import std;
 import net.http;
-import web;
+import gweb;
 import json;
 
-fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
+fn GET(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
     let reply, ok = state::ask(ctx, state::Msg { add: false, text: "" });
     if !ok { http::json_error(res, http::Status.ServiceUnavailable, "state unavailable"); return; }
-    web::json(res, http::Status.Ok);
+    gweb::json(res, http::Status.Ok);
     res.body.push('[');
     for n, i in reply.notes {
         if i > 0 { res.body.push(','); }

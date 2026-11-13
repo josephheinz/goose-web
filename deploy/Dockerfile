@@ -4,8 +4,8 @@
 
 FROM debian:bookworm-slim AS build
 ARG GOOSE_URL
-ARG GWEB_REF=v0.3.0
-ARG GWEB_REPO=https://github.com/josephheinz/goose-web
+ARG GWEB_REF=v0.4.0
+ARG GWEB_REPO=https://github.com/josephheinz/gweb
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gcc libc6-dev libsqlite3-dev git ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
@@ -17,8 +17,8 @@ RUN set -eu; \
     [ -n "$found" ] || { echo "no goose binary in $GOOSE_URL" >&2; exit 1; }; \
     echo "$found" > /opt/goose.path
 RUN set -eu; \
-    git clone --depth 1 --branch "$GWEB_REF" "$GWEB_REPO" /opt/goose-web; \
-    cd /opt/goose-web; \
+    git clone --depth 1 --branch "$GWEB_REF" "$GWEB_REPO" /opt/gweb; \
+    cd /opt/gweb; \
     "$(cat /opt/goose.path)" build -o gweb cli/gweb.goose; \
     cp gweb /usr/local/bin/gweb
 COPY . /src/app

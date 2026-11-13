@@ -1,13 +1,13 @@
-// Part of goose-web. Import with `import web.push;`.
+// Part of gweb. Import with `import gweb.http.push;`.
 // These set ctx and res only; run_worker moves the socket to the hub after the handler returns.
 
-namespace web;
+namespace gweb;
 
 import std;
 import net;
 import net.http;
 import net.hub;
-import web;
+import gweb;
 
 let BASE64_BYTES = byte_set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/");
 

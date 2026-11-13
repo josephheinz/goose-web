@@ -1,7 +1,7 @@
 import std;
 import net.http;
-import web;
+import gweb;
 
-fn POST(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
+fn POST(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
     http::text(res, http::Status.Ok, "saved\n");
 }

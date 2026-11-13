@@ -1,9 +1,9 @@
-// Part of goose-web. Import with `import web.crypto;`.
+// Part of gweb. Import with `import gweb.auth.crypto;`.
 
-namespace web;
+namespace gweb;
 
 import std;
-import web;
+import gweb;
 
 extern fn c_sha256(out: u8[:], msg: const u8[:]) -> i32 = "gweb_sha256";
 extern fn c_hmac_sha256(out: u8[:], key: const u8[:], msg: const u8[:]) -> i32 = "gweb_hmac_sha256";

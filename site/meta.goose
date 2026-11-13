@@ -1,13 +1,13 @@
-// Part of goose-web. Import with `import web.meta;`.
+// Part of gweb. Import with `import gweb.site.meta;`.
 
-namespace web;
+namespace gweb;
 
 import std;
 import os;
 import net;
 import net.http;
-import web;
-import .template;
+import gweb;
+import site.template;
 
 // The longest prefix of s that fits max bytes without splitting a UTF-8 sequence.
 fn utf8_cut(s: const u8[:], max: i64) -> i64 {

@@ -5,7 +5,7 @@ namespace pins;
 import std;
 
 let OWNER = "josephheinz";
-let TAG = "v0.3.0";
+let TAG = "v0.4.0";
 
 fn pin(repo: const u8[:]) -> u8[>..] {
     var s: u8[>..] = [];
@@ -13,6 +13,6 @@ fn pin(repo: const u8[:]) -> u8[>..] {
     return s;
 }
 
-let PIN_WEB = pin("goose-web");
+let PIN_WEB = pin("gweb");
 let PIN_NET = pin("goose-net");
 let PIN_SQLITE = pin("goose-sqlite");

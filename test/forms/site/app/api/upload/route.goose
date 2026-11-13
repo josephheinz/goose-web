@@ -1,19 +1,19 @@
 import std;
 import net.http;
-import web;
-import web.valid;
+import gweb;
+import gweb.forms.valid;
 
 struct ApiForm {
-    photo: web::Upload,
+    photo: gweb::Upload,
     title: u8[..80] = "",
 }
 
 // 200 {"ok":true,"size":N}, or 422 {"errors":{...}}. No MAX_UPLOAD: only --max-upload limits this route.
-fn POST(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
+fn POST(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
     var f = ApiForm { .. };
-    var errs = web::no_errors();
+    var errs = gweb::no_errors();
     if !decode(req, ctx, f, errs) {
-        web::errors_json(res, errs);
+        gweb::errors_json(res, errs);
         return;
     }
     http::json_reply(res, http::Status.Ok);

@@ -1,14 +1,14 @@
-// Part of goose-web. Import with `import web.valid;`.
+// Part of gweb. Import with `import gweb.forms.valid;`.
 
-namespace web;
+namespace gweb;
 
 import std;
 import net;
 import net.http;
 import json;
-import web;
-import .form;
-import .template;
+import gweb;
+import forms.form;
+import site.template;
 
 // ---------------------------------------------------------------- errors
 

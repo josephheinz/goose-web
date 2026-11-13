@@ -1,6 +1,6 @@
 import std;
 import net.http;
-import web;
+import gweb;
 
 fn static_paths() -> u8[..1024][>..] {
     var paths: u8[..1024][>..] = [];

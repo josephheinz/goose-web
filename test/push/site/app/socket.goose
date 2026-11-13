@@ -1,9 +1,9 @@
 import std;
-import web;
-import web.push;
+import gweb;
+import gweb.http.push;
 
-fn message(ctx: web::Ctx&, id: u64, topic: const u8[:], data: const u8[:], binary: bool) {
+fn message(ctx: gweb::Ctx&, id: u64, topic: const u8[:], data: const u8[:], binary: bool) {
     var out: u8[>..] = [];
     format(out, "echo:", data);
-    web::send(ctx, id, out, binary);
+    gweb::send(ctx, id, out, binary);
 }

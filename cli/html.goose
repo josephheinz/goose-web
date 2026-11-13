@@ -125,7 +125,7 @@ fn skip_brace(src: const u8[:], i: i64) -> i64 {
     return i + e + 1;
 }
 
-// The index after the @name(...) call that starts at src[i] (`@asset("/x")`, `@web::csrf_field(ctx)`), with
+// The index after the @name(...) call that starts at src[i] (`@asset("/x")`, `@gweb::csrf_field(ctx)`), with
 // strings and nested parentheses skipped; -1 when src[i] does not start one that closes.
 fn skip_call(src: const u8[:], i: i64) -> i64 {
     if src[i] != '@' { return -1; }

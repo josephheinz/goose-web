@@ -14,11 +14,11 @@ HTML and JSON.
 
 - **`SITE_URL`**: the public base URL, no trailing slash. `@meta()` and the sitemap build
   absolute URLs from it. Without it they use the `Host` header, which the client controls.
-- **Cookies**: set `secure: true` in `web::CookieOptions`. Behind `X-Forwarded-Proto: https`
+- **Cookies**: set `secure: true` in `gweb::CookieOptions`. Behind `X-Forwarded-Proto: https`
   the CSRF cookie is already `__Host-gw_csrf` with `Secure`.
-- **`Host` preserved**: `web::websocket` refuses an `Origin` whose host differs from `Host`.
+- **`Host` preserved**: `gweb::websocket` refuses an `Origin` whose host differs from `Host`.
   The configs below keep it.
-- **`X-Forwarded-Proto`**: sent by the proxy; read by CSRF and `web::site_url`.
+- **`X-Forwarded-Proto`**: sent by the proxy; read by CSRF and `gweb::site_url`.
 
 ## Caddy (recommended)
 
@@ -83,8 +83,8 @@ server {
 ```
 
 - Use the same block for each streaming or WebSocket route (`/events`, `/ws`, ...).
-- `web::subscribe` already sends `X-Accel-Buffering: no`, so `proxy_buffering off` is
-  belt and braces for SSE. A `web::stream_begin` download is buffered unless you turn it off.
+- `gweb::subscribe` already sends `X-Accel-Buffering: no`, so `proxy_buffering off` is
+  belt and braces for SSE. A `gweb::stream_begin` download is buffered unless you turn it off.
 - The hub pings every 30 s, so `proxy_read_timeout 1h` is only a ceiling.
 - Use `nginx -t` to check. On nginx 1.25.1 or later, write `http2 on;` in place of `http2` on `listen`.
 

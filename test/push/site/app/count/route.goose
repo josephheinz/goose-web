@@ -1,10 +1,10 @@
 import std;
 import net.http;
-import web;
-import web.push;
+import gweb;
+import gweb.http.push;
 
-fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
+fn GET(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
     var out: u8[>..] = [];
-    format(out, "news=", web::subscribers(ctx, "news"), " chat=", web::subscribers(ctx, "chat"), "\n");
+    format(out, "news=", gweb::subscribers(ctx, "news"), " chat=", gweb::subscribers(ctx, "chat"), "\n");
     http::text(res, http::Status.Ok, out);
 }

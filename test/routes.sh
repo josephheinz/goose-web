@@ -46,7 +46,7 @@ fi
 # 4. Build errors.
 cp -R "$HERE/routes/site" "$WORK/typo"
 lines=$(wc -l < "$WORK/typo/tests/basic.goose" | tr -d ' ')
-printf '\nfn test_broken(t: web::Tester&) {\n    let n: i64 = "text";\n}\n' >> "$WORK/typo/tests/basic.goose"
+printf '\nfn test_broken(t: gweb::Tester&) {\n    let n: i64 = "text";\n}\n' >> "$WORK/typo/tests/basic.goose"
 want="tests/basic.goose:$((lines + 3))"
 if out=$("$GWEB" -C "$WORK/typo" test 2>&1); then
   bad "gweb test with a type error succeeded"

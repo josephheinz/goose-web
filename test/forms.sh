@@ -169,7 +169,7 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     check "$([ "$(status r1)" = 200 ] && body_has r1 '"ok":true' && body_has r1 '"size":400000' && echo ok)" "route: a 400000 byte upload (kept on disk by the server) is parsed: 200 with its size"
     check "$(temp_clean && echo ok)" "no temp file after the route's upload"
     req r2 POST /api/upload -H "$C" -H "$A" -F "title=x"
-    check "$([ "$(status r2)" = 422 ] && has_header r2 'content-type: application/json' && body_has r2 '"errors":{"photo":"Required."}' && echo ok)" "route without a file: 422 JSON from web::errors_json"
+    check "$([ "$(status r2)" = 422 ] && has_header r2 'content-type: application/json' && body_has r2 '"errors":{"photo":"Required."}' && echo ok)" "route without a file: 422 JSON from gweb::errors_json"
     req r3 POST /api/upload -H "$C" -H "$A" -F "photo=@$WORK/huge.bin;filename=huge.bin"
     check "$([ "$(status r3)" = 413 ] && echo ok)" "1500000 bytes over --max-upload 1000000: 413"
     check "$(temp_clean && echo ok)" "no temp file after the 413 over --max-upload"
@@ -184,10 +184,10 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     # The generated code reads like D1 and D9.
     GEN="$WORK/ok/.gooseweb"
     check "$(grep -qF '// gweb: form decoders (generated)' "$GEN/p"*"_signup.goose" 2>/dev/null && echo ok)" "the signup copy ends with the generated decoders"
-    check "$(grep -qF 'web::form_int(req, "age", f.age, errs, true);' "$GEN"/*signup.goose && grep -qF 'web::form_text(req, "note", f.note, errs, false);' "$GEN"/*signup.goose && echo ok)" "decoder statements: required and optional text, int"
-    check "$(grep -qF 'web::form_upload(ctx, "photo", f.photo, errs, true);' "$GEN"/*upload.goose && echo ok)" "decoder statement for web::Upload"
-    check "$(grep -qF '::MAX_UPLOAD > 0 && web::content_length(req) >' "$GEN/main.goose" && grep -qF 'if web::is_multipart(req)' "$GEN/main.goose" && echo ok)" "main.goose has the MAX_UPLOAD check and the multipart prelude"
-    check "$(grep -qF 'web::prepare_uploads(cfg);' "$GEN/main.goose" && echo ok)" "main() prepares the upload dir once"
+    check "$(grep -qF 'gweb::form_int(req, "age", f.age, errs, true);' "$GEN"/*signup.goose && grep -qF 'gweb::form_text(req, "note", f.note, errs, false);' "$GEN"/*signup.goose && echo ok)" "decoder statements: required and optional text, int"
+    check "$(grep -qF 'gweb::form_upload(ctx, "photo", f.photo, errs, true);' "$GEN"/*upload.goose && echo ok)" "decoder statement for gweb::Upload"
+    check "$(grep -qF '::MAX_UPLOAD > 0 && gweb::content_length(req) >' "$GEN/main.goose" && grep -qF 'if gweb::is_multipart(req)' "$GEN/main.goose" && echo ok)" "main.goose has the MAX_UPLOAD check and the multipart prelude"
+    check "$(grep -qF 'gweb::prepare_uploads(cfg);' "$GEN/main.goose" && echo ok)" "main() prepares the upload dir once"
   fi
   stop_server
 else
@@ -216,11 +216,11 @@ expect_fail() {
 
 HEAD='import std;
 import net.http;
-import web;
+import gweb;
 struct Props { n: i64 }
-fn load(req: const http::Request&, ctx: web::Ctx&) -> Props { return Props { n: 0 }; }
-fn POST(req: const http::Request&, ctx: web::Ctx&) -> Props { return Props { n: 1 }; }'
-FIELDS='form fields are u8[..N], i64, bool or web::Upload'
+fn load(req: const http::Request&, ctx: gweb::Ctx&) -> Props { return Props { n: 0 }; }
+fn POST(req: const http::Request&, ctx: gweb::Ctx&) -> Props { return Props { n: 1 }; }'
+FIELDS='form fields are u8[..N], i64, bool or gweb::Upload'
 
 expect_fail "$HEAD
 struct SignupForm {
@@ -244,7 +244,7 @@ expect_fail "$HEAD
 struct SignupForm {
     email: u8[..200],
 }
-fn decode(req: const http::Request&, ctx: const web::Ctx&, f: SignupForm&, errs: web::FieldErrors&) -> bool { return true; }" 10 "fn decode is generated for SignupForm; rename yours"
+fn decode(req: const http::Request&, ctx: const gweb::Ctx&, f: SignupForm&, errs: gweb::FieldErrors&) -> bool { return true; }" 10 "fn decode is generated for SignupForm; rename yours"
 
 # loading.html: {#fragment} and @slot() are build errors in it.
 cp "$HERE/forms/site/app/signup/page.goose" "$WORK/f/app/signup/page.goose"

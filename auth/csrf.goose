@@ -1,12 +1,12 @@
-// Part of goose-web. Import with `import web.csrf;`.
+// Part of gweb. Import with `import gweb.auth.csrf;`.
 
-namespace web;
+namespace gweb;
 
 import std;
 import net;
 import net.http;
-import web;
-import .form;
+import gweb;
+import forms.form;
 
 const CSRF_LEN = 32;
 let CSRF_HEX = "0123456789abcdef";

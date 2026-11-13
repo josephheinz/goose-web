@@ -1,9 +1,9 @@
 import std;
 import net.http;
-import web;
+import gweb;
 
-fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
+fn GET(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
     var s: u8[>..] = [];
-    format(s, "shop:", web::param(ctx, "cat"), ":", web::param(ctx, "rest"));
+    format(s, "shop:", gweb::param(ctx, "cat"), ":", gweb::param(ctx, "rest"));
     http::text(res, http::Status.Ok, s);
 }

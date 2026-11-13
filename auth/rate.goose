@@ -1,12 +1,12 @@
-// Part of goose-web. Import with `import web.rate;`.
+// Part of gweb. Import with `import gweb.auth.rate;`.
 // Rate limiting and the client address (DESIGN-ADDENDUM-13, D6).
 
-namespace web;
+namespace gweb;
 
 import std;
 import net;
 import net.http;
-import web;
+import gweb;
 
 extern fn c_rate_take(key: const u8[:], now_ms: i64, period_ms: i64, limit: i64) -> i64 = "gweb_rate_take";
 extern fn c_rate_reset() = "gweb_rate_reset";

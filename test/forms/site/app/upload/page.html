@@ -1,6 +1,6 @@
 <h1>Upload</h1>
-<form method="post" action="/upload" enctype="multipart/form-data">@web::csrf_field(ctx)
-<p><label>Title <input name="title" value="@web::field_value(req, "title", props.form.title)"></label></p>
-<p><label>Photo <input type="file" name="photo"@web::invalid(props.errs, "photo")></label>@web::field_error(props.errs, "photo")</p>
+<form method="post" action="/upload" enctype="multipart/form-data">@gweb::csrf_field(ctx)
+<p><label>Title <input name="title" value="@gweb::field_value(req, "title", props.form.title)"></label></p>
+<p><label>Photo <input type="file" name="photo"@gweb::invalid(props.errs, "photo")></label>@gweb::field_error(props.errs, "photo")</p>
 <button>Upload</button>
 </form>

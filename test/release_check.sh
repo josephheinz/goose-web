@@ -56,7 +56,7 @@ step() {
 
 cookie_test() {
   mkdir "$WORK/cookie"
-  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+  sed -e "s|^import gweb from \"..\";|import gweb from \"$GWEB_WEB\";|" \
       -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
       "$HERE/cookie_test.goose" > "$WORK/cookie/cookie_test.goose"
   "$GOOSE" build -o "$WORK/cookie/cookie_test" "$WORK/cookie/cookie_test.goose"
@@ -65,7 +65,7 @@ cookie_test() {
 
 csrf_test() {
   mkdir "$WORK/csrf"
-  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+  sed -e "s|^import gweb from \"..\";|import gweb from \"$GWEB_WEB\";|" \
       -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
       "$HERE/csrf_test.goose" > "$WORK/csrf/csrf_test.goose"
   "$GOOSE" build -o "$WORK/csrf/csrf_test" "$WORK/csrf/csrf_test.goose"
@@ -74,7 +74,7 @@ csrf_test() {
 
 meta_test() {
   mkdir "$WORK/meta"
-  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+  sed -e "s|^import gweb from \"..\";|import gweb from \"$GWEB_WEB\";|" \
       -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
       "$HERE/meta_test.goose" > "$WORK/meta/meta_test.goose"
   "$GOOSE" build -o "$WORK/meta/meta_test" "$WORK/meta/meta_test.goose"
@@ -83,7 +83,7 @@ meta_test() {
 
 sse_test() {
   mkdir "$WORK/sse"
-  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+  sed -e "s|^import gweb from \"..\";|import gweb from \"$GWEB_WEB\";|" \
       -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
       "$HERE/sse_test.goose" > "$WORK/sse/sse_test.goose"
   "$GOOSE" build -o "$WORK/sse/sse_test" "$WORK/sse/sse_test.goose"
@@ -92,7 +92,7 @@ sse_test() {
 
 catchall_test() {
   mkdir "$WORK/catchall"
-  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+  sed -e "s|^import gweb from \"..\";|import gweb from \"$GWEB_WEB\";|" \
       -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
       "$HERE/catchall_test.goose" > "$WORK/catchall/catchall_test.goose"
   "$GOOSE" build -o "$WORK/catchall/catchall_test" "$WORK/catchall/catchall_test.goose"
@@ -103,7 +103,7 @@ catchall_test() {
 goose_test() {
   name=$1
   mkdir "$WORK/$name"
-  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+  sed -e "s|^import gweb from \"..\";|import gweb from \"$GWEB_WEB\";|" \
       -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
       "$HERE/$name.goose" > "$WORK/$name/$name.goose"
   "$GOOSE" build -o "$WORK/$name/$name" "$WORK/$name/$name.goose"
@@ -121,7 +121,7 @@ c_test() {
 
 testing_test() {
   mkdir "$WORK/testing"
-  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+  sed -e "s|^import gweb from \"..\";|import gweb from \"$GWEB_WEB\";|" \
       -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
       "$HERE/testing_test.goose" > "$WORK/testing/testing_test.goose"
   "$GOOSE" build -o "$WORK/testing/testing_test" "$WORK/testing/testing_test.goose"
@@ -130,7 +130,7 @@ testing_test() {
 
 i18n_test() {
   mkdir "$WORK/i18n"
-  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+  sed -e "s|^import gweb from \"..\";|import gweb from \"$GWEB_WEB\";|" \
       -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
       "$HERE/i18n_test.goose" > "$WORK/i18n/i18n_test.goose"
   "$GOOSE" build -o "$WORK/i18n/i18n_test" "$WORK/i18n/i18n_test.goose"

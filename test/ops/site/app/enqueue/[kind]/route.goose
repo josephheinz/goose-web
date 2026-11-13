@@ -1,9 +1,9 @@
 import std;
 import net.http;
-import web;
+import gweb;
 
-fn POST(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
-    let kind = web::param(ctx, "kind");
+fn POST(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
+    let kind = gweb::param(ctx, "kind");
     var ok = false;
     if kind == "bump" { ok = jobs::enqueue(ctx, jobs::Job.Bump); }
     else if kind == "fail" { ok = jobs::enqueue(ctx, jobs::Job.Fail); }

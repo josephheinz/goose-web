@@ -1,9 +1,9 @@
 <h1>Sign up</h1>
-<form method="post" action="/signup" novalidate>@web::csrf_field(ctx)
-<p><label>Email <input name="email" value="@web::field_value(req, "email", props.form.email)"@web::invalid(props.errs, "email")></label>@web::field_error(props.errs, "email")</p>
-<p><label>Name <input name="name" value="@web::field_value(req, "name", props.form.name)"@web::invalid(props.errs, "name")></label>@web::field_error(props.errs, "name")</p>
-<p><label>Age <input name="age" value="@web::field_value(req, "age", "")"@web::invalid(props.errs, "age")></label>@web::field_error(props.errs, "age")</p>
+<form method="post" action="/signup" novalidate>@gweb::csrf_field(ctx)
+<p><label>Email <input name="email" value="@gweb::field_value(req, "email", props.form.email)"@gweb::invalid(props.errs, "email")></label>@gweb::field_error(props.errs, "email")</p>
+<p><label>Name <input name="name" value="@gweb::field_value(req, "name", props.form.name)"@gweb::invalid(props.errs, "name")></label>@gweb::field_error(props.errs, "name")</p>
+<p><label>Age <input name="age" value="@gweb::field_value(req, "age", "")"@gweb::invalid(props.errs, "age")></label>@gweb::field_error(props.errs, "age")</p>
 <p><label><input type="checkbox" name="newsletter"> Newsletter</label></p>
-<p><label>Note <textarea name="note">@web::field_value(req, "note", props.form.note)</textarea></label>@web::field_error(props.errs, "note")</p>
+<p><label>Note <textarea name="note">@gweb::field_value(req, "note", props.form.note)</textarea></label>@gweb::field_error(props.errs, "note")</p>
 <button>Sign up</button>
 </form>

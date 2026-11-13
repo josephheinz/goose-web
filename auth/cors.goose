@@ -1,12 +1,12 @@
-// Part of goose-web. Import with `import web.cors;`.
+// Part of gweb. Import with `import gweb.auth.cors;`.
 // CORS for routes, called in `before` (DESIGN-ADDENDUM-13, D8).
 
-namespace web;
+namespace gweb;
 
 import std;
 import net;
 import net.http;
-import web;
+import gweb;
 
 struct CorsOptions { origins: u8[..1024] = "", methods: u8[..128] = "GET, POST, PUT, PATCH, DELETE",
                      headers: u8[..256] = "Content-Type, X-CSRF-Token", credentials: bool = false, max_age: i64 = 600 }

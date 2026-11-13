@@ -10,7 +10,7 @@ form does a normal navigation.
 {#for t in props.todos}<li gw-key="{t.id}">{t.title}</li>{/for}
 {/fragment}</ul>
 <form method="post" action="/todos" gw-target="todo-list">
-  @web::csrf_field(ctx)
+  @gweb::csrf_field(ctx)
   <input name="title"> <button>Add</button>
 </form>
 <a href="?cat=home" gw-target="results">home</a>
@@ -19,7 +19,7 @@ form does a normal navigation.
 The page's `page.goose` handles the post:
 
 ```goose
-fn POST(req: const http::Request&, ctx: web::Ctx&) -> Props {
+fn POST(req: const http::Request&, ctx: gweb::Ctx&) -> Props {
     ...
 }
 ```
@@ -40,8 +40,8 @@ fn POST(req: const http::Request&, ctx: web::Ctx&) -> Props {
   item other than the last.
 - `fn POST(req, ctx) -> Props` runs in place of `load` for a POST. It needs
   `load`. A POST must carry the CSRF token.
-- `import web.form;` gives `web::form(req, "name", out)` and
-  `web::form_int(req, "id")`.
+- `import gweb.forms.form;` gives `gweb::form(req, "name", out)` and
+  `gweb::form_int(req, "id")`.
 - Not supported: file uploads, append or prepend swaps, a target inside a
   component.
 

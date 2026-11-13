@@ -1,17 +1,17 @@
-// Part of goose-web. Import with `import web.errors;`.
+// Part of gweb. Import with `import gweb.site.errors;`.
 // Error pages and crash replies (DESIGN-ADDENDUM-14, D10 to D13). The generated error_reply and crash_reply call these.
 
-namespace web;
+namespace gweb;
 
 import std;
 import net;
 import net.http;
-import web;
-import .template;
+import gweb;
+import site.template;
 
 struct ErrorInfo {
     status: i64,
-    message: u8[..512],    // web::fail's message; "Internal Server Error" for a crash
+    message: u8[..512],    // gweb::fail's message; "Internal Server Error" for a crash
     id: u8[..16],          // 8 random bytes in hex, also in the server log line
     crashed: bool,
     detail: u8[..4096]     // dev only: the abort text and source lines; "" in production
@@ -114,7 +114,7 @@ fn dev_error_script(out: u8[>..]&, e: const ErrorInfo&) {
 
 // ---------------------------------------------------------------- dev detail (D13)
 
-// The lines of s as slices (web::split is the router's, so std's is out of reach here).
+// The lines of s as slices (gweb::split is the router's, so std's is out of reach here).
 fn split_lines(s: const u8[:], sep: u8) -> const u8[:][>..] {
     var out: const u8[:][>..] = [];
     var start = 0;
@@ -220,7 +220,7 @@ fn add_excerpts(d: u8[>..]&, text: const u8[:], map: const u8[:]) {
     }
 }
 
-// Fills e.detail: method and target; the abort text (a crash) or the message (web::fail); then source lines for the
+// Fills e.detail: method and target; the abort text (a crash) or the message (gweb::fail); then source lines for the
 // locations in the abort text. Capped at e.detail's capacity. Call only in dev; production leaves detail "".
 fn dev_detail(e: ErrorInfo&, req: const http::Request&, abort_text: const u8[:]) {
     var d: u8[>..] = [];
@@ -247,7 +247,7 @@ fn dev_mode() -> bool { return c_if_dev() != 0; }
 // The dispatcher calls this beside ctx.route = i.
 fn inflight_route(slot: i64, route: i64) { c_if_set_route(slot, route); }
 
-// 1 while an error page renders after web::fail: a crash then starts at attempt 2.
+// 1 while an error page renders after gweb::fail: a crash then starts at attempt 2.
 fn inflight_phase(slot: i64, phase: i64) { c_if_set_phase(slot, phase); }
 
 fn inflight_route_of(slot: i64) -> i64 { return c_if_get_route(slot); }

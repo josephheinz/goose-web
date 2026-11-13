@@ -1,7 +1,7 @@
 // Crypto wrappers (DESIGN-ADDENDUM-13, D1), without sockets. The C vectors live in crypto_test.c.
 //   goose build test/crypto_test.goose && test/crypto_test
-import web from "..";
-import web.crypto;
+import gweb from "..";
+import gweb.auth.crypto;
 import net from "../../goose-net";
 import std;
 
@@ -28,7 +28,7 @@ fn hex(out: u8[>..]&, data: const u8[:]) {
 
 fn sha_hex(msg: const u8[:]) -> u8[>..] {
     var d: u8[..32] = [0; 32];
-    check(web::sha256(d, msg), "sha256 accepts 32");
+    check(gweb::sha256(d, msg), "sha256 accepts 32");
     var h: u8[>..] = [];
     hex(h, d);
     return h;
@@ -36,7 +36,7 @@ fn sha_hex(msg: const u8[:]) -> u8[>..] {
 
 fn hmac_hex(key: const u8[:], msg: const u8[:]) -> u8[>..] {
     var d: u8[..32] = [0; 32];
-    check(web::hmac_sha256(d, key, msg), "hmac accepts 32");
+    check(gweb::hmac_sha256(d, key, msg), "hmac accepts 32");
     var h: u8[>..] = [];
     hex(h, d);
     return h;
@@ -44,20 +44,20 @@ fn hmac_hex(key: const u8[:], msg: const u8[:]) -> u8[>..] {
 
 fn enc(data: const u8[:]) -> u8[>..] {
     var o: u8[>..] = [];
-    web::b64url(o, data);
+    gweb::b64url(o, data);
     return o;
 }
 
 fn round_trip(data: const u8[:], what: const u8[:]) {
     let e = enc(data);
     var back: u8[>..] = [];
-    check(web::b64url_decode(back, e), what);
+    check(gweb::b64url_decode(back, e), what);
     check_eq(back, data, what);
 }
 
 fn refuses(s: const u8[:], what: const u8[:]) {
     var back: u8[>..] = [];
-    check(!web::b64url_decode(back, s), what);
+    check(!gweb::b64url_decode(back, s), what);
 }
 
 fn main() {
@@ -72,12 +72,12 @@ fn main() {
 
 
     var dk: u8[..32] = [0; 32];
-    check(web::pbkdf2_sha256(dk, "password", "salt", 2), "pbkdf2 accepts");
+    check(gweb::pbkdf2_sha256(dk, "password", "salt", 2), "pbkdf2 accepts");
     var dkh: u8[>..] = [];
     hex(dkh, dk);
     check_eq(dkh, "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43", "pbkdf2 c=2");
-    check(!web::pbkdf2_sha256(dk, "password", "salt", 0), "pbkdf2 refuses iter 0");
-    check(!web::pbkdf2_sha256(dk, "password", "salt", 10000001), "pbkdf2 refuses iter above max");
+    check(!gweb::pbkdf2_sha256(dk, "password", "salt", 0), "pbkdf2 refuses iter 0");
+    check(!gweb::pbkdf2_sha256(dk, "password", "salt", 10000001), "pbkdf2 refuses iter above max");
 
     check_eq(enc(""), "", "b64url empty");
     check_eq(enc("f"), "Zg", "b64url f");
@@ -108,20 +108,20 @@ fn main() {
     refuses("Zm9vY", "decode refuses length 5");
     refuses("Zm 9", "decode refuses a space");
 
-    check(web::bytes_equal("abc", "abc"), "bytes_equal same");
-    check(!web::bytes_equal("abc", "abd"), "bytes_equal last byte differs");
-    check(!web::bytes_equal("abc", "xbc"), "bytes_equal first byte differs");
-    check(!web::bytes_equal("abc", "ab"), "bytes_equal shorter");
-    check(!web::bytes_equal("ab", "abc"), "bytes_equal longer");
-    check(web::bytes_equal("", ""), "bytes_equal both empty");
+    check(gweb::bytes_equal("abc", "abc"), "bytes_equal same");
+    check(!gweb::bytes_equal("abc", "abd"), "bytes_equal last byte differs");
+    check(!gweb::bytes_equal("abc", "xbc"), "bytes_equal first byte differs");
+    check(!gweb::bytes_equal("abc", "ab"), "bytes_equal shorter");
+    check(!gweb::bytes_equal("ab", "abc"), "bytes_equal longer");
+    check(gweb::bytes_equal("", ""), "bytes_equal both empty");
 
     var r1: u8[..16] = [0; 16];
     var r2: u8[..16] = [0; 16];
-    check(web::random_bytes(r1), "random_bytes 16");
-    check(web::random_bytes(r2), "random_bytes 16 again");
+    check(gweb::random_bytes(r1), "random_bytes 16");
+    check(gweb::random_bytes(r2), "random_bytes 16 again");
     check(r1 != r2, "random_bytes differ");
     var big: u8[..257] = [0; 257];
-    check(!web::random_bytes(big), "random_bytes refuses 257");
+    check(!gweb::random_bytes(big), "random_bytes refuses 257");
 
     print(checks - failures, " of ", checks, " checks pass");
     if failures > 0 { exit(1); }

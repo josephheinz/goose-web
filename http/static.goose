@@ -1,11 +1,11 @@
-// Part of goose-web. Import with `import web.static;`.
+// Part of gweb. Import with `import gweb.http.static;`.
 
-namespace web;
+namespace gweb;
 
 import std;
 import net;
 import net.http;
-import web;
+import gweb;
 
 // Answers 304 when If-None-Match carries the ETag of the representation to send; otherwise returns the index to send, so run_worker sends the embedded bytes.
 // immutable is for the hashed URL, whose name changes with the bytes. gz is the index of a gzip variant, or -1: the plain ETag

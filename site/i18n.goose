@@ -1,11 +1,11 @@
-// Part of goose-web. Import with `import web.i18n;`. Runtime of the generated `t` module (DESIGN-ADDENDUM-17, Decision 4).
+// Part of gweb. Import with `import gweb.site.i18n;`. Runtime of the generated `t` module (DESIGN-ADDENDUM-17, Decision 4).
 
-namespace web;
+namespace gweb;
 
 import std;
 import net;
 import net.http;
-import web;
+import gweb;
 
 // The language subtag of a tag: the text before the first '-'.
 fn lang_part(tag: const u8[:]) -> const u8[:] {

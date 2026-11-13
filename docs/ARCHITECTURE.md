@@ -58,7 +58,7 @@ flowchart LR
 3. **Compile each template** (`page.html`, `layout.html`) into Goose. One HTML
    line becomes one Goose line, so a type error in `{p.name}` points at the
    right line of your HTML.
-   - `{expr}` becomes `web::put(out, expr);`, which writes the value escaped.
+   - `{expr}` becomes `gweb::put(out, expr);`, which writes the value escaped.
    - `{#if}`, `{#for}` and `{#let}` become Goose `if`, `for` and `let`.
    - `@Name(expr)` renders a component, and `@ns::f(a)` calls a partial.
    - `{#fragment NAME}` marks a region that can be served alone.
@@ -136,20 +136,20 @@ flowchart TB
   template, and the layout wraps the result. `finish()` applies the
   outcome (status, redirect), and `run_worker` adds any queued cookies.
 - **Uploads.** A `multipart/form-data` body over 64 KiB is spooled to a file by the goose-net loop
-  (`--max-upload`, `--upload-dir`). `web::multipart_begin` turns the body into an urlencoded body of the
-  text fields plus up to 8 temp files in `ctx.uploads`, so `web::form` and the CSRF check work unchanged.
+  (`--max-upload`, `--upload-dir`). `gweb::multipart_begin` turns the body into an urlencoded body of the
+  text fields plus up to 8 temp files in `ctx.uploads`, so `gweb::form` and the CSRF check work unchanged.
   `run_worker` deletes the spool and unsaved files after the reply.
-- **Errors.** `web::fail` sets `Outcome.Error`; `finish` answers with the nearest `error.html` (JSON for a
+- **Errors.** `gweb::fail` sets `Outcome.Error`; `finish` answers with the nearest `error.html` (JSON for a
   route). A crash kills the worker thread. `src/inflight.c` keeps each slot's connection and request head, so
   the supervisor renders the error page in a contained thread and sends it with `Connection: close`
   (then the layout-less page, then a fixed plain-text 500). It then frees the dead loop, which closes that
-  worker's other connections, and respawns the worker. `web::done` lets a handler end the reply itself.
+  worker's other connections, and respawns the worker. `gweb::done` lets a handler end the reply itself.
 - **Shared state.** Data that all workers must see, such as the in-memory todo
   list, lives on the owner thread. Workers reach it through `owner_call` over a
   socketpair, so it needs no locks.
 - **SQLite.** Each thread has its own read-only connection and cached
   statements.
-- **Cookies.** `web::cookie_or(req, name, fallback)` reads a cookie.
+- **Cookies.** `gweb::cookie_or(req, name, fallback)` reads a cookie.
   `ctx` setters queue `Set-Cookie` headers, and `run_worker` applies them.
 - **Sessions and security.** `config_from_args` loads `.env` files and `WEB_SECRET` into `Config`, and
   `run_worker` copies the keys into `Ctx`. A session is a signed cookie that handlers load on demand.
@@ -163,13 +163,13 @@ flowchart TB
 - **Page cache.** A page with `const REVALIDATE = N;` keeps its 200 GET reply
   for N seconds in a per-worker thread-local cache (`src/cache.c`), with an ETag.
   No lock and no owner round trip; the cost is up to one render per worker.
-- **Streaming.** `web::stream_begin`, `write` and `end` send a chunked body from
+- **Streaming.** `gweb::stream_begin`, `write` and `end` send a chunked body from
   the handler. The stream holds its worker until it ends.
-- **The hub thread.** `web::subscribe` (SSE) and `web::websocket` (after the
+- **The hub thread.** `gweb::subscribe` (SSE) and `gweb::websocket` (after the
   handshake) set `ctx.detach`. After the handler returns, `run_worker` sends the
   head, takes the socket out of the worker's loop (`Loop.detach`) and gives it to
   one `net::Hub`, which runs every long-lived connection in one poll loop on its own
-  thread. Workers and the owner call `web::publish` or `web::send` from any thread.
+  thread. Workers and the owner call `gweb::publish` or `gweb::send` from any thread.
   Connection events (`Open`, `Text`, `Binary`, `Close`) reach `app/socket.goose`
   on the hub thread, which can use `state::ask`. The hub exists only when the app
   uses it.
@@ -366,24 +366,24 @@ readable `gwi.js`.
 
 | File | Role |
 |---|---|
-| `web.goose` | Server framework: config, workers, `Ctx`, redirects, cookies, dev status and overlay script, fragment replies. |
-| `owner.goose`, `src/owner.c` | Owner-thread state over socketpairs. |
-| `crypto.goose`, `src/crypto.c` | SHA-256, HMAC, PBKDF2 in C; base64url, constant-time compare, random bytes. |
-| `session.goose` | Signed cookies, sessions, `login`/`logout`/`require_login`, password hashes. |
-| `rate.goose`, `src/rate.c` | `rate_limit`, `rate_limit_key`, `client_ip`; the shared GCRA table. |
-| `cors.goose` | `web::cors` for route middleware. |
-| `form.goose` | Decodes form bodies for `fn POST`. |
-| `valid.goose` | Field errors, checks, template partials and the `form_*` helpers the generated `decode` calls. |
-| `upload.goose`, `src/upload.c` | Multipart parser, `web::Upload`, `save_upload`, `check_upload`; file helpers in C. |
-| `errors.goose`, `src/inflight.c` | `ErrorInfo`, `web::fail`, crash replies, dev error detail; the in-flight request table. |
-| `static.goose` | Static files: hashed URLs, immutable caching, gzip variants, ETag and 304. |
-| `meta.goose` | `ctx.meta` setters, `@meta()` rendering and `web::site_url`. |
-| `sitemap.goose` | `/sitemap.xml` and `/robots.txt` builders (`web::Sitemap`, `sitemap_add`). |
-| `cache.goose`, `src/cache.c`, `src/cache_core.[ch]` | The `REVALIDATE` page cache: per-worker store and ETag replies. |
-| `stream.goose` | Chunked response bodies: `stream_begin`, `write`, `end`. |
-| `push.goose` | `subscribe`, `websocket`, `publish`, `send` and the Origin check; the hub side of `run_worker`. |
+| `gweb.goose` | Server framework: config, workers, `Ctx`, redirects, cookies, dev status and overlay script, fragment replies. |
+| `ops/owner.goose`, `src/owner.c` | Owner-thread state over socketpairs. |
+| `auth/crypto.goose`, `src/crypto.c` | SHA-256, HMAC, PBKDF2 in C; base64url, constant-time compare, random bytes. |
+| `auth/session.goose` | Signed cookies, sessions, `login`/`logout`/`require_login`, password hashes. |
+| `auth/rate.goose`, `src/rate.c` | `rate_limit`, `rate_limit_key`, `client_ip`; the shared GCRA table. |
+| `auth/cors.goose` | `gweb::cors` for route middleware. |
+| `forms/form.goose` | Decodes form bodies for `fn POST`. |
+| `forms/valid.goose` | Field errors, checks, template partials and the `form_*` helpers the generated `decode` calls. |
+| `forms/upload.goose`, `src/upload.c` | Multipart parser, `gweb::Upload`, `save_upload`, `check_upload`; file helpers in C. |
+| `site/errors.goose`, `src/inflight.c` | `ErrorInfo`, `gweb::fail`, crash replies, dev error detail; the in-flight request table. |
+| `http/static.goose` | Static files: hashed URLs, immutable caching, gzip variants, ETag and 304. |
+| `site/meta.goose` | `ctx.meta` setters, `@meta()` rendering and `gweb::site_url`. |
+| `site/sitemap.goose` | `/sitemap.xml` and `/robots.txt` builders (`gweb::Sitemap`, `sitemap_add`). |
+| `http/cache.goose`, `src/cache.c`, `src/cache_core.[ch]` | The `REVALIDATE` page cache: per-worker store and ETag replies. |
+| `http/stream.goose` | Chunked response bodies: `stream_begin`, `write`, `end`. |
+| `http/push.goose` | `subscribe`, `websocket`, `publish`, `send` and the Origin check; the hub side of `run_worker`. |
 | `cli/gzip.c`, `cli/gzip_core.[ch]` | Build-time gzip for gweb (zlib; the server never links it). |
-| `template.goose` | Runtime helpers that compiled templates call (`put`, `raw`, `arg`, JSON). |
+| `site/template.goose` | Runtime helpers that compiled templates call (`put`, `raw`, `arg`, JSON). |
 | `cli/gweb.goose` | The CLI: scan, generate, build, dev loop, routes, tests. |
 | `cli/tscan.goose` | The template scanner shared by both compilers: braces, `@` calls, script and style blocks. |
 | `cli/component.goose` | The `.gshtml` compiler: Goose subset parser, type checker, JS emitter. |
@@ -408,7 +408,7 @@ readable `gwi.js`.
 | `test/runtime.sh` | Banner hashes and size ceilings of every minified module, then the node suites below. |
 | `test/morph.sh` | The jsdom suite for `morph`; it installs jsdom into a cache on its first run. |
 | `test/reactive.sh` | Runs `reactive_test.mjs` (hand-written defs), and `reactive_dom_test.mjs` and `store_dom_test.mjs` (compiled components, when `./gweb` is built). |
-| `test/nav_test.mjs`, `transition_test.mjs`, `sse_test.mjs`, `sse_test.goose` | Client navigation, transitions, and server push (client half and `web::sse_*` formatters). |
+| `test/nav_test.mjs`, `transition_test.mjs`, `sse_test.mjs`, `sse_test.goose` | Client navigation, transitions, and server push (client half and `gweb::sse_*` formatters). |
 
 ## 7. Limits to know
 
@@ -426,13 +426,13 @@ readable `gwi.js`.
 - A store exposes scalars (`i64`, `bool`, `u8[..N]`) to components; each user
   copies them into its own state, and components cannot assign them.
 - Server push needs the streaming hub from the delivery branch. This branch has
-  the client (`gwe.js`) and the `web::sse_*` formatters only.
+  the client (`gwe.js`) and the `gweb::sse_*` formatters only.
 - A moved keyed element is reinserted, which reloads an iframe inside it.
 - Literal braces outside `<script>` and `<style>` need `&#123;` and `&#125;`.
   A literal `@name(` needs `&#64;`.
 - Fragments v1: one swap mode (replace the children of `#NAME`), and no
   component inside a fragment.
-- Form fields are `u8[..N]`, `i64`, `bool` or `web::Upload`; no `f64`, enums or multi-select. `lib/` structs get no decoder.
+- Form fields are `u8[..N]`, `i64`, `bool` or `gweb::Upload`; no `f64`, enums or multi-select. `lib/` structs get no decoder.
 - Uploads: at most 8 files, 64 parts, 64 KiB per text field and 16 KiB of headers per part. `--max-upload`
   is checked by the loop; a page's `const MAX_UPLOAD` only after the body arrived.
 - A crash closes the crashed worker's other keep-alive connections; requests read from them get no reply.

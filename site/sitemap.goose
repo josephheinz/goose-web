@@ -1,13 +1,13 @@
-// Part of goose-web. Import with `import web.sitemap;`.
+// Part of gweb. Import with `import gweb.site.sitemap;`.
 
-namespace web;
+namespace gweb;
 
 import std;
 import net;
 import net.http;
-import web;
-import .template;
-import .meta;
+import gweb;
+import site.template;
+import site.meta;
 
 let SITEMAP_MAX_URLS = 50000;
 // The protocol's 50 MiB limit; sitemap_add stops short of it so the closing tag always fits.

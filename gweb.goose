@@ -1,7 +1,7 @@
 // web: the runtime of goose-web, a Next.js-like framework on goose-net.
 // `gweb` generates the root file whose dispatcher calls the user's routes, pages and middleware.
 
-namespace web;
+namespace gweb;
 
 import std;
 import os;
@@ -22,7 +22,7 @@ enum Outcome { Continue, NotFound, Redirect, Error, Done }
 struct Keys { n: i64 = 0, k: u8[..64][4] = [""; 4] }   // the first key signs, all verify
 struct AuthConfig { keys: Keys = Keys { .. }, idle: i64 = 86400, max: i64 = 2592000, trust_proxy: bool = false }
 
-// A signed session cookie, loaded lazily by web::session (DESIGN-ADDENDUM-13, D4).
+// A signed session cookie, loaded lazily by gweb::session (DESIGN-ADDENDUM-13, D4).
 enum SessionState { Unread, Absent, Valid }
 struct Session { state: SessionState = SessionState.Unread, sid: u8[..22] = "", uid: i64 = 0, ver: i64 = 0,
                  iat: i64 = 0, exp: i64 = 0, remember: bool = false, data: u8[..256] = "" }
@@ -42,7 +42,7 @@ struct Ctx {
     owner_fd: i32,            // -1 without app/state.goose
     outcome: Outcome,
     fragment: bool = false,   // fragment replies get no dev script
-    csrf: u8[..32] = "",      // the page's CSRF token; "" until web::csrf_begin
+    csrf: u8[..32] = "",      // the page's CSRF token; "" until gweb::csrf_begin
     locale: i64 = 0,          // index into the generated t::TAGS; 0 is the default locale
     redirect_status: i64,
     location: u8[..1024],
@@ -54,13 +54,13 @@ struct Ctx {
     uploads: Upload[..8] = [],        // the files multipart_begin wrote; run_worker deletes the unsaved ones after the reply
     upload_dir: u8[..256] = "",       // where multipart_begin puts them (Config.upload_dir); set by run_worker
     route: i64 = -1,                  // the dispatcher's matched dir index; finish picks the nearest error.html with it
-    error_status: i64 = 0,            // web::fail's status and message, read by the generated error_reply
+    error_status: i64 = 0,            // gweb::fail's status and message, read by the generated error_reply
     error_message: u8[..512] = "",
     auth: AuthConfig = AuthConfig { .. }, // copied from Config by run_worker; the keys live here so handlers need no globals
     session: Session = Session { .. },
-    conn_fd: i32 = -1,        // the worker's connection, for rate::client_ip and web::stream_begin
+    conn_fd: i32 = -1,        // the worker's connection, for rate::client_ip and gweb::stream_begin
     default_headers: bool = true,   // false: the handler writes its own frame and sniffing headers
-    nonce: u8[..24] = "",     // the CSP nonce; "" until run_worker or web::csp_begin makes it
+    nonce: u8[..24] = "",     // the CSP nonce; "" until run_worker or gweb::csp_begin makes it
     streamed: bool = false,   // the handler sent its own reply through a Stream
     stream_ended: bool = false,
     hub: u64 = 0,             // 0 = no hub in this build
@@ -70,7 +70,7 @@ struct Ctx {
     route_label: i64 = -1,        // the route's place in ROUTES, for the access log, metrics and spans; -1 = none
     request_id: u8[..64] = "",    // set when the access log or tracing is on
     trace_id: u8[..32] = "",      // set when tracing is on; sampled or not
-    span_id: u8[..16] = "",       // the current span: the request's, or the innermost open web::span
+    span_id: u8[..16] = "",       // the current span: the request's, or the innermost open gweb::span
     parent_span: u8[..16] = "",   // the caller's span from a traceparent header
     sampled: bool = false,
     start_us: i64 = 0,            // monotonic; 0 when nothing needed the time
@@ -78,7 +78,7 @@ struct Ctx {
     attempt: i64 = 0
 }
 
-// A file of a multipart post (web::upload). Lives here because Ctx holds it.
+// A file of a multipart post (gweb::upload). Lives here because Ctx holds it.
 struct Upload {
     field: u8[..64],
     filename: u8[..128],       // as the client sent it, control bytes removed; never a path to trust
@@ -712,7 +712,7 @@ fn parse_env_line(line: const u8[:], name: u8[>..]&, value: u8[>..]&) -> i64 {
     return 1;
 }
 
-// std::split, which web::split (the path splitter) shadows in this namespace.
+// std::split, which gweb::split (the path splitter) shadows in this namespace.
 fn split_on(s: const u8[:], sep: u8) -> const u8[:][>..] {
     var out: const u8[:][>..] = [];
     var start = 0;
@@ -901,7 +901,7 @@ fn respond<D>(req: const http::Request&, ctx: Ctx&, conn_fd: i32, cfg: const Con
 fn run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config, routes: const u8[:] = "") {
     // One worker takes every waiting connection per pass; several take one each, so a burst spreads.
     let lp = net::connection_loop(server, cfg.idle_ms, cfg.max_body, if cfg.workers == 1 { 0 } else { 1 });
-    // Uploads: make the directory, then opt in. main() calls web::prepare_uploads once first, which deletes files an earlier run left (names gnet-* and gw-*).
+    // Uploads: make the directory, then opt in. main() calls gweb::prepare_uploads once first, which deletes files an earlier run left (names gnet-* and gw-*).
     // Without a usable directory a multipart body stays in memory, up to --max-body.
     if cfg.upload_dir.len > 0 && c_up_mkdir(cfg.upload_dir) != 0 {
         if !lp.set_uploads(cfg.max_upload, cfg.spool_over, cfg.upload_dir) {

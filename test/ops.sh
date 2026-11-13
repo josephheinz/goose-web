@@ -340,7 +340,7 @@ no_job() { sed 's/^enum Job /enum Jobx /' "$HERE/ops/site/app/jobs.goose" > "$WO
 reserved() { mkdir -p "$WORK/f/app/__gweb"; echo x > "$WORK/f/app/__gweb/page.html"; }
 reserved_deep() { mkdir -p "$WORK/f/app/count/__gweb"; echo x > "$WORK/f/app/count/__gweb/page.html"; }
 nested_jobs() { mkdir -p "$WORK/f/app/count"; cp "$HERE/ops/site/app/jobs.goose" "$WORK/f/app/count/jobs.goose"; }
-expect_fail "jobs.goose needs fn run(job: const Job&, ctx: web::Ctx&) -> bool" app/jobs.goose no_run
+expect_fail "jobs.goose needs fn run(job: const Job&, ctx: gweb::Ctx&) -> bool" app/jobs.goose no_run
 expect_fail "jobs.goose needs a type named Job" app/jobs.goose no_job
 expect_fail "__gweb is reserved for the health, readiness and metrics URLs; rename this folder" app/__gweb reserved
 expect_fail "__gweb is reserved for the health, readiness and metrics URLs; rename this folder" app/count/__gweb reserved_deep

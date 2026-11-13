@@ -1,12 +1,12 @@
-// Part of goose-web. Import with `import web.stream;`.
-// A stream holds its worker until it ends: use it for exports and downloads, and web::subscribe for anything that waits on events.
+// Part of gweb. Import with `import gweb.http.stream;`.
+// A stream holds its worker until it ends: use it for exports and downloads, and gweb::subscribe for anything that waits on events.
 
-namespace web;
+namespace gweb;
 
 import std;
 import net;
 import net.http;
-import web;
+import gweb;
 
 struct Stream { conn: net::Socket, chunked: bool, head_only: bool, ok: bool }
 

@@ -11,7 +11,7 @@ fn test_text(s: State&) {
     s.m = s.a.len;
     s.b = "quote \" and ' and \\ and \t tab \x41";
     s.b.append(str("π", 3, true));
-    s.ok = s.a == "é✓<&>" && web::has(s.b, "π3") && !web::has(s.b, "zz") && web::has(s.b, "");
+    s.ok = s.a == "é✓<&>" && gweb::has(s.b, "π3") && !gweb::has(s.b, "zz") && gweb::has(s.b, "");
 }
 
 fn test_full(s: State&) {

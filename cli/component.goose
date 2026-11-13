@@ -123,7 +123,7 @@ let E_STR = 3;
 let E_NAME = 4;
 let E_FIELD = 5;     // a.tok
 let E_INDEX = 6;     // a[b]
-let E_CALL = 7;      // tok(a, a.next, ...); d: second name of web::has; c: 1 for a.f(...)
+let E_CALL = 7;      // tok(a, a.next, ...); d: second name of gweb::has; c: 1 for a.f(...)
 let E_SLIT = 8;      // tok { a, a.next, ... }
 let E_FINIT = 9;     // tok: a
 let E_UN = 10;
@@ -199,7 +199,7 @@ let GOOSE_KW = ["import", "namespace", "struct", "enum", "type", "fn", "thread_f
                 "block", "guard", "defer", "match", "return", "break", "continue", "as", "true", "false", "null",
                 "self", "bool", "varint", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64"];
 
-let WHITELIST = "(min, max, abs, str, web::has, push, remove_at, clear, append, len)";
+let WHITELIST = "(min, max, abs, str, gweb::has, push, remove_at, clear, append, len)";
 
 // ---------------------------------------------------------------- state (reset by compile)
 
@@ -1892,7 +1892,7 @@ recursive fn check_expr(n: i64) {
                 }
                 nodes[n].ref = fi;
             }
-            else if tok_is(tk, "web") && tok_is(nodes[n].d, "has") { nodes[n].ref = B_HAS; }
+            else if tok_is(tk, "gweb") && tok_is(nodes[n].d, "has") { nodes[n].ref = B_HAS; }
             else if reactive && is_http(n) {
                 var m: u8[>..] = [];
                 format(m, "http::", tok_name(nodes[n].d), " needs await");
@@ -4660,7 +4660,7 @@ fn m_expr(s: i64, e: i64, line: i64, raw: bool) {
         check_expr(n);
         if reactive { rw_mark(n, line, if raw { RM_RAW } else { RM_TEXT }); rbits = rw_r; rec_expr(n); }
     }
-    format(gline, if raw { "web::raw(out, " } else { "web::put(out, " }, rewrite(s, e), "); ");
+    format(gline, if raw { "gweb::raw(out, " } else { "gweb::put(out, " }, rewrite(s, e), "); ");
     if n < 0 { return; }
     let t = nodes[n].ty.t;
     if t == T_ERR { return; }
@@ -4931,7 +4931,7 @@ fn m_on_r(event: const u8[:], mods: const u8[:], vs: i64, ve: i64, line: i64) {
         if i > 0 { mtext(","); call.append(", "); }
         call.append(src);
         g_flush();
-        format(gline, "web::arg(out, ", src, "); ");
+        format(gline, "gweb::arg(out, ", src, "); ");
         if at != T_ERR {
             cat_expr(false);
             helper(H_ESC);
@@ -4981,7 +4981,7 @@ fn m_on(event: const u8[:], mods: const u8[:], vs: i64, ve: i64, line: i64) {
             let src = text[span_s(a)..span_e(a)];
             format(call, ", ", src);
             g_flush();
-            format(gline, "web::arg(out, ", src, "); ");
+            format(gline, "gweb::arg(out, ", src, "); ");
             check_expr(a);
             let at = nodes[a].ty.t;
             if at != T_ERR && at != T_INT && at != T_BOOL && at != T_STR {
@@ -5035,7 +5035,7 @@ fn m_bind_r(what: const u8[:], vs: i64, ve: i64, line: i64) {
     var tail: u8[>..] = [];
     if what == "value" {
         mtext("value=\"");
-        format(code, "web::put(out, gw_s.", field, "); ");
+        format(code, "gweb::put(out, gw_s.", field, "); ");
         g_code(code);
         cat_expr(false);
         helper(H_ESC);
@@ -5088,7 +5088,7 @@ fn m_bind(what: const u8[:], vs: i64, ve: i64, line: i64) {
     var code: u8[>..] = [];
     if what == "value" {
         mtext("value=\"");
-        format(code, "web::put(out, s.", field, "); ");
+        format(code, "gweb::put(out, s.", field, "); ");
         g_code(code);
         cat_expr(false);
         helper(H_ESC);
@@ -5737,7 +5737,7 @@ fn emit_json_writer(out: u8[>..]&) {
             match f.kind {
                 Int => format(out, "format(out, s.", f.name, "); "),
                 Bool => format(out, "format(out, s.", f.name, "); "),
-                Str => format(out, "web::json_text(out, s.", f.name, "); "),
+                Str => format(out, "gweb::json_text(out, s.", f.name, "); "),
                 Struct => format(out, "gw_json(out, s.", f.name, "); "),
                 Array => format(out, "out.push('['); for x, i in s.", f.name, " { if i > 0 { out.push(','); } gw_json(out, x); } out.push(']'); "),
             }
@@ -5774,7 +5774,7 @@ fn json_field(out: u8[>..]&, d: RDecl, owner: const u8[:], first: bool) {
     format(out, "out.append(\"", if first { "{" } else { "," }, "\\\"", d.name, "\\\":\"); ");
     let t = d.ty.t;
     if t == T_INT || t == T_BOOL { format(out, "format(out, ", owner, d.name, "); "); }
-    else if t == T_STR { format(out, "web::json_text(out, ", owner, d.name, "); "); }
+    else if t == T_STR { format(out, "gweb::json_text(out, ", owner, d.name, "); "); }
     else if t == T_STRUCT { format(out, "gw_json(out, ", owner, d.name, "); "); }
     else {
         format(out, "out.push('['); for gw_x, gw_i in ", owner, d.name,
@@ -5896,7 +5896,7 @@ fn emit_reactive_tail(name: const u8[:], out: u8[>..]&) {
     }
     // nest is the child form (a parent's markup calls it with the child's key); component adds the module script.
     format(out, "fn nest(out: u8[>..]&, gw_p: const Props&, gw_k: const u8[:], gw_a: const u8[:]) { let gw_s = gw_init(gw_p); out.append(\"<div data-component=\\\"", name,
-           "\\\"\"); if gw_k.len > 0 { out.append(\" gw-key=\\\"\"); web::put(out, gw_k); out.append(\"\\\"\"); } out.append(gw_a); out.append(\">\"); ",
+           "\\\"\"); if gw_k.len > 0 { out.append(\" gw-key=\\\"\"); gweb::put(out, gw_k); out.append(\"\\\"\"); } out.append(gw_a); out.append(\">\"); ",
            "render(out, gw_p, gw_s); out.append(\"</div><script type=\\\"application/json\\\">\"); gw_json(out, gw_p, gw_s); out.append(\"</script>\"); }\n");
     // Each store this component @uses has its initial state written after the root (the client reads the first of them).
     format(out, "fn component(out: u8[>..]&, gw_p: const Props&) { nest(out, gw_p, \"\", \"\"); ");
@@ -6227,7 +6227,7 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
         }
     }
     // The header: a reactive component imports the components its markup calls (they were compiled before it).
-    format(goose_out, "namespace ", name, "; import std; import json; import web; import web.template;");
+    format(goose_out, "namespace ", name, "; import std; import json; import gweb; import gweb.site.template;");
     if reactive {
         for li in close + 1..nlines {
             let l = text[line_start[li]..line_end[li]];

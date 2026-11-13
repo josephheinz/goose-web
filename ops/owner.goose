@@ -1,10 +1,10 @@
 // The state owner: `main` owns app/state.goose's data; workers reach it over one socketpair each.
 // A message is a one-element array of M as a to_bytes image; the reply is one of R.
 
-namespace web;
+namespace gweb;
 
 import std;
-import web;
+import gweb;
 
 struct Channels { handle: u64, n: i64 }
 

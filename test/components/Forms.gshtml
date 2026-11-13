@@ -54,7 +54,7 @@ fn test_statements(s: State&) {
     s.n = -s.n + min(3, 4) * max(-2, 5) - abs(-9);
     s.flag = if s.n < 0 { true } else { false };
     note(s, str(s.flag, " ", s.n, " ", s.rows.len, " ", s.text.len, " ", grade(s.n), grade(5), grade(50)));
-    if web::has(s.text, "world") { note(s, "has"); }
+    if gweb::has(s.text, "world") { note(s, "has"); }
     if !(s.n >= 0) && s.n != 3 && (s.n <= 100 || s.flag) { note(s, "logic"); }
     s.rows.remove_at(0);
     s.text.clear();

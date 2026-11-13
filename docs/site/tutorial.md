@@ -99,13 +99,13 @@ message to the owner and returns the reply and a success flag.
 ```goose
 import std;
 import net.http;
-import web;
+import gweb;
 import json;
 
-fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
+fn GET(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
     let reply, ok = state::ask(ctx, state::Msg { add: false, text: "" });
     if !ok { http::json_error(res, http::Status.ServiceUnavailable, "state unavailable"); return; }
-    web::json(res, http::Status.Ok);
+    gweb::json(res, http::Status.Ok);
     res.body.push('[');
     for n, i in reply.notes {
         if i > 0 { res.body.push(','); }
@@ -132,11 +132,11 @@ and returns `Props`. The template reads them as `props`.
 ```goose
 import std;
 import net.http;
-import web;
+import gweb;
 
 struct Props { reply: state::Reply }
 
-fn load(req: const http::Request&, ctx: web::Ctx&) -> Props {
+fn load(req: const http::Request&, ctx: gweb::Ctx&) -> Props {
     ctx.title.append("Notes");
     let reply, ok = state::ask(ctx, state::Msg { add: false, text: "" });
     if !ok { return Props { .. }; }
@@ -160,7 +160,7 @@ fn load(req: const http::Request&, ctx: web::Ctx&) -> Props {
 ## 6. A form, CSRF and a fragment
 
 Add a form. Every page `fn POST` needs a CSRF token, so the form holds
-`@web::csrf_field(ctx)`. A form with `gw-target="notes"` posts in the
+`@gweb::csrf_field(ctx)`. A form with `gw-target="notes"` posts in the
 background. The server answers with only the `{#fragment notes}` region,
 and the browser swaps it in. Without JavaScript the form still works: it
 posts and gets the whole page.
@@ -170,30 +170,30 @@ posts and gets the whole page.
 ```goose
 import std;
 import net.http;
-import web;
-import web.form;
+import gweb;
+import gweb.forms.form;
 
 struct Props { reply: state::Reply, error: u8[..100] }
 
 // Sends one message to the owner. An unreachable owner gives an empty reply.
-fn ask(ctx: web::Ctx&, msg: state::Msg) -> state::Reply {
+fn ask(ctx: gweb::Ctx&, msg: state::Msg) -> state::Reply {
     let reply, ok = state::ask(ctx, msg);
     if !ok { return state::Reply { .. }; }
     return reply;
 }
 
-fn page(ctx: web::Ctx&, reply: state::Reply) -> Props {
+fn page(ctx: gweb::Ctx&, reply: state::Reply) -> Props {
     ctx.title.append("Notes");
     return Props { reply: reply, error: "" };
 }
 
-fn load(req: const http::Request&, ctx: web::Ctx&) -> Props {
+fn load(req: const http::Request&, ctx: gweb::Ctx&) -> Props {
     return page(ctx, ask(ctx, state::Msg { add: false, text: "" }));
 }
 
-fn POST(req: const http::Request&, ctx: web::Ctx&) -> Props {
+fn POST(req: const http::Request&, ctx: gweb::Ctx&) -> Props {
     var text: u8[>..] = [];
-    web::form(req, "text", text);
+    gweb::form(req, "text", text);
     let t = trim(text);
     if t.len == 0 || t.len > 200 {
         var p = load(req, ctx);
@@ -210,7 +210,7 @@ fn POST(req: const http::Request&, ctx: web::Ctx&) -> Props {
 
 ```html
 <h1>Notes</h1>
-<form method="post" action="/" gw-target="notes">@web::csrf_field(ctx)
+<form method="post" action="/" gw-target="notes">@gweb::csrf_field(ctx)
 <input name="text" maxlength="200" placeholder="A note">
 <button>Add</button>
 </form>
@@ -287,31 +287,31 @@ The full files are in [`tutorial/notes/`](tutorial/notes/). `app/page.goose` and
 ```goose
 import std;
 import net.http;
-import web;
-import web.form;
+import gweb;
+import gweb.forms.form;
 import CharCount;
 
 struct Props { reply: state::Reply, counter: CharCount::State, error: u8[..100] }
 
 // Sends one message to the owner. An unreachable owner gives an empty reply.
-fn ask(ctx: web::Ctx&, msg: state::Msg) -> state::Reply {
+fn ask(ctx: gweb::Ctx&, msg: state::Msg) -> state::Reply {
     let reply, ok = state::ask(ctx, msg);
     if !ok { return state::Reply { .. }; }
     return reply;
 }
 
-fn page(ctx: web::Ctx&, reply: state::Reply) -> Props {
+fn page(ctx: gweb::Ctx&, reply: state::Reply) -> Props {
     ctx.title.append("Notes");
     return Props { reply: reply, counter: CharCount::State { text: "" }, error: "" };
 }
 
-fn load(req: const http::Request&, ctx: web::Ctx&) -> Props {
+fn load(req: const http::Request&, ctx: gweb::Ctx&) -> Props {
     return page(ctx, ask(ctx, state::Msg { add: false, text: "" }));
 }
 
-fn POST(req: const http::Request&, ctx: web::Ctx&) -> Props {
+fn POST(req: const http::Request&, ctx: gweb::Ctx&) -> Props {
     var text: u8[>..] = [];
-    web::form(req, "text", text);
+    gweb::form(req, "text", text);
     let t = trim(text);
     if t.len == 0 || t.len > 200 {
         var p = load(req, ctx);
@@ -328,7 +328,7 @@ fn POST(req: const http::Request&, ctx: web::Ctx&) -> Props {
 
 ```html
 <h1>Notes</h1>
-<form method="post" action="/" gw-target="notes">@web::csrf_field(ctx)
+<form method="post" action="/" gw-target="notes">@gweb::csrf_field(ctx)
 <div>@CharCount(props.counter)</div>
 <button>Add</button>
 </form>

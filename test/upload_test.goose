@@ -1,9 +1,9 @@
 // Multipart uploads (DESIGN-ADDENDUM-14, step 3), without sockets. The C helpers have their own test (test/upload_c.sh).
 //   goose build test/upload_test.goose && test/upload_test
 // Every fixture is parsed twice: from memory (req.body) and from a spool file (ctx.spool, the head only in the request).
-import web from "..";
-import web.upload;
-import web.valid;
+import gweb from "..";
+import gweb.forms.upload;
+import gweb.forms.valid;
 import net from "../../goose-net";
 import net.http;
 import std;
@@ -54,36 +54,36 @@ fn content_type(out: u8[>..]&, b: const u8[:]) {
 
 // ---------------------------------------------------------------- running a parse
 
-fn new_ctx() -> web::Ctx {
-    var ctx = web::new_ctx(0, -1);
+fn new_ctx() -> gweb::Ctx {
+    var ctx = gweb::new_ctx(0, -1);
     ctx.upload_dir.append(DIR);
     return ctx;
 }
 
 // Deletes the spool file and the unsaved uploads, as run_worker does after the reply.
-fn cleanup(ctx: web::Ctx&) {
-    if ctx.spool.len > 0 { web::c_up_unlink(ctx.spool); }
-    for i in ctx.uploads.len { web::c_up_unlink(ctx.uploads[i].path); }
+fn cleanup(ctx: gweb::Ctx&) {
+    if ctx.spool.len > 0 { gweb::c_up_unlink(ctx.spool); }
+    for i in ctx.uploads.len { gweb::c_up_unlink(ctx.uploads[i].path); }
 }
 
 // Parses body under the content type ct, from memory or from a spool file. out gets the urlencoded body.
-fn parse(ctx: web::Ctx&, res: http::Response&, ct: const u8[:], body: const u8[:], disk: bool, out: u8[>..]&) -> bool {
+fn parse(ctx: gweb::Ctx&, res: http::Response&, ct: const u8[:], body: const u8[:], disk: bool, out: u8[>..]&) -> bool {
     var raw: u8[>..] = [];
     format(raw, "POST /f HTTP/1.1\r\nHost: a\r\nContent-Type: ", ct, "\r\nContent-Length: ", body.len, "\r\n\r\n");
     if disk {
         spool_n += 1;
         var path: u8[..128] = "";
         format(path, DIR, "/gw-test-spool-", spool_n);
-        let fd = web::c_up_create(path);
+        let fd = gweb::c_up_create(path);
         check(fd >= 0, "spool file created");
-        web::c_up_write(fd, body);
-        web::c_up_close(fd);
+        gweb::c_up_write(fd, body);
+        gweb::c_up_close(fd);
         ctx.spool.append(path);
     } else {
         raw.append(body);
     }
     let req, parsed = http::parse_request(raw);
-    return web::multipart_begin(req, ctx, res, out);
+    return gweb::multipart_begin(req, ctx, res, out);
 }
 
 fn file_bytes(path: const u8[:], out: u8[>..]&) -> bool {
@@ -104,8 +104,8 @@ fn expect_fail(ct: const u8[:], body: const u8[:], status: http::Status, what: c
 }
 
 fn main() {
-    web::c_up_mkdir(DIR);
-    web::c_up_sweep(DIR);
+    gweb::c_up_mkdir(DIR);
+    gweb::c_up_sweep(DIR);
 
     var ct: u8[>..] = [];
     content_type(ct, B);
@@ -114,18 +114,18 @@ fn main() {
     var rawm: u8[>..] = [];
     format(rawm, "POST /f HTTP/1.1\r\nHost: a\r\nContent-Type: ", ct, "\r\nContent-Length: 12\r\n\r\n");
     let rm, pm = http::parse_request(rawm);
-    check(web::is_multipart(rm), "multipart detected");
-    check_num(web::content_length(rm), 12, "content_length");
+    check(gweb::is_multipart(rm), "multipart detected");
+    check_num(gweb::content_length(rm), 12, "content_length");
     let ru, pu = http::parse_request("POST /f HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: x\r\n\r\n");
-    check(!web::is_multipart(ru), "urlencoded is not multipart");
-    check_num(web::content_length(ru), -1, "malformed content_length");
+    check(!gweb::is_multipart(ru), "urlencoded is not multipart");
+    check_num(gweb::content_length(ru), -1, "malformed content_length");
     let rn, pn = http::parse_request("POST /f HTTP/1.1\r\nHost: a\r\n\r\n");
-    check(!web::is_multipart(rn), "no content type");
-    check_num(web::content_length(rn), 0, "absent content_length");
+    check(!gweb::is_multipart(rn), "no content type");
+    check_num(gweb::content_length(rn), 0, "absent content_length");
     let ri, pi = http::parse_request("POST /f HTTP/1.1\r\nContent-Type: Multipart/Form-Data;boundary=x\r\n\r\n");
-    check(web::is_multipart(ri), "case-insensitive type");
+    check(gweb::is_multipart(ri), "case-insensitive type");
     let rx, px = http::parse_request("POST /f HTTP/1.1\r\nContent-Type: multipart/form-datax\r\n\r\n");
-    check(!web::is_multipart(rx), "longer type name");
+    check(!gweb::is_multipart(rx), "longer type name");
 
     // The main fixture: text fields (percent-encoded in the result, in order), two files, an untouched file input.
     var png: u8[>..] = [];
@@ -162,38 +162,38 @@ fn main() {
         check(file_bytes(ctx.uploads[1].path, got) && got == "%PDF-1.4 body", "second bytes");
 
         // form_upload looks in ctx.uploads only
-        var errs = web::no_errors();
-        var up = web::Upload { field: "", filename: "", content_type: "", size: 0, path: "" };
-        check(web::form_upload(ctx, "avatar", up, errs, true), "form_upload finds it");
+        var errs = gweb::no_errors();
+        var up = gweb::Upload { field: "", filename: "", content_type: "", size: 0, path: "" };
+        check(gweb::form_upload(ctx, "avatar", up, errs, true), "form_upload finds it");
         check_eq(up.filename, "me.png", "form_upload copies");
-        check(!web::form_upload(ctx, "empty", up, errs, true), "empty input is missing");
-        check_eq(web::error_for(errs, "empty"), "Required.", "required error");
-        check(web::form_upload(ctx, "nothing", up, errs, false), "optional missing is fine");
-        check(!web::has_error(errs, "nothing"), "no error for optional");
-        check(!web::form_upload(ctx, "title", up, errs, true), "a text field is not an upload");
-        check(!web::form_upload(ctx, "_csrf", up, errs, true), "csrf is not an upload");
+        check(!gweb::form_upload(ctx, "empty", up, errs, true), "empty input is missing");
+        check_eq(gweb::error_for(errs, "empty"), "Required.", "required error");
+        check(gweb::form_upload(ctx, "nothing", up, errs, false), "optional missing is fine");
+        check(!gweb::has_error(errs, "nothing"), "no error for optional");
+        check(!gweb::form_upload(ctx, "title", up, errs, true), "a text field is not an upload");
+        check(!gweb::form_upload(ctx, "_csrf", up, errs, true), "csrf is not an upload");
 
         // sniff and check_upload on a real file
-        check_eq(web::sniff(ctx.uploads[0]), "image/png", "sniff the saved png");
-        check_eq(web::sniff(ctx.uploads[1]), "application/pdf", "sniff the saved pdf");
-        var errs2 = web::no_errors();
-        check(web::check_upload(errs2, "avatar", ctx.uploads[0], 1000, ["image/png", "image/jpeg"]), "png allowed");
-        check(!web::check_upload(errs2, "doc", ctx.uploads[1], 1000, ["image/png", "image/jpeg"]), "pdf refused");
-        check_eq(web::error_for(errs2, "doc"), "This file type is not allowed.", "type message");
-        check(!web::check_upload(errs2, "avatar2", ctx.uploads[0], 10, ["image/png"]), "too large");
-        check_eq(web::error_for(errs2, "avatar2"), "The file is too large.", "size message");
-        check(!web::check_upload(errs2, "doc", ctx.uploads[0], 1000, ["image/png"]), "skipped when the field has an error");
-        var none = web::Upload { field: "", filename: "", content_type: "", size: 0, path: "" };
-        check(web::check_upload(errs2, "none", none, 10, ["image/png"]), "no file: nothing to check");
+        check_eq(gweb::sniff(ctx.uploads[0]), "image/png", "sniff the saved png");
+        check_eq(gweb::sniff(ctx.uploads[1]), "application/pdf", "sniff the saved pdf");
+        var errs2 = gweb::no_errors();
+        check(gweb::check_upload(errs2, "avatar", ctx.uploads[0], 1000, ["image/png", "image/jpeg"]), "png allowed");
+        check(!gweb::check_upload(errs2, "doc", ctx.uploads[1], 1000, ["image/png", "image/jpeg"]), "pdf refused");
+        check_eq(gweb::error_for(errs2, "doc"), "This file type is not allowed.", "type message");
+        check(!gweb::check_upload(errs2, "avatar2", ctx.uploads[0], 10, ["image/png"]), "too large");
+        check_eq(gweb::error_for(errs2, "avatar2"), "The file is too large.", "size message");
+        check(!gweb::check_upload(errs2, "doc", ctx.uploads[0], 1000, ["image/png"]), "skipped when the field has an error");
+        var none = gweb::Upload { field: "", filename: "", content_type: "", size: 0, path: "" };
+        check(gweb::check_upload(errs2, "none", none, 10, ["image/png"]), "no file: nothing to check");
 
         // save_upload: moves, never overwrites
         var dest: u8[..128] = "";
         format(dest, DIR, "/saved-", d, ".png");
-        web::c_up_unlink(dest);
-        check(web::save_upload(ctx.uploads[0], dest), "save works");
+        gweb::c_up_unlink(dest);
+        check(gweb::save_upload(ctx.uploads[0], dest), "save works");
         check(file_bytes(dest, got) && got == png, "saved bytes");
-        check(web::c_up_open_read(ctx.uploads[0].path) < 0, "temp path gone after save");
-        check(!web::save_upload(ctx.uploads[1], dest), "save refuses an existing dest");
+        check(gweb::c_up_open_read(ctx.uploads[0].path) < 0, "temp path gone after save");
+        check(!gweb::save_upload(ctx.uploads[1], dest), "save refuses an existing dest");
         check(file_bytes(dest, got) && got == png, "existing dest untouched");
         check(file_bytes(ctx.uploads[1].path, got), "source kept after a refused save");
         let saved_path = ctx.uploads[1].path;
@@ -203,11 +203,11 @@ fn main() {
 
         // cleanup removes what was not saved, the spool file too, and tolerates what was saved
         cleanup(ctx);
-        check(web::c_up_open_read(saved_copy) < 0, "unsaved upload deleted");
-        check(web::c_up_open_read(ctx.uploads[0].path) < 0, "saved one: nothing left at the temp path");
+        check(gweb::c_up_open_read(saved_copy) < 0, "unsaved upload deleted");
+        check(gweb::c_up_open_read(ctx.uploads[0].path) < 0, "saved one: nothing left at the temp path");
         check(file_bytes(dest, got) && got == png, "cleanup leaves the saved file");
-        if d == 1 { check(spool_copy_len > 0 && web::c_up_open_read(ctx.spool) < 0, "spool deleted"); }
-        web::c_up_unlink(dest);
+        if d == 1 { check(spool_copy_len > 0 && gweb::c_up_open_read(ctx.spool) < 0, "spool deleted"); }
+        gweb::c_up_unlink(dest);
     }
 
     // Quoted and unquoted parameters, other header order, a header with odd spacing, lower-case names.
@@ -439,52 +439,52 @@ fn main() {
     format(half, "--", B, "\r\nContent-Disposition: form-data; name=\"f\"; filename=\"f.txt\"\r\n\r\nabc");
     check(!parse(ctxf, resf, ct, half, false, outf), "unfinished file part");
     check_num(ctxf.uploads.len, 0, "unfinished file is not listed");
-    check_num(web::c_up_sweep(DIR), 0, "and no file is left in the dir");
+    check_num(gweb::c_up_sweep(DIR), 0, "and no file is left in the dir");
 
     // safe_name
     var n1: u8[>..] = [];
-    web::safe_name(n1, "../../etc/passwd");
+    gweb::safe_name(n1, "../../etc/passwd");
     check_eq(n1, "passwd", "path traversal");
     var n2: u8[>..] = [];
-    web::safe_name(n2, ".htaccess");
+    gweb::safe_name(n2, ".htaccess");
     check_eq(n2, "htaccess", "leading dot");
     var n2b: u8[>..] = [];
-    web::safe_name(n2b, "...hidden.txt");
+    gweb::safe_name(n2b, "...hidden.txt");
     check_eq(n2b, "hidden.txt", "leading dots");
     var n3: u8[>..] = [];
-    web::safe_name(n3, "r\xC3\xA9sum\xC3\xA9 (1).pdf");
+    gweb::safe_name(n3, "r\xC3\xA9sum\xC3\xA9 (1).pdf");
     check_eq(n3, "r__sum____1_.pdf", "unicode and spaces become _") ;
     var n4: u8[>..] = [];
     var big: u8[>..] = [];
     for i in 300 { big.push('a'); }
-    web::safe_name(n4, big);
+    gweb::safe_name(n4, big);
     check_num(n4.len, 100, "300 bytes cut at 100");
     var n5: u8[>..] = [];
-    web::safe_name(n5, "C:\\Users\\me\\pic.PNG");
+    gweb::safe_name(n5, "C:\\Users\\me\\pic.PNG");
     check_eq(n5, "pic.PNG", "windows path");
     var n6: u8[>..] = [];
-    web::safe_name(n6, "");
+    gweb::safe_name(n6, "");
     check_eq(n6, "file", "empty");
     var n7: u8[>..] = [];
-    web::safe_name(n7, "dir/");
+    gweb::safe_name(n7, "dir/");
     check_eq(n7, "file", "trailing slash");
     var n8: u8[>..] = [];
-    web::safe_name(n8, "a b;c.txt");
+    gweb::safe_name(n8, "a b;c.txt");
     check_eq(n8, "a_b_c.txt", "unsafe bytes");
 
     // sniff
-    check_eq(web::sniff_bytes("\x89PNG\r\n\x1A\nrest"), "image/png", "png");
-    check_eq(web::sniff_bytes("\xFF\xD8\xFF\xE0jfif"), "image/jpeg", "jpeg");
-    check_eq(web::sniff_bytes("GIF89a..."), "image/gif", "gif89a");
-    check_eq(web::sniff_bytes("GIF87a..."), "image/gif", "gif87a");
-    check_eq(web::sniff_bytes("RIFF\x10\x00\x00\x00WEBPVP8 "), "image/webp", "webp");
-    check_eq(web::sniff_bytes("RIFF\x10\x00\x00\x00WAVEfmt "), "", "riff but not webp");
-    check_eq(web::sniff_bytes("%PDF-1.7"), "application/pdf", "pdf");
-    check_eq(web::sniff_bytes("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"), "", "svg is not an image");
-    check_eq(web::sniff_bytes("<?xml version=\"1.0\"?><svg/>"), "", "xml svg");
-    check_eq(web::sniff_bytes("<html>"), "", "html");
-    check_eq(web::sniff_bytes(""), "", "empty");
-    check_eq(web::sniff_bytes("\x89PN"), "", "short png");
+    check_eq(gweb::sniff_bytes("\x89PNG\r\n\x1A\nrest"), "image/png", "png");
+    check_eq(gweb::sniff_bytes("\xFF\xD8\xFF\xE0jfif"), "image/jpeg", "jpeg");
+    check_eq(gweb::sniff_bytes("GIF89a..."), "image/gif", "gif89a");
+    check_eq(gweb::sniff_bytes("GIF87a..."), "image/gif", "gif87a");
+    check_eq(gweb::sniff_bytes("RIFF\x10\x00\x00\x00WEBPVP8 "), "image/webp", "webp");
+    check_eq(gweb::sniff_bytes("RIFF\x10\x00\x00\x00WAVEfmt "), "", "riff but not webp");
+    check_eq(gweb::sniff_bytes("%PDF-1.7"), "application/pdf", "pdf");
+    check_eq(gweb::sniff_bytes("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"), "", "svg is not an image");
+    check_eq(gweb::sniff_bytes("<?xml version=\"1.0\"?><svg/>"), "", "xml svg");
+    check_eq(gweb::sniff_bytes("<html>"), "", "html");
+    check_eq(gweb::sniff_bytes(""), "", "empty");
+    check_eq(gweb::sniff_bytes("\x89PN"), "", "short png");
     // sniff on files: the client's claim does not matter
     var sctx = new_ctx();
     var sres = http::new_response();
@@ -496,24 +496,24 @@ fn main() {
     add_file(sbody, B, "webp", "x.webp", "image/webp", "RIFF\x04\x00\x00\x00WEBP");
     end_body(sbody, B);
     check(parse(sctx, sres, ct, sbody, false, sout), "sniff fixture");
-    check_eq(web::sniff(sctx.uploads[0]), "", "a file claiming image/png that is svg");
-    check_eq(web::sniff(sctx.uploads[1]), "image/jpeg", "jpeg by bytes, whatever the claim");
-    check_eq(web::sniff(sctx.uploads[2]), "image/gif", "gif file");
-    check_eq(web::sniff(sctx.uploads[3]), "image/webp", "webp file");
-    var serrs = web::no_errors();
-    check(!web::check_upload(serrs, "liar", sctx.uploads[0], 1000, ["image/png"]), "svg refused though it claims png");
+    check_eq(gweb::sniff(sctx.uploads[0]), "", "a file claiming image/png that is svg");
+    check_eq(gweb::sniff(sctx.uploads[1]), "image/jpeg", "jpeg by bytes, whatever the claim");
+    check_eq(gweb::sniff(sctx.uploads[2]), "image/gif", "gif file");
+    check_eq(gweb::sniff(sctx.uploads[3]), "image/webp", "webp file");
+    var serrs = gweb::no_errors();
+    check(!gweb::check_upload(serrs, "liar", sctx.uploads[0], 1000, ["image/png"]), "svg refused though it claims png");
     cleanup(sctx);
-    var gone = web::Upload { field: "x", filename: "", content_type: "", size: 5, path: "" };
-    check_eq(web::sniff(gone), "", "no path");
-    check(!web::save_upload(gone, DIR), "save without a file");
+    var gone = gweb::Upload { field: "x", filename: "", content_type: "", size: 5, path: "" };
+    check_eq(gweb::sniff(gone), "", "no path");
+    check(!gweb::save_upload(gone, DIR), "save without a file");
 
     // Urlencoded posts cannot point form_upload at a server file: only ctx.uploads is read.
     var ectx = new_ctx();
-    var eerrs = web::no_errors();
-    var eup = web::Upload { field: "", filename: "", content_type: "", size: 0, path: "" };
-    check(!web::form_upload(ectx, "avatar", eup, eerrs, true), "nothing uploaded");
+    var eerrs = gweb::no_errors();
+    var eup = gweb::Upload { field: "", filename: "", content_type: "", size: 0, path: "" };
+    check(!gweb::form_upload(ectx, "avatar", eup, eerrs, true), "nothing uploaded");
 
-    web::c_up_sweep(DIR);
+    gweb::c_up_sweep(DIR);
     print(checks - failures, " of ", checks, " checks pass");
     if failures > 0 { exit(1); }
 }

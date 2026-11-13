@@ -114,9 +114,9 @@ expect_fail() {
 }
 
 expect_fail "a page with REVALIDATE cannot use a CSRF token; its HTML would be shared by every visitor" app/form/page.goose \
-  'mkdir app/form && echo "const REVALIDATE = 5;" > app/form/page.goose && echo "<form>@web::csrf_field(ctx)</form>" > app/form/page.html'
+  'mkdir app/form && echo "const REVALIDATE = 5;" > app/form/page.goose && echo "<form>@gweb::csrf_field(ctx)</form>" > app/form/page.html'
 expect_fail "a page with REVALIDATE cannot use a CSRF token; its HTML would be shared by every visitor" app/about/page.goose \
-  'echo "const REVALIDATE = 5;" > app/about/page.goose && echo "<form>@web::csrf_field(ctx)</form>" > app/layout.html'
+  'echo "const REVALIDATE = 5;" > app/about/page.goose && echo "<form>@gweb::csrf_field(ctx)</form>" > app/layout.html'
 expect_fail "write const REVALIDATE = N; with N the seconds to cache this page, a whole number above 0" app/about/page.goose:1 \
   'echo "const REVALIDATE = soon;" > app/about/page.goose'
 expect_fail "write const REVALIDATE = N; with N the seconds to cache this page, a whole number above 0" app/about/page.goose:1 \
@@ -149,7 +149,7 @@ fi
 rm -rf "$WORK/y" "$WORK/out2"
 cp -R "$HERE/cache/site" "$WORK/y"
 mkdir "$WORK/y/app/gone"
-printf 'import std;\nimport net.http;\nimport web;\nstruct Props { n: i64 }\nfn load(req: const http::Request&, ctx: web::Ctx&) -> Props {\n    web::not_found(ctx);\n    return Props { n: 0 };\n}\n' > "$WORK/y/app/gone/page.goose"
+printf 'import std;\nimport net.http;\nimport gweb;\nstruct Props { n: i64 }\nfn load(req: const http::Request&, ctx: gweb::Ctx&) -> Props {\n    gweb::not_found(ctx);\n    return Props { n: 0 };\n}\n' > "$WORK/y/app/gone/page.goose"
 echo '<p>gone</p>' > "$WORK/y/app/gone/page.html"
 out=$(cd "$WORK/y" && "$GWEB" export -o "$WORK/out2" 2>&1)
 code=$?

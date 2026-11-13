@@ -26,7 +26,7 @@ Each release names the Goose compiler version it was tested with.
 - `.gshtml` syntax and the client subset. The subset may grow, not shrink.
 - The signatures of `load`, `POST`, the route methods, `before`, `after`,
   `handle` and `init`.
-- Documented `web::` functions and types.
+- Documented `gweb::` functions and types.
 - `gweb` commands, flags and environment variables.
 - The shape of `gweb` messages: `path:line: error: msg`. The wording is not
   stable.

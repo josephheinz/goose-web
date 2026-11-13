@@ -29,7 +29,7 @@ docker run -d --name mysite -p 3000:3000 -v mysite-data:/app/data --stop-timeout
 ```
 
 - `GOOSE_URL` is required. The build stops with a message when it is empty.
-- `GWEB_REF` picks the goose-web tag that builds your app (default `v0.3.0`; keep it equal to the version you develop with).
+- `GWEB_REF` picks the gweb tag that builds your app (default `v0.4.0`; keep it equal to the version you develop with).
 - The container runs as a non-root user (uid 10001). `/app/data` is a volume owned by it. A named volume
   copies that ownership; for a bind mount run `chown 10001 <dir>`.
 - `ENV PORT=3000 TZ=UTC GWEB_LOG_FORMAT=json`. Add flags after the image name or set `GWEB_*` variables.
@@ -120,12 +120,12 @@ or your platform collect stdout; the app writes no log files.
 Access line, JSON: `ts`, `level`, `msg: "request"`, `method`, `target`, `route`, `status`, `dur_us`, `bytes`,
 `worker`, `request_id`, and `trace_id` and `span_id` when traced.
 
-From your code: `web::info(ctx, "msg")`, `web::warn`, `web::error`, `web::debug`; add fields with
-`var e = web::log(ctx, web::Level.Info, "order placed"); web::field(e, "order_id", id); web::emit(e);`.
+From your code: `gweb::info(ctx, "msg")`, `gweb::warn`, `gweb::error`, `gweb::debug`; add fields with
+`var e = gweb::log(ctx, gweb::Level.Info, "order placed"); gweb::field(e, "order_id", id); gweb::emit(e);`.
 
 `--metrics` (or `GWEB_METRICS=1`) serves Prometheus text at `/__gweb/metrics`: request counts by route, method
 and status class, a latency histogram per route, open connections, job gauges and counters, and
-`gweb_build_info`. Count your own things with `web::count("signups_total", 1)` and `web::gauge("queue_depth", n)`
+`gweb_build_info`. Count your own things with `gweb::count("signups_total", 1)` and `gweb::gauge("queue_depth", n)`
 (names match `[a-z_][a-z0-9_]*`; 256 at most).
 
 ```yaml
@@ -145,8 +145,8 @@ logs.
   and let it forward over TLS. An `https://` endpoint logs one warning and turns export off.
 - `OTEL_SERVICE_NAME` (default `goose-web`), `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_TRACES_SAMPLER=always_off`,
   `OTEL_TRACES_SAMPLER_ARG` (ratio for new traces, default 1.0).
-- App spans: `let s = web::span(ctx, "charge card"); ... web::span_end(ctx, s);`. For an outgoing call,
-  `web::traceparent(ctx, out)` formats the header.
+- App spans: `let s = gweb::span(ctx, "charge card"); ... gweb::span_end(ctx, s);`. For an outgoing call,
+  `gweb::traceparent(ctx, out)` formats the header.
 - A full buffer (8,192 spans) drops spans and counts them in `gweb_spans_dropped_total`. A collector that hangs
   costs at most 2 s per batch.
 

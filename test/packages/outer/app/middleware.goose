@@ -1,6 +1,6 @@
 import net.http;
-import web;
+import gweb;
 
-fn after(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
+fn after(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
     http::set_header(res, "X-Outer", "1");
 }

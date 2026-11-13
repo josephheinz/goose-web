@@ -1,8 +1,8 @@
 import std;
 import net.http;
-import web;
-import web.push;
+import gweb;
+import gweb.http.push;
 
-fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
-    web::websocket(req, ctx, res, "chat");
+fn GET(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
+    gweb::websocket(req, ctx, res, "chat");
 }

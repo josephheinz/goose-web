@@ -1,9 +1,9 @@
 import std;
 import net.http;
-import web;
-import web.session;
+import gweb;
+import gweb.auth.session;
 
-fn POST(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
-    web::logout(req, ctx);
-    web::redirect(ctx, "/login", 303);
+fn POST(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
+    gweb::logout(req, ctx);
+    gweb::redirect(ctx, "/login", 303);
 }

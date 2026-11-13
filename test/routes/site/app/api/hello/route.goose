@@ -1,8 +1,8 @@
 import std;
 import net.http;
-import web;
+import gweb;
 
-fn GET(req: const http::Request&, ctx: web::Ctx&, res: http::Response&) {
-    web::json(res, http::Status.Ok);
+fn GET(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
+    gweb::json(res, http::Status.Ok);
     res.body.append("{\"hello\":\"world\"}");
 }

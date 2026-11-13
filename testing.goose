@@ -1,11 +1,11 @@
-// Part of goose-web. Import with `import web.testing;`.
+// Part of gweb. Import with `import gweb.testing;`.
 
-namespace web;
+namespace gweb;
 
 import std;
 import net;
 import net.http;
-import web;
+import gweb;
 
 let TEST_CSRF = "00000000000000000000000000000000";
 let FORM_HEX = "0123456789ABCDEF";

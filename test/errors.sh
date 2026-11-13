@@ -5,14 +5,14 @@
 #
 # test/errors/site is built and started with one worker, so every crash also shows that the
 # worker came back. curl checks:
-#   - web::fail: the status, the nearest error.html inside its layouts, the id in body and log
+#   - gweb::fail: the status, the nearest error.html inside its layouts, the id in body and log
 #   - crashes: 500 with Connection: close, the next request on a new connection works
 #   - nested error.html wins; it renders inside the layouts at or above its own folder
 #   - a crashing layout above the error file: attempt 2, the bare error.html
 #   - a crashing error.html: the fixed plain-text 500
 #   - a route.goose crash and a route fail: JSON {"error":..,"id":..}
 #   - --dev-id: gw-dev-error before the dev script, with the request; without it, no detail
-#   - D14: a page POST taking res that writes a 429 and calls web::done; a page POST's web::fail(429)
+#   - D14: a page POST taking res that writes a 429 and calls gweb::done; a page POST's gweb::fail(429)
 #   - step 7: gweb dev --once writes errors.txt with a marked 5-line excerpt after a build error
 #   - informational: plaintext requests per second (see BENCH below)
 #
@@ -140,7 +140,7 @@ else
   check "$([ "$(status b)" = 500 ] && has_header b 'connection: close' && has_header b 'content-type: text/plain' && echo ok)" "/brokenerr: plain-text 500 with Connection: close"
   check "$([ "$(cat "$WORK/b.b")" = '500 Internal Server Error' ] && echo ok)" "/brokenerr: the body is the fixed text"
   req bf GET /brokenerr/fail
-  check "$([ "$(status bf)" = 500 ] && has_header bf 'content-type: text/plain' && [ "$(cat "$WORK/bf.b")" = '500 Internal Server Error' ] && echo ok)" "/brokenerr/fail: a crash while rendering a web::fail page (phase 1) also ends in the plain 500"
+  check "$([ "$(status bf)" = 500 ] && has_header bf 'content-type: text/plain' && [ "$(cat "$WORK/bf.b")" = '500 Internal Server Error' ] && echo ok)" "/brokenerr/fail: a crash while rendering a gweb::fail page (phase 1) also ends in the plain 500"
   req home4 GET /
   check "$([ "$(status home4)" = 200 ] && echo ok)" "after the plain 500 the server still answers"
 
@@ -155,7 +155,7 @@ else
   check "$(grep -qE '^\{"error":"Slow down\.","id":"[0-9a-f]{16}"\}$' "$WORK/af.b" && echo ok)" "/api/fail: {\"error\":\"Slow down.\",\"id\":\"<id>\"}"
   check "$(! body_has af '<html' && ! body_has af 'root-layout' && echo ok)" "/api/fail: no HTML page"
 
-  # D14: a page POST that takes res and ends the reply itself with web::done.
+  # D14: a page POST that takes res and ends the reply itself with gweb::done.
   TK=0123456789abcdef0123456789abcdef
   C="Cookie: gw_csrf=$TK"
   req lg GET /limit
@@ -165,7 +165,7 @@ else
   check "$([ "$(cat "$WORK/lp.b")" = 'slow down' ] && echo ok)" "POST /limit: the body is exactly the handler's"
   check "$(! body_has lp '<html' && ! body_has lp 'root-layout' && ! body_has lp 'id="limit"' && ! body_has lp 'root-error' && echo ok)" "POST /limit: no layout, page or error markup"
 
-  # web::fail from a page POST without res: error.html with the status.
+  # gweb::fail from a page POST without res: error.html with the status.
   req tp POST /tries -H "$C" -d "_csrf=$TK"
   check "$([ "$(status tp)" = 429 ] && has_header tp 'content-type: text/html' && echo ok)" "POST /tries: 429, HTML"
   check "$(body_has tp '<h1 id="root-error">429 Too many tries.</h1>' && body_has tp 'id="root-layout"' && ! body_has tp 'id="tries"' && echo ok)" "POST /tries: error.html with 429 and the message, inside the layout, page not rendered"
@@ -177,7 +177,7 @@ else
   req d2 GET /fail
   check "$([ -n "$(body_id d1)" ] && [ "$(body_id d1)" != "$(body_id d2)" ] && echo ok)" "two errors have two ids"
 
-  # A 404 from web::fail is not not-found.html; the unknown path is still the 404 page (no not-found.html here: plain).
+  # A 404 from gweb::fail is not not-found.html; the unknown path is still the 404 page (no not-found.html here: plain).
   req nope GET /no/such/page
   check "$([ "$(status nope)" = 404 ] && echo ok)" "an unknown path is still 404"
   stop_server

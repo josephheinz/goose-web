@@ -1,8 +1,8 @@
 import std;
 import net.http;
-import web;
-import web.sitemap;
+import gweb;
+import gweb.site.sitemap;
 
-fn entries(req: const http::Request&, ctx: web::Ctx&, s: web::Sitemap&) {
-    web::sitemap_add(s, "/post/1?x=1&y=2", "2026-01-15");
+fn entries(req: const http::Request&, ctx: gweb::Ctx&, s: gweb::Sitemap&) {
+    gweb::sitemap_add(s, "/post/1?x=1&y=2", "2026-01-15");
 }
