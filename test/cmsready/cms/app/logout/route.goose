@@ -5,5 +5,7 @@ import gweb.auth.session;
 
 fn POST(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) {
     gweb::logout(req, ctx);
-    gweb::redirect(ctx, "/admin/login", 303);
+    var to: u8[>..] = [];
+    format(to, cms::MOUNT, "/login");
+    gweb::redirect(ctx, to, 303);
 }

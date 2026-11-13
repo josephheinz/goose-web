@@ -287,7 +287,8 @@ check "$([ "$(status bg3)" = 200 ] && [ ! -s "$WORK/bg3.b" ] && echo ok)" "the b
 check "$([ "$(header bg3 content-length)" = 3145728 ] && ! has_header bg3 'transfer-encoding' && [ "$(header bg3 etag)" = "$BETAG" ] && echo ok)" "the big file: HEAD sends Content-Length 3145728, no chunked head, the same ETag"
 BMOD=$(sed -n 's/^last-modified: //p' "$WORK/bg.h" | head -n 1)
 check "$([ -n "$BMOD" ] && [ "$(header bg3 last-modified)" = "$BMOD" ] && echo ok)" "the big file: Last-Modified on GET and HEAD alike"
-req bg4 GET a.test /media/m1/big.bin -H "If-Modified-Since: $BMOD"
+BMOD_RAW=$(tr -d '\r' < "$WORK/bg.h.raw" | sed -n 's/^[Ll]ast-[Mm]odified: //p' | head -n 1)
+req bg4 GET a.test /media/m1/big.bin -H "If-Modified-Since: $BMOD_RAW"
 check "$([ "$(status bg4)" = 304 ] && [ ! -s "$WORK/bg4.b" ] && echo ok)" "the big file: 304 on If-Modified-Since, nothing streamed"
 req bg5 HEAD a.test /media/m1/big.bin
 req bg6 HEAD a.test /media/m1/big.bin -H 'Connection: keep-alive'
@@ -349,7 +350,7 @@ GWEB_TRUST_PROXY=1
 
 # 3. gweb test: package views and components in the host project.
 if out=$("$GWEB" -C "$WORK/site" test 2>&1); then
-  case "$out" in *"routes: 6 tests, "*" 0 failed"*) ok ;; *) bad "gweb test did not print 'routes: 6 tests ... 0 failed':"; show "$out" ;; esac
+  case "$out" in *"routes: 7 tests, "*" 0 failed"*) ok ;; *) bad "gweb test did not print 'routes: 7 tests ... 0 failed':"; show "$out" ;; esac
 else
   bad "gweb test of the host project failed:"; show "$out"
 fi

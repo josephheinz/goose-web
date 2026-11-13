@@ -10,6 +10,12 @@ fn reserved(name: const u8[:]) -> bool {
     return false;
 }
 
+// A package learns where it is mounted: the constant gweb writes into its namespace.
+fn test_a_package_knows_its_mount(t: gweb::Tester&) {
+    gweb::expect(t, cms::MOUNT == "/admin", "cms is mounted at /admin");
+    gweb::expect(t, shop::MOUNT == "/admin/shop", "the module inside it is at /admin/shop");
+}
+
 // Views from the git-sourced package and from the host land in one registry.
 fn test_registry_has_package_and_host_views(t: gweb::Tester&) {
     gweb::expect(t, views::types_index("Article") >= 0, "the package's page type Article");
