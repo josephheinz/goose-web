@@ -31,12 +31,13 @@ fn test_reserved_prefixes_see_the_mount(t: gweb::Tester&) {
     gweb::expect(t, reserved("media"), "media (a route of the host)");
     gweb::expect(t, reserved("sitemap.xml") && reserved("robots.txt"), "the generated sitemap and robots");
     gweb::expect(t, reserved("_gw"), "_gw (the runtime)");
+    gweb::expect(t, reserved("__gweb"), "__gweb (health, ready and metrics)");
     gweb::expect(t, !reserved("news"), "a plain slug is free");
 }
 
 fn test_slug_rules(t: gweb::Tester&) {
     gweb::expect(t, cms::slug_ok("/") && cms::slug_ok("/news") && cms::slug_ok("/news/2026-launch"), "plain slugs");
-    gweb::expect(t, !cms::slug_ok("/admin") && !cms::slug_ok("/admin/shop") && !cms::slug_ok("/media/x") && !cms::slug_ok("/_gw"), "slugs under a reserved prefix");
+    gweb::expect(t, !cms::slug_ok("/admin") && !cms::slug_ok("/admin/shop") && !cms::slug_ok("/media/x") && !cms::slug_ok("/_gw") && !cms::slug_ok("/__gweb/id"), "slugs under a reserved prefix");
     gweb::expect(t, !cms::slug_ok("") && !cms::slug_ok("news") && !cms::slug_ok("/news/") && !cms::slug_ok("/a//b") && !cms::slug_ok("/A") && !cms::slug_ok("/a b"), "malformed slugs");
 }
 

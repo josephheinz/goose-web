@@ -1,4 +1,4 @@
-// web: the runtime of gweb, a Next.js-like framework on goose-net.
+// gweb: the runtime of gweb, a Next.js-like framework on goose-net.
 // `gweb` generates the root file whose dispatcher calls the user's routes, pages and middleware.
 
 namespace gweb;

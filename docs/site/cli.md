@@ -31,7 +31,7 @@ gweb version                 the version and the package sources
 ## Rules
 
 - `gweb` finds the compiler in `$GOOSE`, else `goose` on `PATH`.
-- It finds the `web` package beside its own binary, or in `$GWEB_HOME`.
+- It finds the gweb checkout beside its own binary, or in `$GWEB_HOME`.
   A checkout older or newer than the binary stops with "rebuild gweb".
 - `GWEB_SRC`, `GWEB_NET` and `GWEB_SQLITE` override a package source.
 - Generated files go in `.gweb/`, `.gweb.dev/`, `.gweb.test/`, `.gweb.check/` and `.gweb.lsp/`.

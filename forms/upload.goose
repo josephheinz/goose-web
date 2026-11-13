@@ -1,6 +1,6 @@
 // Part of gweb. Import with `import gweb.forms.upload;`.
 // Multipart bodies become a plain urlencoded form plus files on disk (DESIGN-ADDENDUM-14, D7).
-// struct Upload lives in web.goose, beside Ctx, which holds it.
+// struct Upload lives in gweb.goose, beside Ctx, which holds it.
 
 namespace gweb;
 

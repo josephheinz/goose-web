@@ -22,7 +22,7 @@ change.
 ## Rules
 
 - `gweb` finds the compiler in `$GOOSE`, else `goose` on `PATH`.
-- A linked `gweb` uses its checkout as the `web` package. A copied `gweb`
+- A linked `gweb` uses its checkout as the gweb package. A copied `gweb`
   declares the tagged releases from GitHub, and the compiler fetches them on
   the first build.
 - `gweb version` prints the version and the sources it declares.

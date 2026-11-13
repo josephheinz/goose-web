@@ -71,7 +71,7 @@ The project then writes `import admin.users;` and `admin::user_count()`.
 - `state.goose` and `not-found.html` in a package: the project owns the state
   and the 404 page.
 - `app/` or `public/` in a package that has no `at`.
-- A package name that is `lib`, `std`, `os`, `web`, `net`, `sqlite`, `main` or
+- A package name that is `lib`, `std`, `os`, `gweb`, `web`, `net`, `sqlite`, `main` or
   `state`, or that two packages share.
 - A package that needs a newer gweb than yours:
   `admin: needs gweb 0.3 or newer (this is 0.2.1)`.

@@ -3147,7 +3147,7 @@ thread_fn hub_leave(chans: gweb::Channels) {
 
 // ROUTES, the route patterns in the order route_index numbers them, and the typed jobs:: wrappers.
 // gweb::reserved_prefixes() (DESIGN-ADDENDUM-19, D4): every literal first segment of a route, every top-level public/ name,
-// the generated sitemap and robots names, and _gw: the root-level slugs a content tree must not use. Sorted, once each.
+// the generated sitemap and robots names, _gw and __gweb: the root-level slugs a content tree must not use. Sorted, once each.
 fn gen_reserved(m: u8[>..]&) {
     var names: u8[..200][>..<] = [];
     fn add(n: const u8[:]) {
@@ -3158,6 +3158,7 @@ fn gen_reserved(m: u8[>..]&) {
         names.push(t);
     }
     add("_gw");
+    add("__gweb");
     if has_sitemap { add("sitemap.xml"); add("robots.txt"); }
     for d in dirs {
         if !d.route && !d.page_html { continue; }
@@ -3512,7 +3513,7 @@ fn gen_test_main() -> u8[>..] {
 
 // ---------------------------------------------------------------- gen
 
-fn goose_web_home() -> u8[>..] {
+fn gweb_home() -> u8[>..] {
     var h: u8[>..] = [];
     if env("GWEB_HOME", h) && h.len > 0 {
         while h.len > 1 && h[h.len - 1] == '/' { h.pop(); }
@@ -3533,7 +3534,7 @@ fn pkg_source(which: i32) -> u8[>..] {
     let var_name = if which == 0 { "GWEB_SRC" } else if which == 1 { "GWEB_NET" } else { "GWEB_SQLITE" };
     if env(var_name, s) && s.len > 0 { return s; }
     s.clear();
-    let home = goose_web_home();
+    let home = gweb_home();
     if home.len > 0 {
         if which == 0 { s.append(home); return s; }
         let sibling = if which == 1 { "/../goose-net" } else { "/../goose-sqlite" };
@@ -3569,7 +3570,7 @@ let RT_SSE_MIN = embed_file("../client/gwe.min.js");
 
 // which: 0 is gwi.js (the core), 1 is gwf.js (fragments), 2 is gwh.js (typed fetch), 3 is gwl.js (lifecycle), 4 is gwm.js (modifiers), 5 is gwc.js (child components), 6 is gwn.js (client navigation), 7 is gws.js (stores), 8 is gwt.js (transitions), 9 is gwe.js (server push).
 fn runtime_js(which: i64, min: bool, out: u8[>..]&) {
-    let home = goose_web_home();
+    let home = gweb_home();
     if home.len > 0 {
         var p: u8[>..] = [];
         let base = if which == 1 { "/client/gwf" } else if which == 2 { "/client/gwh" } else if which == 3 { "/client/gwl" } else if which == 4 { "/client/gwm" } else if which == 5 { "/client/gwc" } else if which == 6 { "/client/gwn" } else if which == 7 { "/client/gws" } else if which == 8 { "/client/gwt" } else if which == 9 { "/client/gwe" } else { "/client/gwi" };
@@ -3594,14 +3595,14 @@ let EMBEDDED_VERSION = embed_file("../VERSION");
 fn print_version() {
     var out: u8[>..] = [];
     format(out, "gweb ", trim(EMBEDDED_VERSION), "\n");
-    format(out, "web     ", pkg_source(0), "\n");
+    format(out, "gweb    ", pkg_source(0), "\n");
     format(out, "net     ", pkg_source(1), "\n");
     format(out, "sqlite  ", pkg_source(2), "\n");
     write_stdout(out);
 }
 
 fn check_version() {
-    let home = goose_web_home();
+    let home = gweb_home();
     if home.len == 0 { return; }
     var path: u8[>..] = [];
     format(path, home, "/VERSION");

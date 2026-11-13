@@ -1,4 +1,4 @@
-/* File helpers for web::upload: windowed reads of a spool file, temp files created with O_EXCL,
+/* File helpers for gweb::upload: windowed reads of a spool file, temp files created with O_EXCL,
    saving without overwrite, and the start-up sweep. Every function is small and returns 1/0 or a count. */
 #include "goose.h"
 

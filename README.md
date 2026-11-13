@@ -19,7 +19,7 @@ gweb new mysite && cd mysite
 GOOSE=/path/to/goose gweb dev          # http://localhost:60053, rebuilds and restarts on every change
 ```
 
-A linked `gweb` uses its checkout as the `web` package, and a `goose-net` or
+A linked `gweb` uses its checkout as the gweb package, and a `goose-net` or
 `goose-sqlite` checkout beside it. A copied `gweb` declares the tagged
 releases from GitHub, and the compiler fetches them on the first build.
 `gweb version` prints the version and the three sources it declares.
@@ -444,7 +444,7 @@ Render at read time and let the page cache absorb the cost; stored HTML goes sta
 ## Reserved prefixes
 
 `gweb::reserved_prefixes() -> const u8[:][:]` is generated into `main.goose`: every literal first segment of a route,
-every top-level name in `public/`, `sitemap.xml` and `robots.txt` when generated, and `_gw`. A content tree that
+every top-level name in `public/`, `sitemap.xml` and `robots.txt` when generated, `_gw` and `__gweb`. A content tree that
 serves the root through a catch-all uses it to refuse a slug that would shadow one.
 
 ## Packages
