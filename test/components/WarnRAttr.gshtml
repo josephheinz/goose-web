@@ -1,0 +1,7 @@
+<script goose>
+// warn: components/WarnRAttr.gshtml:7: warning: unknown attribute 'clas' on <div>
+// code: unknown-attribute
+@state var n: i64 = 0;
+fn hit() { n += 1; }
+</script>
+<div clas="box" on:click="hit">{n}</div>

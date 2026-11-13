@@ -1,0 +1,10 @@
+<script goose>
+// warn: components/WarnRUnkeyed.gshtml:10: warning: {#for} over items needs gw-key on its elements: the list can reorder or lose an item
+// code: unkeyed-for
+struct Item { id: i64 }
+@state var items: Item[>..<] = [];
+fn add() { items.push(Item { id: items.len }); }
+fn drop(i: i64) { items.remove_at(i); }
+</script>
+<button on:click="add">add</button>
+{#for t, i in items}<li on:click="drop(i)">{t.id}</li>{/for}

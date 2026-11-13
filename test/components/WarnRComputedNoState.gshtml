@@ -1,0 +1,8 @@
+<script goose>
+// warn: components/WarnRComputedNoState.gshtml:5: warning: @computed c reads no state; use a plain function or a literal
+// code: computed-no-state
+@state var n: i64 = 0;
+@computed let c: i64 = 3;
+fn hit() { n += 1; }
+</script>
+<p on:click="hit">{n} {c}</p>

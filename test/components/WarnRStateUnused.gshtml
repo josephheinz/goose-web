@@ -1,0 +1,8 @@
+<script goose>
+// warn: components/WarnRStateUnused.gshtml:5: warning: @state spare is never read
+// code: state-unused
+@state var n: i64 = 0;
+@state var spare: i64 = 0;
+fn hit() { n += 1; spare = 2; }
+</script>
+<p on:click="hit">{n}</p>

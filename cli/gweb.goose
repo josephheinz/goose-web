@@ -14,6 +14,7 @@ import std;
 import os;
 import component;
 import tscan;
+import html;
 import pins;
 
 // ---------------------------------------------------------------- C helpers (proc.c)
@@ -1076,11 +1077,24 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
     return errors == before;
 }
 
+// unknown-attribute (Addendum 12, 8.2): the open tags of a page, layout or error page against the HTML lists.
+fn warn_attributes(path: const u8[:], src: const u8[:]) {
+    var w: u8[>..] = [];
+    html::check(src, 0, 1, false, w);
+    for l in split(w, '\n') {
+        let f = split(l, '\t');
+        if f.len != 2 { continue; }
+        let ln, ok = parse_int(f[0]);
+        if ok { warn(path, ln, "unknown-attribute", f[1]); }
+    }
+}
+
 fn gen_template(src_path: const u8[:], ns: const u8[:], file_base: const u8[:], signature: const u8[:],
                 imports: const u8[:], kind: i64, own: i64, frags: u8[>..]&) {
     var src: u8[>..] = [];
     if !read(src_path, src) { return; }
     scan_targets(src_path, src, own);
+    warn_attributes(src_path, src);
     // The pre-scan is a guess; a wrong guess is compiled again.
     var wrap = kind == K_PAGE && find(src, "{#fragment ") >= 0;
     var out: u8[>..] = [];

@@ -1,0 +1,7 @@
+<script goose>
+// warn: components/WarnROnclick.gshtml:7: warning: use on:click, not onclick
+// code: unknown-attribute
+@state var n: i64 = 0;
+fn hit() { n += 1; }
+</script>
+<button onclick="hit()">{n}</button>

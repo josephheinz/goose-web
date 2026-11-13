@@ -163,6 +163,18 @@ gweb version                 the gweb version and the package sources it declare
 `gen`, `build`, `start` and `test` take `--strict`: any warning fails the run (`gweb: --strict: 2 warnings stop the build`).
 They also take `--diagnostics json`: stderr becomes JSON Lines, one `{"severity","file","line","code","message"}` object per diagnostic, plus `"detail"` for extra compiler lines.
 
+Warning codes:
+
+| Code | When |
+|---|---|
+| `prop-keyword`, `state-keyword`, `computed-keyword` | `@prop` should be `const`, `@state` `var`, `@computed` `let` |
+| `unknown-event` | `on:EVENT` outside the known events |
+| `unknown-attribute` | an attribute not in the HTML lists (`cli/html.goose`; `data-*`, `aria-*`, `gw-*`, custom elements and `<svg>` pass), or `onclick=` in a component |
+| `unkeyed-for` | `{#for}` over a list that can reorder or shrink, without `gw-key` |
+| `child-key` | a component call in `{#for}` without `key:` |
+| `computed-no-state`, `watch-no-state` | `@computed` or `@watch` that reads no state |
+| `state-unused` | a `@state` nothing reads |
+
 `gweb` finds the compiler in `$GOOSE`, else `goose` on `PATH`, and finds this
 package beside its own binary (or `$GOOSE_WEB_HOME`). A checkout older than
 the binary, or newer, stops with "rebuild gweb". Build `gweb` with:

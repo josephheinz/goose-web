@@ -9,6 +9,7 @@ namespace component;
 
 import std;
 import tscan;
+import html;
 
 enum Kind { Int, Bool, Str, Struct, Array }
 
@@ -272,6 +273,8 @@ var rmarks: RMk[>..<];
 var mk_r = 0;                  // every bit the markup reads
 var rw_r = 0;                  // the R/W walker's accumulators
 var rw_w = 0;
+var rw_wide = 0;               // the bits written other than by push and clear (a list that can reorder or shrink)
+var rw_soft = false;           // inside the target of push or clear
 var rw_rep = false;            // the walker reports errors (the last pass only)
 var rw_ctx = 0;                // 0 function or block, 1 computed, 2 @state initializer, 3 markup
 var rw_ctx_name: u8[..64];
@@ -2285,6 +2288,7 @@ fn rw_read(d: i64) { rw_r = rw_r | rdecls[d].mask; }
 
 fn rw_write(d: i64, line: i64) {
     rw_w = rw_w | rdecls[d].mask;
+    if !rw_soft { rw_wide = rw_wide | rdecls[d].mask; }
     if !rw_rep { return; }
     let dc = rdecls[d];
     var m: u8[>..] = [];
@@ -2401,7 +2405,9 @@ recursive fn rw_expr(n: i64) {
         return;
     }
     if r == B_PUSH || r == B_REMOVE_AT || r == B_CLEAR || r == B_APPEND {
+        rw_soft = r == B_PUSH || r == B_CLEAR;
         rw_lvalue(a, false, line);
+        rw_soft = false;
         if a >= 0 { a = nodes[a].next; }
     }
     while a >= 0 { rw_expr(a); a = nodes[a].next; }
@@ -4762,6 +4768,44 @@ fn m_close(want: u8, line: i64) {
     if part >= 0 { end_block_part(part); }
 }
 
+// computed-no-state, watch-no-state, state-unused: from the R sets of the R/W pass and mk_r, the markup's reads.
+fn warn_reactive() {
+    var read = mk_r;
+    for f in fns { if f.body >= 0 { read = read | f.r; } }
+    for b in rblocks { read = read | b.r; }
+    for d in rdecls { read = read | d.r; }
+    for d in rdecls {
+        var m: u8[>..] = [];
+        if d.kind == R_COMPUTED && d.r == 0 {
+            format(m, "@computed ", d.name, " reads no state; use a plain function or a literal");
+            warn_buf("computed-no-state", d.line, m);
+        } else if d.kind == R_STATE && !store_mode && (read & d.mask) == 0 {
+            format(m, "@state ", d.name, " is never read");
+            warn_buf("state-unused", d.line, m);
+        }
+    }
+    for b in rblocks {
+        if b.kind == RB_WATCH && b.r == 0 { warn_buf("watch-no-state", b.line, "@watch reads no state; it runs once at start"); }
+    }
+}
+
+// unkeyed-for (reactive components): a {#for} over a @state array that the code writes other than by push and
+// clear (the R/W pass records those writes in rw_wide), whose first element tag has no gw-key.
+fn warn_unkeyed_r(n: i64, line: i64) {
+    let it = nodes[n].a;
+    if it < 0 || nodes[it].k != E_NAME || nodes[it].ref2 < 0 { return; }
+    let d = rdecls[nodes[it].ref2];
+    if d.kind != R_STATE || d.ty.t != T_ARRAY || (rw_wide & d.mask) == 0 { return; }
+    // A body that starts with a child call is checked by child-key.
+    var q = mk_after;
+    while q < line_end[line - 1] && (text[q] == ' ' || text[q] == '\t') { q += 1; }
+    if q < line_end[line - 1] && text[q] == '@' { return; }
+    if !first_tag_unkeyed(line - 1, mk_after - line_start[line - 1]) { return; }
+    var m: u8[>..] = [];
+    format(m, "{#for} over ", d.name, " needs gw-key on its elements: the list can reorder or lose an item");
+    warn_buf("unkeyed-for", line, m);
+}
+
 fn m_for(s: i64, e: i64, line: i64) {
     let top = block_top(s);
     g_flush();
@@ -4782,6 +4826,7 @@ fn m_for(s: i64, e: i64, line: i64) {
             rw_mark(nodes[n].b, line, RM_FOR);
             rec_expr(nodes[n].a);
             rec_expr(nodes[n].b);
+            warn_unkeyed_r(n, line);
         }
         emit_for_head(n);
     } else {
@@ -6070,6 +6115,8 @@ fn reset() {
     mk_r = 0;
     rw_r = 0;
     rw_w = 0;
+    rw_wide = 0;
+    rw_soft = false;
     rw_rep = false;
     rw_ctx = 0;
     warns_buf.clear();
@@ -6150,6 +6197,16 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
     let ri = reg_find(name);
     if ri >= 0 { reg[ri].done = 1; }
     parse_script(1, close);
+    if !store_mode && close + 1 < nlines {
+        var aw: u8[>..] = [];
+        html::check(text, line_start[close + 1], close + 2, true, aw);
+        for l in split(aw, '\n') {
+            let f = split(l, '\t');
+            if f.len != 2 { continue; }
+            let ln, ok = parse_int(f[0]);
+            if ok { warn_buf("unknown-attribute", ln, f[1]); }
+        }
+    }
     if store_mode {
         for li in close + 1..nlines {
             if trim(text[line_start[li]..line_end[li]]).len > 0 { report(li + 1, "a store has no markup"); break; }
@@ -6333,6 +6390,7 @@ fn compile(name: const u8[:], path: const u8[:], src: const u8[:], compact_js: b
     }
     errs.append(errs_buf);
     if nerr == 0 {
+        if reactive { warn_reactive(); }
         warns.append(warns_buf);
         warn_unkeyed(close, warns);
     }

@@ -1,0 +1,9 @@
+<script goose>
+// warn: components/WarnRWatchNoState.gshtml:5: warning: @watch reads no state; it runs once at start
+// code: watch-no-state
+@state var n: i64 = 0;
+@watch { console_note(); }
+fn console_note() { }
+fn hit() { n += 1; }
+</script>
+<p on:click="hit">{n}</p>

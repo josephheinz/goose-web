@@ -124,5 +124,26 @@ expect_fail $P '<style>p { color: red; }' 2 "<style> is never closed with </styl
 # A Goose error inside a tag reports the template's own line.
 expect_fail $P '{ctx.nope}' 2 "struct Ctx has no field nope"
 
+# 3. Warnings: the build succeeds, stderr has the line, --strict fails. The case is on line 2 of the page.
+expect_warn() {
+  text=$1; line=$2; msg=$3
+  cp "$HERE/templates/site/app/layout.html" "$WORK/f/app/layout.html"
+  rm -f "$WORK/f/components/C.gshtml"
+  printf "$PAGE" "$text" > "$WORK/f/app/page.html"
+  want="app/page.html:$line: warning: $msg"
+  if out=$("$GWEB" -C "$WORK/f" build 2>&1 >/dev/null); then
+    case "$out" in *"$want"*) ok ;; *) bad "'$text': wanted '$want', got:"; echo "$out" | sed 's/^/    /' ;; esac
+  else
+    bad "'$text': gweb build failed on a warning"; echo "$out" | sed 's/^/    /'
+  fi
+  if "$GWEB" -C "$WORK/f" build --strict >/dev/null 2>&1; then bad "'$text': --strict succeeded"; else ok; fi
+}
+
+expect_warn '<div clas="x">y</div>' 2 "unknown attribute 'clas' on <div>"
+expect_warn '<input type="text" nam="q">' 2 "unknown attribute 'nam' on <input>"
+# Accepted: data-, aria-, custom elements, svg, on:, gw-*, names built by an expression.
+printf "$PAGE" '<div data-a="1" aria-label="b" gw-key="k"><x-y z="1"></x-y><svg viewBox="0 0 1 1"><path d="M0"/></svg><a href="/" {"x"}="1">a</a></div>' > "$WORK/f/app/page.html"
+if "$GWEB" -C "$WORK/f" build --strict >/dev/null 2>&1; then ok; else bad "accepted attributes: --strict failed"; fi
+
 echo "templates.sh: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
