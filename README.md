@@ -9,7 +9,7 @@ Short guides are in [docs/site/](docs/site/).
 ## Install
 
 ```
-git clone --branch v0.4.0 --depth 1 https://github.com/josephheinz/gweb
+git clone --branch v0.5.0 --depth 1 https://github.com/josephheinz/gweb
 cd gweb && goose build -o gweb cli/gweb.goose
 ln -s "$PWD/gweb" ~/bin/gweb           # or: cp gweb ~/bin/
 ```
@@ -32,9 +32,9 @@ To run this package's tests from a clone, clone goose-net beside it
 ## Use the libraries without gweb
 
 ```goose
-import gweb from "josephheinz/gweb@v0.4.0";
-import net from "josephheinz/goose-net@v0.4.0";           // gweb needs this line too
-import sqlite from "josephheinz/goose-sqlite@v0.4.0";     // only if you use SQLite
+import gweb from "josephheinz/gweb@v0.5.0";
+import net from "josephheinz/goose-net@v0.5.0";           // gweb needs this line too
+import sqlite from "josephheinz/goose-sqlite@v0.5.0";     // only if you use SQLite
 ```
 
 The design is in [DESIGN.md](docs/DESIGN.md). [DESIGN-ADDENDUM-1.md](docs/DESIGN-ADDENDUM-1.md)
