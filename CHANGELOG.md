@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.6.0 (unreleased)
+
+Library work toward v1 (the gweb side of the CMS design, Addendum 19).
+
+- Views: `views/<group>/<Name>.goose` and `.html` get a generated JSON codec, admin form, form parser and a by-name registry (`import views;`). `@slot("x")` holes, `gweb::ViewMeta`, `FieldUi`, `Renamed`. A package's `views/` merges. See DESIGN-ADDENDUM-19.
+- `gweb::markdown(out, src)` and `gweb::markdown_text(out, src, max)`: a safe Markdown subset in Goose.
+- `gweb::cache_serve_key`, `cache_store_key` and `epoch_bump()`: your own page-cache keys, and one call that clears every worker's cache.
+- `gweb::sitemap_base(s, url)` and an optional `fn robots(req, ctx, out)` in `app/sitemap.goose`.
+- `gweb::reserved_prefixes()` is generated into `main.goose`.
+- `export { morph }` in `gwi.js` (`gwi.min.js` is 4,079 bytes).
+- `app/state.goose` may declare `const VARIABLE_MSG = true;` to send a `Msg` with a variable-size payload (`Msg..`).
+- Nested package mounts (`/admin/shop` inside `/admin`) are documented and tested.
+
 ## v0.5.1
 
 First release built and tested by CI on macOS and Linux. No API change.

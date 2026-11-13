@@ -54,9 +54,10 @@ goose-architect agent.
 | `app/not-found.html` | The 404 page, inside the root layout |
 | `app/**/error.html` | Error page for the pages below it; the nearest wins; sees `err: gweb::ErrorInfo` |
 | `app/**/loading.html` | Shown by `gwi.js` while a fragment request is slow |
-| `app/state.goose` | State owned by the main thread: `Msg`, `Reply`, `fn handle`, optional `fn init` |
-| `app/sitemap.goose` | Turns on `/sitemap.xml` and `/robots.txt`; optional `fn entries` |
+| `app/state.goose` | State owned by the main thread: `Msg`, `Reply`, `fn handle`, optional `fn init`; `const VARIABLE_MSG = true;` when `Msg` has a variable-size payload such as `u8[]` (then `fn handle(m: const Msg..&)`) |
+| `app/sitemap.goose` | Turns on `/sitemap.xml` and `/robots.txt`; optional `fn entries` and `fn robots` |
 | `app/socket.goose` | Optional `fn open`, `fn message`, `fn close` for WebSocket connections |
+| `views/<group>/<Name>.goose` and `.html` | A view: `struct Props` and its template; gweb generates a JSON codec, an admin form and a by-name registry (see Views) |
 | `lib/**.goose` | Your modules: `import lib.catalog;` (write their `namespace`) |
 | `public/**` | Static files, embedded in the binary, with ETags and hashed URLs |
 | `tests/*.goose` | Route tests run by `gweb test` (see Route tests) |
@@ -327,11 +328,130 @@ the binary, or newer, stops with "rebuild gweb". Build `gweb` with:
 goose build -o gweb cli/gweb.goose
 ```
 
+## Views
+
+A view is a typed, named piece of a page: a struct of props and a template. Code owns the shape. gweb generates a
+JSON codec, an admin form, a form parser and a registry that renders a view by a name read at run time. The
+`goose-cms` page builder uses views for page types, sections, widgets and layouts; nothing here knows about a CMS.
+
+```
+views/<group>/<Name>.goose    struct Props, optional fn validate, optional let LABEL / ICON / UI / RENAMED
+views/<group>/<Name>.html     template; props, req, ctx, doc and at in scope; may use @slot("x")
+```
+
+`<group>` is `[a-z][a-z0-9_]*` and `<Name>` is `[A-Z][A-Za-z0-9]*`. A package's `views/` joins the project's;
+a name that two sources define in one group is a build error. The namespace is `v_<group>_<Name>`.
+
+```goose
+// views/widgets/Hero.goose
+import std;
+import gweb;
+import lib.link;                                          // a foreign type, below
+
+let LABEL = "Hero banner";
+let ICON = "image";
+let UI = [gweb::FieldUi { field: "title", label: "Headline", help: "Up to 60 characters." }];
+let RENAMED = [gweb::Renamed { from: "heading", to: "title" }];
+
+enum Align { Left, Center, Right }
+struct Cta { label: u8[..30] = "", url: u8[..200] = "/", align: Align = Align.Left }
+struct Props {
+    title: u8[..60],                                      // no default: required
+    count: i64 = 3,
+    badge: Badge,                                         // a struct of this file: a fieldset
+    more: link::Link = link::Link { .. },                 // a foreign type
+    ctas: Cta[>..<],                                      // a repeater: the last field
+}
+fn validate(p: const Props&, errs: gweb::FieldErrors&) { gweb::check_length(errs, "title", p.title, 2, 60); }
+```
+
+**Props fields.** `i64`, `bool`, `u8[..N]` (N a number), an enum with no payloads, a struct declared in the same file
+(items hold scalars, enums and foreign types only), a repeater (`T[>..<]`, `T[>..]` or `T[..N]` of such a struct) as the
+**last** field, and a foreign type `ns::T`. No `f64`. Anything else is a build error at the field's line. A field with no
+`= default` is required. `UI`, `LABEL`, `ICON` and `RENAMED` take string literals; each `field:` must name a real field
+(`"group.field"` reaches into a struct). A missing label comes from the name (`cta_text` is "Cta text", `TwoColumn` is
+"Two column").
+
+**Foreign types.** For `x: ns::T`, the generated code calls these, found by the type of `T`. Write them beside `T`:
+
+```goose
+fn gw_read(r: json::Reader&, v: T&, warn: i64&)
+fn gw_write(out: u8[>..]&, v: const T&)
+fn gw_field(out: u8[>..]&, name: const u8[:], v: const T&, label: const u8[:], help: const u8[:], editor: const u8[:], errs: const gweb::FieldErrors&)
+fn gw_parse(req: const http::Request&, name: const u8[:], v: T&, errs: gweb::FieldErrors&) -> bool
+```
+
+**Slots.** `@slot("main")` and `@slot("left", "Hero Text")` (an allow list of view names) are holes in a view template.
+Each compiles to `Z(out, req, ctx, doc, at, "left");`, where `Z` is a function you pass when you render. Layout views
+(group `layouts`) may also use `@meta()` and get the page's module tags at their first slot.
+
+**Generated, in the view's namespace:** `fn read(json, p: Props&) -> i64` (the warning count), `fn write(out, p)`,
+`fn defaults(out)`, `fn form(out, json, errs, prefix)`, `fn parse(req, prefix, out, errs) -> bool` and
+`fn render<Z, D>(out, req, ctx, props, doc, at)`. Do not define those names.
+
+**Generated, in the module `views`** (`import views;`), for each group `g`:
+
+```goose
+g_count() -> i64                       g_name(i) -> const u8[:]              g_index(name) -> i64   // -1: unknown
+g_meta(i) -> gweb::ViewMeta            // label, icon, fields (kind, cap, required), slots and their allow lists
+g_render(out, req, ctx, name, props_json, doc, at, Z) -> bool      // false: no such view
+g_defaults(name, out_json) -> bool     g_form(out, name, props_json, errs, prefix) -> bool
+g_parse(req, name, prefix, out_json, errs) -> bool                 // form to canonical JSON, then your validate
+```
+
+`Z` goes last: `views::widgets_render(out, req, ctx, "Hero", json, doc, at, fill)`. The function that passes
+itself must be `recursive fn`:
+
+```goose
+recursive fn fill(out: u8[>..]&, req: const http::Request&, ctx: const gweb::Ctx&, doc: const Doc&, at: i64, name: const u8[:]) {
+    // find the sections or widgets stored under (at, name) and call views::sections_render or widgets_render with fill
+}
+```
+
+**JSON.** Writing is canonical: keys in declaration order, enums by variant name, defaults written. Reading is lenient:
+an unknown key is ignored, a missing field takes its default, a value of the wrong type takes the default and counts
+one warning, text over its cap is cut on a character boundary (and counts), and a repeater keeps at most its limit (64
+for `T[>..<]`).
+
+**Forms.** `g_form` writes one control per field (`name="PREFIX" + field`; a struct adds `name.`, a repeater item
+`name.K.` and a hidden `name.n`). `g_parse` reads the same names, runs `validate`, and writes the canonical JSON.
+`gweb::form_enum` is the helper for enums. A view is limited to 32 fields and 8 slots.
+
+The struct scanner is `cli/structs.goose`; the form decoders (Forms and validation) use it too.
+
+## Markdown
+
+`@gweb::markdown(props.body)` (or `gweb::markdown(out, src)`) renders a small, safe subset of Markdown, in Goose:
+ATX headings, paragraphs, `*em*` and `**strong**` (and `_`), code spans, fenced code (the language becomes
+`class="language-x"`), links and images, bullet and ordered lists nested by indent, block quotes, `---`, hard breaks
+and backslash escapes. Lists are always tight. There are no tables, setext headings, indented code or footnotes.
+
+- Raw HTML is escaped, never passed through, and `&` always becomes `&amp;`.
+- A link or image URL must be relative, or start with `http:`, `https:` or `mailto:`. Any other URL (`javascript:`,
+  `data:`, `//` with a backslash, anything with a space or control byte) leaves the whole construct as plain text.
+  Absolute links get `rel="noopener"`.
+- Input is cut at 64 KiB, containers nest 8 deep (deeper markers are text), a URL is at most 2,000 bytes. A 20 KB
+  document renders in about 0.13 ms.
+- `gweb::markdown_text(out, src, max)` writes the plain text (markup removed, white space collapsed) for excerpts and
+  meta descriptions: at most `max` bytes, cut at a word with "…".
+
+Render at read time and let the page cache absorb the cost; stored HTML goes stale when the renderer changes.
+
+## Reserved prefixes
+
+`gweb::reserved_prefixes() -> const u8[:][:]` is generated into `main.goose`: every literal first segment of a route,
+every top-level name in `public/`, `sitemap.xml` and `robots.txt` when generated, and `_gw`. A content tree that
+serves the root through a catch-all uses it to refuse a slug that would shadow one.
+
 ## Packages
 
 A package is a folder with `gweb.package`, and components, routes, public
 files and `lib/` code. List one in `gweb.packages`: a path, or `owner/repo@tag`,
 with `at /prefix` to mount its routes. See [docs/site/packages.md](docs/site/packages.md).
+
+A package's `views/` folder joins the project's views, like its `components/`. A package may be mounted inside
+another package's mount (`../shop at /admin/shop` beside `../admin at /admin`), when the outer package has no folder
+of that name.
 
 ## How it runs
 
@@ -807,6 +927,11 @@ The sitemap lists every page with no dynamic segment, then the entries. Leave a 
 `const SITEMAP = false;` in its `page.goose`. `sitemap_add` returns false for a bad path or date,
 and past 50,000 URLs. `public/sitemap.xml` beside `app/sitemap.goose` is a build error.
 
+`gweb::sitemap_base(s, "https://example.com")` replaces the base URL of every entry, at any time, for a site that
+serves several hosts. An `fn robots(req: const http::Request&, ctx: gweb::Ctx&, out: u8[>..]&)` in
+`app/sitemap.goose` writes the whole `/robots.txt` body in place of the generated one (the headers are set
+for it); `public/robots.txt` still wins over both.
+
 ## Page cache and `gweb export`
 
 ```goose
@@ -819,6 +944,19 @@ const REVALIDATE = 60;     // page.goose: cache this page's GET reply for 60 s
 - Never cache a page that reads cookies or the user: every visitor would get the same HTML. A reply that sets
   a cookie is not stored, and a page that starts a CSRF token with `REVALIDATE` is a build error.
 - POST and fragment requests skip the cache. Each worker keeps at most 512 entries and 16 MB.
+
+Your own keys and the epoch, for a site that serves several hosts or changes its content at run time:
+
+```goose
+let key = str(host, "\n", req.target);                 // at most 1,280 bytes
+if gweb::cache_serve_key(req, ctx, res, key) { return; }
+// ... render ...
+gweb::cache_store_key(req, ctx, res, key, 0);           // 0 s: keep it until the epoch changes
+```
+
+`gweb::epoch_bump()` clears every worker's cache, `REVALIDATE` pages included: each worker drops its entries the next
+time it looks in its cache. Call it after a content change, from any thread. `cache_store_key` never stores a reply
+that has a CSRF token, sets a cookie, or is not a plain 200.
 
 `gweb export [-o DIR]` builds, renders the site in process and writes it to `DIR` (default `out/`):
 `/` as `index.html`, `/about` as `about.html`, every static file at both URLs, and `sitemap.xml` and

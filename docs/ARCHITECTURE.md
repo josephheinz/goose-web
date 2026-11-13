@@ -2,7 +2,7 @@
 
 How a gweb app is built, how the server answers a request, and what the
 browser runtime `gwi.min.js` does. The design records are `DESIGN.md` and
-`DESIGN-ADDENDUM-1.md` to `-12-REACTIVITY.md`; this file explains the result.
+`DESIGN-ADDENDUM-1.md` to `-12-REACTIVITY.md` and `-19-CMS-PHASE1.md`; this file explains the result.
 
 ## 1. The big picture
 
@@ -18,7 +18,7 @@ finished HTML. JavaScript is optional and small, and it does two jobs:
   normal URL, and the server sends back only one named region of the page.
 
 Both jobs use one shared runtime, `gwi.js`. The minified copy, `gwi.min.js`, is
-4,068 bytes (ceiling 4,096). Everything else is an optional module (`gwf`, `gwh`,
+4,079 bytes (ceiling 4,096). Everything else is an optional module (`gwf`, `gwh`,
 `gwl`, `gwm`, `gwc`, `gwn`, `gws`, `gwt`, `gwe`, 466 to 1,498 bytes each), served
 only to sites that use the feature. Section 4 lists them.
 
@@ -70,12 +70,15 @@ flowchart LR
    markup part reads and writes, and emits the parts, markers and marks of
    section 4. A store (`stores/Name.gshtml`) compiles the same way, without
    props or markup. Components compile in call order, children first.
-5. **Check links**: every `gw-target` must point at a page that has that
+5. **Generate views** (`views/<group>/<Name>.goose` and `.html`): the user's code gets a generated codec, form and
+   parser after its last line, the template compiles to `render<Z, D>`, and `.gooseweb/views.goose` is the registry.
+   See the README, section Views.
+6. **Check links**: every `gw-target` must point at a page that has that
    fragment, and a literal `http::get` or `http::post` URL in a component must
    match a route with that method. Otherwise the build fails. Warnings (unknown
    attribute, unkeyed `{#for}`, ...) print and the build goes on; `--strict`
    makes them fail it.
-6. **Generate the dispatcher**: a static route index, then `goose build` makes
+7. **Generate the dispatcher**: a static route index, then `goose build` makes
    one native binary. Static files and the runtime modules in use are compiled
    into it, with hashed URLs (public files) and gzip variants. CSS is minified first (`--no-minify` skips it).
    `@asset`, `@image` and `@meta` are resolved here: hashed URLs and image sizes
@@ -178,7 +181,7 @@ flowchart TB
 
 ## 4. The browser runtime
 
-The core is `gwi.js` (`gwi.min.js`, 4,068 bytes, ceiling 4,096). Optional modules hold everything else. gweb serves a module only to a site that uses its feature, and the page or component module imports it.
+The core is `gwi.js` (`gwi.min.js`, 4,079 bytes, ceiling 4,096). Optional modules hold everything else. gweb serves a module only to a site that uses its feature, and the page or component module imports it.
 
 | Module | Holds | Loaded when |
 |---|---|---|
@@ -377,9 +380,13 @@ readable `gwi.js`.
 | `forms/upload.goose`, `src/upload.c` | Multipart parser, `gweb::Upload`, `save_upload`, `check_upload`; file helpers in C. |
 | `site/errors.goose`, `src/inflight.c` | `ErrorInfo`, `gweb::fail`, crash replies, dev error detail; the in-flight request table. |
 | `http/static.goose` | Static files: hashed URLs, immutable caching, gzip variants, ETag and 304. |
+| `site/views.goose` | Views runtime: `ViewMeta`, `FieldUi`, `Renamed`, the lenient JSON readers (`jr_*`) and the form controls the generated code calls. In `site/` because a view is page content, like `meta` and `template`. |
+| `site/markdown.goose` | `gweb::markdown` and `markdown_text`: the safe Markdown subset. In `site/` for the same reason. |
+| `cli/structs.goose` | The struct and enum field scanner shared by the form decoders and the views generator. |
+| `cli/views.goose` | The views generator: scans `views/`, writes each view's codec and form, and the `views` registry. |
 | `site/meta.goose` | `ctx.meta` setters, `@meta()` rendering and `gweb::site_url`. |
 | `site/sitemap.goose` | `/sitemap.xml` and `/robots.txt` builders (`gweb::Sitemap`, `sitemap_add`). |
-| `http/cache.goose`, `src/cache.c`, `src/cache_core.[ch]` | The `REVALIDATE` page cache: per-worker store and ETag replies. |
+| `http/cache.goose`, `src/cache.c`, `src/cache_core.[ch]` | The `REVALIDATE` page cache: per-worker store and ETag replies; your own keys and the process-wide epoch (`epoch_bump`). |
 | `http/stream.goose` | Chunked response bodies: `stream_begin`, `write`, `end`. |
 | `http/push.goose` | `subscribe`, `websocket`, `publish`, `send` and the Origin check; the hub side of `run_worker`. |
 | `cli/gzip.c`, `cli/gzip_core.[ch]` | Build-time gzip for gweb (zlib; the server never links it). |
@@ -399,6 +406,8 @@ readable `gwi.js`.
 | `client/gwt.js` | Transitions. |
 | `client/gwe.js` | Server push (client half). |
 | `client/fnv.mjs` | The FNV-1a hash that `build.sh` and `test/runtime.sh` use for the banners. |
+| `test/views.sh`, `test/views/` | Views: the generated codec, forms and registry (`gweb test` on `test/views/site`), package views, build errors, `reserved_prefixes`, a variable-size state `Msg`. |
+| `test/markdown_test.goose` | `gweb::markdown`: the subset, hostile input, limits, speed. |
 | `test/auth.sh`, `cache.sh`, `sitemap.sh`, `push.sh` | Auth, page cache, sitemap and server push suites. |
 | `test/forms.sh`, `errors.sh` | Site suites: forms, uploads, `error.html`, crash replies. |
 | `test/frag.sh` | `gwf.js` fragments (422, FormData, loading) against jsdom. |
@@ -432,6 +441,7 @@ readable `gwi.js`.
   A literal `@name(` needs `&#64;`.
 - Fragments v1: one swap mode (replace the children of `#NAME`), and no
   component inside a fragment.
+- Views: no `f64`; a Props has at most 32 fields and 8 slots; a repeater is the last field and holds scalars, enums and foreign types.
 - Form fields are `u8[..N]`, `i64`, `bool` or `gweb::Upload`; no `f64`, enums or multi-select. `lib/` structs get no decoder.
 - Uploads: at most 8 files, 64 parts, 64 KiB per text field and 16 KiB of headers per part. `--max-upload`
   is checked by the loop; a page's `const MAX_UPLOAD` only after the body arrived.
