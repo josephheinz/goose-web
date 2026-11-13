@@ -29,7 +29,7 @@ docker run -d --name mysite -p 3000:3000 -v mysite-data:/app/data --stop-timeout
 ```
 
 - `GOOSE_URL` is required. The build stops with a message when it is empty.
-- `GWEB_REF` picks the gweb tag that builds your app (default `v0.7.0`; keep it equal to the version you develop with).
+- `GWEB_REF` picks the gweb tag that builds your app (default `v1.0.0`; keep it equal to the version you develop with).
 - The container runs as a non-root user (uid 10001). `/app/data` is a volume owned by it. A named volume
   copies that ownership; for a bind mount run `chown 10001 <dir>`.
 - `ENV PORT=3000 TZ=UTC GWEB_LOG_FORMAT=json`. Add flags after the image name or set `GWEB_*` variables.

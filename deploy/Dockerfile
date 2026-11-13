@@ -4,7 +4,7 @@
 
 FROM debian:bookworm-slim AS build
 ARG GOOSE_URL
-ARG GWEB_REF=v0.7.0
+ARG GWEB_REF=v1.0.0
 ARG GWEB_REPO=https://github.com/josephheinz/gweb
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gcc libc6-dev libsqlite3-dev git ca-certificates curl \

@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.0.0 (unreleased)
+## v1.0.0
 
 The API freeze. `docs/site/stability.md` lists exactly what is stable. Every `Breaking:` line below is covered by
 `sh tools/migrate-v1.sh [DIR]`, which does the renames, the `.gweb*` paths and the `--access-log` flag, and prints a
