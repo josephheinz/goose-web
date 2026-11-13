@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.6.0 (unreleased)
+## v0.6.0
 
 Library work toward v1 (the gweb side of the CMS design, Addendum 19).
 
