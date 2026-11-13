@@ -132,6 +132,39 @@ fresh version
 printf 'name admin\ngweb 9.0\n' > "$WORK/version/pkg/gweb.package"
 expect_fail version "gweb.package:2: error: admin: needs gweb 9.0 or newer (this is $VERSION)"
 
+# The minimum version is compared as a version: MAJOR.MINOR or MAJOR.MINOR.PATCH, numbers and not text, a prerelease below its release.
+# This checkout says $VERSION (0.7.0 at the time of writing; the cases below are chosen relative to it).
+ver_ok() {   # ver_ok NAME TEXT: a package that asks for TEXT is accepted
+  fresh "$1"
+  printf 'name admin\ngweb %s\n' "$2" > "$WORK/$1/pkg/gweb.package"
+  if out=$("$GWEB" -C "$WORK/$1/app" gen 2>&1); then ok; else bad "gweb $2 should be accepted by $VERSION:"; echo "$out" | sed 's/^/    /'; fi
+}
+ver_old() {  # ver_old NAME TEXT: refused, with the exact wording
+  fresh "$1"
+  printf 'name admin\ngweb %s\n' "$2" > "$WORK/$1/pkg/gweb.package"
+  expect_fail "$1" "gweb.package:2: error: admin: needs gweb $2 or newer (this is $VERSION)"
+}
+MAJ=${VERSION%%.*}
+REST=${VERSION#*.}
+MIN=${REST%%.*}
+PAT=${REST#*.}
+PAT=${PAT%%-*}
+ver_ok vok1 "$MAJ.$MIN"
+ver_ok vok2 "$MAJ.$MIN.$PAT"
+ver_ok vok3 "0.1"
+ver_ok vok4 "0.$MIN.0"
+ver_ok vok5 "$MAJ.$MIN.0-rc1"
+ver_old vold1 "$MAJ.$((MIN + 1))"
+ver_old vold2 "$MAJ.$MIN.$((PAT + 1))"
+ver_old vold3 "$MAJ.$((MIN + 10))"
+ver_old vold4 "$((MAJ + 1)).0"
+ver_old vold5 "$((MAJ + 1)).0.0-rc1"
+for badv in "1" "1.x" "one.two" "1.2.3.4" "1.0.0-"; do
+  fresh vbad
+  printf 'name admin\ngweb %s\n' "$badv" > "$WORK/vbad/pkg/gweb.package"
+  expect_fail vbad "gweb.package:2: error: gweb needs a version like 1.0 or 1.2.3"
+done
+
 fresh mount
 printf '../pkg at /[id]\n' > "$WORK/mount/app/gweb.packages"
 expect_fail mount 'gweb.packages:1: error: at needs a mount like /admin'
