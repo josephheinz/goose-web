@@ -29,6 +29,8 @@ bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 # 1. The page renders as expected.
 cp -R "$HERE/templates/site" "$WORK/ok"
 if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
+  # An @call inside an attribute value is not read as attributes (unknown-attribute warning).
+  if echo "$out" | grep -q 'unknown attribute'; then bad "@asset in an attribute warns: $out"; else ok; fi
   # SITE_URL, with a trailing slash, makes the @meta() URLs independent of the port.
   SITE_URL=https://example.com/ "$WORK/ok/.gooseweb/server" --port "$PORT" >/dev/null 2>&1 &
   PID=$!

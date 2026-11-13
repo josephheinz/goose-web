@@ -60,9 +60,9 @@ fn job_take(slot: i64, timeout_ms: i64, out: u8[>..]&, sched: u8[>..]&) -> i64, 
 
 // The ctx a job runs with: worker is -1 - slot (never a request worker's index), owner_fd is the runner's owner
 // channel, job_id and attempt are set. name is the job's span name (kept in ctx.title); with tracing on the job
-// gets a trace of its own, sampled by the configured sampler.
-fn job_ctx(slot: i64, owner_fd: i32, id: i64, attempt: i64, name: const u8[:] = "job") -> Ctx {
-    var ctx = new_ctx(-1 - slot, owner_fd);
+// gets a trace of its own, sampled by the configured sampler. hub is cfg.hub, for web::publish.
+fn job_ctx(slot: i64, owner_fd: i32, id: i64, attempt: i64, name: const u8[:] = "job", hub: u64 = 0) -> Ctx {
+    var ctx = new_ctx(-1 - slot, owner_fd, hub);   // jobs can web::publish to SSE and WebSocket clients
     ctx.job_id = id;
     ctx.attempt = attempt;
     ctx.start_us = c_now_us();

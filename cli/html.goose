@@ -125,6 +125,26 @@ fn skip_brace(src: const u8[:], i: i64) -> i64 {
     return i + e + 1;
 }
 
+// The index after the @name(...) call that starts at src[i] (`@asset("/x")`, `@web::csrf_field(ctx)`), with
+// strings and nested parentheses skipped; -1 when src[i] does not start one that closes.
+fn skip_call(src: const u8[:], i: i64) -> i64 {
+    if src[i] != '@' { return -1; }
+    var j = i + 1;
+    while j < src.len && (tscan::ident_char(src[j]) || src[j] == ':') { j += 1; }
+    if j == i + 1 || j >= src.len || src[j] != '(' { return -1; }
+    var depth = 0;
+    while j < src.len {
+        let c = src[j];
+        if c == '"' || c == '\'' {
+            j += 1;
+            while j < src.len && src[j] != c { if src[j] == '\\' { j += 1; } j += 1; }
+        } else if c == '(' { depth += 1; }
+        else if c == ')' { depth -= 1; if depth == 0 { return j + 1; } }
+        j += 1;
+    }
+    return -1;
+}
+
 fn count_lines(src: const u8[:], from: i64, to: i64) -> i64 {
     var k = 0;
     for j in from..min(to, src.len) { if src[j] == '\n' { k += 1; } }
@@ -152,6 +172,8 @@ fn scan_tag(src: const u8[:], at: i64, tag: const u8[:], check_it: bool, comp: b
         if ws(c) { i += 1; after_expr = false; continue; }
         if c == '/' { if i + 1 < n && src[i + 1] == '>' { closed = true; } i += 1; continue; }
         if c == '{' { i = skip_brace(src, i); after_expr = true; continue; }
+        let call = skip_call(src, i);
+        if call > 0 { line += count_lines(src, i, call); i = call; after_expr = true; continue; }
         let s = i;
         while i < n && !ws(src[i]) && src[i] != '>' && src[i] != '=' && src[i] != '/' && src[i] != '{' { i += 1; }
         let name = lower(src[s..i]);
@@ -164,7 +186,9 @@ fn scan_tag(src: const u8[:], at: i64, tag: const u8[:], check_it: bool, comp: b
                 let q = src[i];
                 i += 1;
                 while i < n && src[i] != q {
-                    if src[i] == '{' { i = skip_brace(src, i); }
+                    let call = skip_call(src, i);
+                    if call > 0 { line += count_lines(src, i, call); i = call; }
+                    else if src[i] == '{' { i = skip_brace(src, i); }
                     else { if src[i] == '\n' { line += 1; } i += 1; }
                 }
                 if i < n { i += 1; }

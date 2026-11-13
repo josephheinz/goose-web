@@ -3126,7 +3126,7 @@ thread_fn job_runner(slot: i64, owner_fd: i32, cfg: web::Config) {
         if !got { continue; }
         var name: u8[>..] = [];
         if sched.len > 0 { format(name, "job ", sched); } else { name.append("job"); }
-        var ctx = web::job_ctx(slot, owner_fd, id, attempt, name);
+        var ctx = web::job_ctx(slot, owner_fd, id, attempt, name, cfg.hub);
         let batch, decoded = from_bytes<jobs::Job[>..]>(bytes);
         var ok = false;
         if decoded { for j in batch { ok = jobs::run(j, ctx); } }

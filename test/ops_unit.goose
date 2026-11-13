@@ -246,7 +246,14 @@ fn test_config() {
     check_eq(w.log_level, "warn", "--log-level warn");
 }
 
+// A job's ctx carries the hub, so jobs can web::publish.
+fn test_job_ctx() {
+    let c = web::job_ctx(0, -1, 7, 1, "job", 77);
+    check(c.hub == 77 && c.job_id == 7 && c.worker == -1, "job_ctx carries the hub");
+}
+
 fn main() {
+    test_job_ctx();
     test_escape();
     test_request_id();
     test_routes();
