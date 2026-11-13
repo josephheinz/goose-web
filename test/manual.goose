@@ -1,6 +1,6 @@
 // A hand-written dispatcher on the gweb runtime (no gweb), for testing.
 // It has the shape gweb generates: dispatch, then finish.
-//   goose build test/manual.goose && test/manual --port 3101 --workers 4 --log
+//   goose build test/manual.goose && test/manual --port 3101 --workers 4 --access-log
 import gweb from "..";
 import net from "../../goose-net";
 import net.http;

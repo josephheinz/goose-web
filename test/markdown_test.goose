@@ -266,6 +266,18 @@ fn main() {
         out.clear();
         gweb::markdown(out, u);
         check(find(out, "\xC3") < 0, "the cut does not split a UTF-8 character");
+        // The limit is a parameter: a smaller one cuts sooner, a larger one keeps more.
+        out.clear();
+        gweb::markdown(out, src, 1000);
+        check(out.len < 1200 && out.len > 900, "max_input 1000 cuts near 1000 bytes");
+        var big: u8[>..] = [];
+        repeat(big, "word ", 30000);
+        out.clear();
+        gweb::markdown(out, big, 200000);
+        check(out.len > 150000, "max_input 200000 keeps a 150000-byte input");
+        out.clear();
+        gweb::markdown_text(out, src, 100000, 100);
+        check(out.len <= 110, "markdown_text passes max_input through");
     }
 
     // Plain text

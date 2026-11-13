@@ -100,7 +100,7 @@ if ! out=$("$GWEB" -C "$WORK/site" build 2>&1); then
 fi
 
 # 1. metrics, JSON log, jobs.
-if start s1 --metrics --log --log-format json --workers 2 --job-attempts 3; then
+if start s1 --metrics --access-log --log-format json --workers 2 --job-attempts 3; then
   req health GET /__gweb/health
   check "$([ "$(status health)" = 200 ] && body_has health ok && has_header health 'cache-control: no-store' && echo ok)" "health: 200 ok, no-store"
   req ready GET /__gweb/ready
@@ -204,7 +204,7 @@ check "$("$SERVER" --probe --port "$PORT"; [ $? = 1 ] && echo ok)" "--probe exit
 
 # 2. the drain.
 rm -f "$WORK/ops/shutdown"
-if start s2 --workers 2 --job-runners 0 --drain-delay-ms 1000 --drain-ms 5000 --log; then
+if start s2 --workers 2 --job-runners 0 --drain-delay-ms 1000 --drain-ms 5000 --access-log; then
   req nometrics GET /__gweb/metrics
   check "$([ "$(status nometrics)" = 404 ] && echo ok)" "/__gweb/metrics is 404 without --metrics"
   req t GET /count

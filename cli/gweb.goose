@@ -610,13 +610,90 @@ fn fetch_git(line: i64, src: const u8[:], dir: u8[>..]&) -> bool {
     return true;
 }
 
-// Reads PKG/gweb.package: `name IDENT` and `gweb MAJOR.MINOR`, # comments. Returns the name, or false after reporting.
+// A version as the packages and VERSION write it: MAJOR.MINOR, MAJOR.MINOR.PATCH, and an optional -PRERELEASE.
+struct SemVer { major: i64, minor: i64, patch: i64, pre: u8[..64] }
+
+fn all_digits(s: const u8[:]) -> bool {
+    if s.len == 0 || s.len > 9 { return false; }
+    for c in s { if c < '0' || c > '9' { return false; } }
+    return true;
+}
+
+// False when text is not MAJOR.MINOR[.PATCH][-PRE] with whole numbers (a missing PATCH is 0).
+fn semver_parse(text: const u8[:], v: SemVer&) -> bool {
+    let dash = find(text, "-");
+    let core = if dash >= 0 { text[..dash] } else { text };
+    v.pre.clear();
+    if dash >= 0 {
+        let pre = text[dash + 1..];
+        if pre.len == 0 || pre.len > 64 { return false; }
+        for c in pre {
+            if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '.' || c == '-') { return false; }
+        }
+        v.pre.append(pre);
+    }
+    let parts = split(core, '.');
+    if parts.len < 2 || parts.len > 3 { return false; }
+    for p in parts { if !all_digits(p) { return false; } }
+    let major, ok1 = parse_int(parts[0]);
+    let minor, ok2 = parse_int(parts[1]);
+    var patch: i64 = 0;
+    var ok3 = true;
+    if parts.len == 3 { let n, ok = parse_int(parts[2]); patch = n; ok3 = ok; }
+    v.major = major;
+    v.minor = minor;
+    v.patch = patch;
+    return ok1 && ok2 && ok3;
+}
+
+// -1, 0 or 1 by semantic versioning: the numbers, then a prerelease sorts below the release it precedes, and
+// prerelease identifiers compare one by one (numbers as numbers, below words; a shorter list below a longer one).
+fn semver_cmp(a: const SemVer&, b: const SemVer&) -> i64 {
+    if a.major != b.major { return if a.major < b.major { -1 } else { 1 }; }
+    if a.minor != b.minor { return if a.minor < b.minor { -1 } else { 1 }; }
+    if a.patch != b.patch { return if a.patch < b.patch { -1 } else { 1 }; }
+    if a.pre.len == 0 && b.pre.len == 0 { return 0; }
+    if a.pre.len == 0 { return 1; }
+    if b.pre.len == 0 { return -1; }
+    let x = split(a.pre, '.');
+    let y = split(b.pre, '.');
+    var i = 0;
+    while i < x.len && i < y.len {
+        let xn = all_digits(x[i]);
+        let yn = all_digits(y[i]);
+        if xn && yn {
+            let p, pok = parse_int(x[i]);
+            let q, qok = parse_int(y[i]);
+            if p != q { return if p < q { -1 } else { 1 }; }
+        } else if xn { return -1; }
+        else if yn { return 1; }
+        else {
+            let c = compare(x[i], y[i]);
+            if c != 0 { return if c < 0 { -1 } else { 1 }; }
+        }
+        i += 1;
+    }
+    if x.len == y.len { return 0; }
+    return if x.len < y.len { -1 } else { 1 };
+}
+
+// Hidden: `gweb semver-cmp A B` prints -1, 0 or 1, or exits 2 for a version that does not parse. The package suite uses it.
+fn semver_cmd(rest: u8[:][:]) {
+    var a = SemVer { major: 0, minor: 0, patch: 0, pre: "" };
+    var b = SemVer { major: 0, minor: 0, patch: 0, pre: "" };
+    if rest.len != 2 || !semver_parse(rest[0], a) || !semver_parse(rest[1], b) { write_stderr("gweb semver-cmp: two versions like 1.0 or 1.2.3-rc1\n"); exit(2); }
+    var out: u8[>..] = [];
+    format(out, semver_cmp(a, b), "\n");
+    write_stdout(out);
+}
+
+// Reads PKG/gweb.package: `name IDENT` and `gweb VERSION` (the lowest gweb it needs: 1.0 means any 1.x, and also
+// accepts 1.2.3 and 1.0.0-rc1), # comments. Returns the name, or false after reporting.
 fn read_manifest(path: const u8[:], text: const u8[:], name: u8[..64]&) -> bool {
     var have_name = false;
     var have_ver = false;
     var ver_line = 0;
-    var want_major: i64 = 0;
-    var want_minor: i64 = 0;
+    var want = SemVer { major: 0, minor: 0, patch: 0, pre: "" };
     var want_text: u8[>..] = [];
     var good = true;
     for raw, i in split(text, '\n') {
@@ -629,33 +706,19 @@ fn read_manifest(path: const u8[:], text: const u8[:], name: u8[..64]&) -> bool 
             if !is_ident(val) || val.len > 64 { err(path, i + 1, "name needs a Goose identifier, as in name admin"); good = false; }
             else { name.clear(); name.append(val); have_name = true; }
         } else if key == "gweb" {
-            let parts = split(val, '.');
-            var ok = parts.len == 2;
-            var major: i64 = 0;
-            var minor: i64 = 0;
-            if ok {
-                let a, aok = parse_int(parts[0]);
-                let b, bok = parse_int(parts[1]);
-                ok = aok && bok && a >= 0 && b >= 0;
-                major = a;
-                minor = b;
-            }
-            if !ok { err(path, i + 1, "gweb needs MAJOR.MINOR, as in gweb 0.3"); good = false; }
-            else { have_ver = true; ver_line = i + 1; want_major = major; want_minor = minor; want_text.clear(); want_text.append(val); }
+            if !semver_parse(val, want) { err(path, i + 1, "gweb needs a version like 1.0 or 1.2.3"); good = false; }
+            else { have_ver = true; ver_line = i + 1; want_text.clear(); want_text.append(val); }
         } else {
-            err(path, i + 1, "a line is `name IDENT` or `gweb MAJOR.MINOR`");
+            err(path, i + 1, "a line is `name IDENT` or `gweb VERSION`");
             good = false;
         }
     }
     if !have_name && good { err(path, 0, "needs a name line, as in name admin"); good = false; }
-    if !have_ver && good { err(path, 0, "needs a gweb line, as in gweb 0.3"); good = false; }
+    if !have_ver && good { err(path, 0, "needs a gweb line, as in gweb 1.0"); good = false; }
     if !good { return false; }
-    let cur = split(trim(EMBEDDED_VERSION), '.');
-    if cur.len < 2 { return true; }
-    let cmaj, ok1 = parse_int(cur[0]);
-    let cmin, ok2 = parse_int(cur[1]);
-    if !ok1 || !ok2 { return true; }
-    if want_major > cmaj || (want_major == cmaj && want_minor > cmin) {
+    var cur = SemVer { major: 0, minor: 0, patch: 0, pre: "" };
+    if !semver_parse(trim(EMBEDDED_VERSION), cur) { return true; }
+    if semver_cmp(cur, want) < 0 {
         var m: u8[>..] = [];
         format(m, name, ": needs gweb ", want_text, " or newer (this is ", trim(EMBEDDED_VERSION), ")");
         err(path, ver_line, m);
@@ -3315,7 +3378,7 @@ fn gen_main_fn(m: u8[>..]&) {
     net::enable_handoff(server, argv);
     net::ready();
     var up: u8[>..] = [];
-    format(up, "gweb: http://localhost:", cfg.port, " (", cfg.workers, " workers)");
+    format(up, "gweb: http://", cfg.host, ":", cfg.port, " (", cfg.workers, " workers)");
     gweb::_log_message(gweb::Level.Info, up);
 """);
     if has_state { format(m, "    gweb::_owner_loop<", msg_ty(), ", state::Reply>(chans, state::handle);\n"); }
@@ -4933,20 +4996,8 @@ fn server_cmd(extra: u8[:][:], dev: bool) -> u8[>..] {
     var cmd: u8[>..] = [];
     cmd.append("./.gweb/server");
     if dev {
-        var has_workers = false;
-        var has_port = false;
-        for a in extra {
-            if a == "--workers" { has_workers = true; }
-            if a == "--port" { has_port = true; }
-        }
-        if !has_workers { cmd.append(" --workers 2"); }
-        // gweb dev's default port; gweb start and the server keep 3000.
-        if !has_port { cmd.append(" --port 60053"); }
-        cmd.append(" --log");
-        // Restarts on every edit; a long drain would only slow them.
-        var has_drain = false;
-        for a in extra { if a == "--drain-ms" { has_drain = true; } }
-        if !has_drain { cmd.append(" --drain-ms 200"); }
+        // The dev defaults (127.0.0.1, port 60053, 2 workers, the access log, a short drain) live in the server and
+        // follow --dev-id, so the flags and GWEB_* variables, .env files included, still win.
         // A fresh build id per spawn: open pages poll it and reload when it changes.
         format(cmd, " --dev-id ", (time() * 1000.0) as i64);
     }
@@ -5183,25 +5234,42 @@ fn has_flag(rest: u8[:][:], flag: const u8[:]) -> bool {
     return false;
 }
 
-fn usage() {
-    write_stderr("""
-usage: gweb [-C dir] <command>
+let USAGE = """
+usage: gweb [-C dir] <command> [flags]
   new <dir>         make a starter project
   gen               write .gweb/ only
   build [--debug]   gen, then goose build to .gweb/server
-                    gen, build, start and test also take --strict (warnings fail the run)
-                    and --diagnostics json (stderr as JSON Lines)
-  start [flags]     build, then run the server (flags go to it: --port N --workers N --log ...)
-  --no-minify       with gen, build or start: serve public/**/*.css as written
+  start [flags]     build, then run the server (see the server flags below)
+  dev [flags]       build, run on 127.0.0.1:60053, and rebuild on every change under app/, lib/, public/,
+                    components/, locales/, stores/ and views/ (and in path packages); --host 0.0.0.0 opens it to the network
   export [-o DIR]   build, then write the site as static files to DIR (default out/)
-  dev [flags]       build, run on port 60053 (unless --port), and rebuild on every change under app/, lib/, public/, components/, locales/, stores/
   routes            print the route table
-  version           print the version and the package sources a build declares
+  test              component test_* functions as Goose and as JavaScript (they must match), then tests/*.goose route tests
   check             generate into .gweb.check/ and run goose check; errors name .gshtml and page.html lines
   lsp               run the language server (needs node)
-  test              component test_* functions as Goose and as JavaScript (they must match), then tests/*.goose route tests
+  version           print the version and the package sources a build declares (also --version)
+  help              print this text (also --help and -h, after any command)
 
-""");
+gen, build, start, test and check also take --strict (warnings fail the run) and --diagnostics json (stderr as
+JSON Lines). gen, build, start and export take --no-minify (serve public/**/*.css as written).
+
+server flags (gweb start, and .gweb/server): each has a GWEB_* variable, so --max-body is GWEB_MAX_BODY
+  --port N --host H --workers N --access-log --idle-ms N --max-body N --max-upload N --upload-dir D
+  --max-upload-parts N --max-upload-files N --max-upload-text N --csp --trust-proxy --security-headers --hsts N
+  --session-idle N --session-max N --drain-ms N --drain-delay-ms N --log-format text|json --log-level L
+  --metrics --job-runners N --job-queue N --job-attempts N --no-schedule --probe
+  A boolean flag also takes =value, and --no-NAME turns it off. Run `.gweb/server --help` for the details.
+
+""";
+
+// Usage on stdout, exit 0: the user asked for it.
+fn print_usage() {
+    write_stdout(USAGE);
+}
+
+// Usage on stderr, exit 2: the command line was wrong.
+fn usage() {
+    write_stderr(USAGE);
     exit(2);
 }
 
@@ -5216,7 +5284,10 @@ fn main() {
     if i >= a.len { usage(); }
     let cmd = a[i];
     let rest = a[i + 1..];
-    if cmd == "version" { print_version(); return; }
+    if cmd == "help" || cmd == "--help" || cmd == "-h" { print_usage(); return; }
+    for x in rest { if x == "--help" || x == "-h" { print_usage(); return; } }
+    if cmd == "version" || cmd == "--version" { print_version(); return; }
+    if cmd == "semver-cmp" { semver_cmd(rest); return; }
     check_version();
     if cmd == "new" { if rest.len != 1 { usage(); } scaffold(rest[0]); return; }
     if cmd == "test-css" { if !test_css() { exit(1); } return; }
@@ -5259,5 +5330,8 @@ fn main() {
         exit(1);
     }
     if cmd == "dev" { minify = false; dev(rest); return; }
+    var unknown: u8[>..] = [];
+    format(unknown, "gweb: unknown command: ", cmd, "\n");
+    write_stderr(unknown);
     usage();
 }

@@ -51,8 +51,11 @@ struct Ctx {
     set_cookies: u8[..2048],  // pending Set-Cookie lines; run_worker moves them to res
     status: i64 = 0,          // a page's status override; 0 = none (set_status, unprocessable)
     spool: u8[..256] = "",    // the spool file of an Event.Spooled request; "" otherwise. run_worker deletes it after the reply
-    uploads: Upload[..8] = [],        // the files multipart_begin wrote; run_worker deletes the unsaved ones after the reply
+    uploads: Upload[..16] = [],       // the files multipart_begin wrote (at most upload_files); run_worker deletes the unsaved ones after the reply
     upload_dir: u8[..256] = "",       // where multipart_begin puts them (Config.upload_dir); set by run_worker
+    upload_parts: i64 = 64,           // multipart limits (Config.upload_parts, upload_files, upload_text); set by run_worker
+    upload_files: i64 = 8,
+    upload_text: i64 = 65536,
     route: i64 = -1,                  // the dispatcher's matched dir index; finish picks the nearest error.html with it
     error_status: i64 = 0,            // gweb::fail's status and message, read by the generated error_reply
     error_message: u8[..512] = "",
@@ -87,11 +90,12 @@ struct Upload {
     path: u8[..256]            // the temp file; "" when no file was sent
 }
 
-struct Config { port: i64, host: u8[..64], workers: i64, log: bool, idle_ms: i64, max_body: i64,
+struct Config { port: i64, host: u8[..64], workers: i64, access_log: bool, idle_ms: i64, max_body: i64,
                 dev_id: i64,        // 0 = off
                 max_upload: i64,    // multipart bodies may be this large (--max-upload)
                 spool_over: i64,    // a multipart body over this many bytes is spooled to a file
                 upload_dir: u8[..256],    // spool and upload files (--upload-dir); one server per dir
+                upload_parts: i64, upload_files: i64, upload_text: i64,   // multipart limits: parts, files (at most 16), bytes in one text field
                 auth: AuthConfig,
                 security_headers: bool, hsts: i64, csp: i64,   // csp: 0 off, 1 on, 2 report-only
                 export_dir: u8[..512],   // "" = serve; else the generated main writes the site here and exits
@@ -444,6 +448,14 @@ fn _plain_not_found(res: http::Response&) {
 fn _content_length(req: const http::Request&) -> i64 { return http::content_length(req.head); }
 
 // ---------------------------------------------------------------- config
+//
+// One rule for every setting. Each has a flag and a GWEB_* variable of the same name: --max-body and GWEB_MAX_BODY.
+// A flag beats the environment, the environment (the real one, then the .env files) beats the default. A value that does
+// not parse, or is out of range, stops the server with exit status 2 and a message that names the flag or variable.
+// Empty variables count as unset. Booleans are 1/0, true/false, yes/no or on/off, in any case: `--metrics` and
+// `--no-metrics` set one on and off, and `--metrics=off` works too. PORT is an alias of GWEB_PORT for platforms that set it
+// (GWEB_PORT wins). GWEB_SECRET and GWEB_ENV are variables only; --probe, --export and --dev-id are flags only: they
+// choose a mode instead of a setting. `--no-schedule` is `GWEB_SCHEDULE=0`.
 
 extern fn c_up_mkdir(path: const u8[:]) -> i32 = "gweb_up_mkdir";
 extern fn c_up_sweep(dir: const u8[:]) -> i64 = "gweb_up_sweep";
@@ -463,25 +475,20 @@ fn _default_workers() -> i64 {
 }
 
 fn _default_config() -> Config {
-    Config { port: 3000, host: "0.0.0.0", workers: _default_workers(), log: false,
+    Config { port: 3000, host: "0.0.0.0", workers: _default_workers(), access_log: false,
              idle_ms: 5000, max_body: 1048576, dev_id: 0,
              max_upload: 33554432, spool_over: 65536, upload_dir: ".gweb.uploads",
+             upload_parts: 64, upload_files: 8, upload_text: 65536,
              auth: AuthConfig { .. }, security_headers: true, hsts: 0, csp: 0, export_dir: "",
              drain_ms: 10000, drain_delay_ms: 0, log_format: "text", log_level: "info",
              metrics: false, job_runners: 1, job_queue: 10000, job_attempts: 5, schedule: true, probe: false }
-}
-
-fn env_int(name: const u8[:]) -> i64, bool {
-    var e: u8[>..] = [];
-    if !env(name, e) { return 0, false; }
-    return parse_int(trim(e));
 }
 
 fn _valid_log_level(s: const u8[:]) -> bool { s == "debug" || s == "info" || s == "warn" || s == "error" }
 
 fn _valid_log_format(s: const u8[:]) -> bool { s == "text" || s == "json" }
 
-// _config_from(args()), then --probe: GET http://127.0.0.1:PORT/__gweb/ready; exit 0 on 200, else 1.
+// config_from(args()), then --probe: GET http://127.0.0.1:PORT/__gweb/ready; exit 0 on 200, else 1.
 fn _config_from_args() -> Config {
     let argv = args();
     var a: (const u8[:])[>..] = [];
@@ -500,87 +507,259 @@ fn _probe(port: i64) -> i64 {
     return if ok && http::code(status) == 200 { 0 } else { 1 };
 }
 
-// Reads the flags in the usage line below and the environment, after loading the .env files: PORT, GWEB_WORKERS,
-// GWEB_SECRET, GWEB_SESSION_IDLE, GWEB_SESSION_MAX, GWEB_TRUST_PROXY, GWEB_SECURITY_HEADERS, GWEB_HSTS, GWEB_CSP,
-// GWEB_DRAIN_MS, GWEB_DRAIN_DELAY_MS, GWEB_LOG_FORMAT, GWEB_LOG_LEVEL, GWEB_METRICS=1, GWEB_JOB_RUNNERS,
-// GWEB_SCHEDULE=0 (flags win). a[0] is the program name. Exits with 2 on a bad flag, .env file, secret,
-// session lifetime, GWEB_HSTS or GWEB_CSP.
+// The settings: a name is the flag without its dashes, and its variable is GWEB_ plus the upper-case name with _.
+let CFG_BOOLS = ["access-log", "metrics", "schedule", "trust-proxy", "security-headers"];
+let CFG_INTS = ["port", "workers", "idle-ms", "max-body", "max-upload", "max-upload-parts", "max-upload-files",
+                "max-upload-text", "drain-ms", "drain-delay-ms", "job-runners", "job-queue", "job-attempts",
+                "session-idle", "session-max", "hsts"];
+let CFG_TEXTS = ["host", "upload-dir", "log-format", "log-level"];
+
+fn _cfg_has(list: (const u8[:])[:], name: const u8[:]) -> bool {
+    for n in list { if n == name { return true; } }
+    return false;
+}
+
+// "max-body" -> "GWEB_MAX_BODY".
+fn _cfg_env_name(out: u8[>..]&, name: const u8[:]) {
+    out.append("GWEB_");
+    for c in name { out.push(if c == '-' { '_' } else if c >= 'a' && c <= 'z' { c - 32 } else { c }); }
+}
+
+// 1/0, true/false, yes/no, on/off, in any case. The one parser of booleans: flags, variables and env_bool.
+fn _parse_bool(text: const u8[:]) -> bool, bool {
+    let t = trim(text);
+    for w in ["1", "true", "yes", "on"] { if _lower_is(t, w) { return true, true; } }
+    for w in ["0", "false", "no", "off"] { if _lower_is(t, w) { return false, true; } }
+    return false, false;
+}
+
+// "gweb: LABEL: MESSAGE" where LABEL is `--port 99999` or `GWEB_PORT=99999`.
+fn _cfg_fail(err: u8[>..]&, label: const u8[:], msg: const u8[:]) -> bool {
+    format(err, "gweb: ", label, ": ", msg);
+    return false;
+}
+
+fn _cfg_int(out: i64&, value: const u8[:], lo: i64, hi: i64, label: const u8[:], err: u8[>..]&) -> bool {
+    let n, ok = parse_int(trim(value));
+    if ok && n >= lo && n <= hi { out = n; return true; }
+    var m: u8[>..] = [];
+    if hi == 9223372036854775807 { format(m, "must be a whole number, ", lo, " or more"); }
+    else { format(m, "must be a whole number from ", lo, " to ", hi); }
+    return _cfg_fail(err, label, m);
+}
+
+fn _cfg_bool(out: bool&, value: const u8[:], label: const u8[:], err: u8[>..]&) -> bool {
+    let b, ok = _parse_bool(value);
+    if !ok { return _cfg_fail(err, label, "must be 1, 0, true, false, yes, no, on or off"); }
+    out = b;
+    return true;
+}
+
+fn _cfg_text<T>(out: T&, value: const u8[:], label: const u8[:], err: u8[>..]&) -> bool {
+    let t = trim(value);
+    if t.len == 0 || t.len > out.cap {
+        var m: u8[>..] = [];
+        format(m, "must be 1 to ", out.cap, " bytes");
+        return _cfg_fail(err, label, m);
+    }
+    out.clear();
+    out.append(t);
+    return true;
+}
+
+// Sets one setting from a flag or a variable. False, with err set, when the value is not valid for it.
+fn _cfg_set(cfg: Config&, name: const u8[:], value: const u8[:], label: const u8[:], err: u8[>..]&) -> bool {
+    let big = 9223372036854775807;
+    if name == "port" { return _cfg_int(cfg.port, value, 1, 65535, label, err); }
+    if name == "workers" { return _cfg_int(cfg.workers, value, 1, big, label, err); }
+    if name == "idle-ms" { return _cfg_int(cfg.idle_ms, value, 0, big, label, err); }
+    if name == "max-body" { return _cfg_int(cfg.max_body, value, 1, big, label, err); }
+    if name == "max-upload" { return _cfg_int(cfg.max_upload, value, 1, big, label, err); }
+    if name == "max-upload-parts" { return _cfg_int(cfg.upload_parts, value, 1, 1024, label, err); }
+    if name == "max-upload-files" { return _cfg_int(cfg.upload_files, value, 1, 16, label, err); }
+    if name == "max-upload-text" { return _cfg_int(cfg.upload_text, value, 1, big, label, err); }
+    if name == "drain-ms" { return _cfg_int(cfg.drain_ms, value, 0, big, label, err); }
+    if name == "drain-delay-ms" { return _cfg_int(cfg.drain_delay_ms, value, 0, big, label, err); }
+    if name == "job-runners" { return _cfg_int(cfg.job_runners, value, 0, big, label, err); }
+    if name == "job-queue" { return _cfg_int(cfg.job_queue, value, 1, big, label, err); }
+    if name == "job-attempts" { return _cfg_int(cfg.job_attempts, value, 1, big, label, err); }
+    if name == "session-idle" { return _cfg_int(cfg.auth.idle, value, 1, big, label, err); }
+    if name == "session-max" { return _cfg_int(cfg.auth.max, value, 1, big, label, err); }
+    if name == "hsts" { return _cfg_int(cfg.hsts, value, 0, big, label, err); }
+    if name == "access-log" { return _cfg_bool(cfg.access_log, value, label, err); }
+    if name == "metrics" { return _cfg_bool(cfg.metrics, value, label, err); }
+    if name == "schedule" { return _cfg_bool(cfg.schedule, value, label, err); }
+    if name == "trust-proxy" { return _cfg_bool(cfg.auth.trust_proxy, value, label, err); }
+    if name == "security-headers" { return _cfg_bool(cfg.security_headers, value, label, err); }
+    if name == "host" { return _cfg_text(cfg.host, value, label, err); }
+    if name == "upload-dir" { return _cfg_text(cfg.upload_dir, value, label, err); }
+    if name == "log-format" {
+        if !_valid_log_format(trim(value)) { return _cfg_fail(err, label, "must be text or json"); }
+        return _cfg_text(cfg.log_format, value, label, err);
+    }
+    if name == "log-level" {
+        if !_valid_log_level(trim(value)) { return _cfg_fail(err, label, "must be debug, info, warn or error"); }
+        return _cfg_text(cfg.log_level, value, label, err);
+    }
+    if name == "csp" {
+        let t = trim(value);
+        if _lower_is(t, "report-only") { cfg.csp = 2; return true; }
+        let b, ok = _parse_bool(t);
+        if !ok { return _cfg_fail(err, label, "must be 1, 0 or report-only"); }
+        cfg.csp = if b { 1 } else { 0 };
+        return true;
+    }
+    return _cfg_fail(err, label, "is not a setting");
+}
+
+// The settings from the environment. An empty variable is unset. PORT is read when GWEB_PORT is not set.
+fn _cfg_from_env(cfg: Config&, err: u8[>..]&) -> bool {
+    var names: (const u8[:])[>..] = [];
+    for n in CFG_BOOLS { names.push(n); }
+    for n in CFG_INTS { names.push(n); }
+    for n in CFG_TEXTS { names.push(n); }
+    names.push("csp");
+    for name in names {
+        var key: u8[>..] = [];
+        _cfg_env_name(key, name);
+        var v: u8[>..] = [];
+        if name == "port" && !(env(key, v) && trim(v).len > 0) {
+            v.clear();
+            if env("PORT", v) && trim(v).len > 0 {
+                var label: u8[>..] = [];
+                format(label, "PORT=", v);
+                if !_cfg_set(cfg, name, v, label, err) { return false; }
+            }
+            continue;
+        }
+        if v.len == 0 { env(key, v); }
+        if trim(v).len == 0 { continue; }
+        var label: u8[>..] = [];
+        format(label, key, "=", v);
+        if !_cfg_set(cfg, name, v, label, err) { return false; }
+    }
+    return true;
+}
+
+let CFG_HELP = """
+flags (each also has a GWEB_* variable: --max-body is GWEB_MAX_BODY; a flag beats the variable)
+  --port N              port, 1 to 65535 (3000; the variable PORT works too)
+  --host H              address to listen on (0.0.0.0; gweb dev: 127.0.0.1, so --host 0.0.0.0 opens it to the network)
+  --workers N           worker threads (the lesser of the performance cores and 4)
+  --access-log          log every request (--no-access-log); GWEB_ACCESS_LOG
+  --idle-ms N           close idle connections after N ms, 0 never (5000)
+  --max-body N          largest request in bytes (1048576)
+  --max-upload N        largest multipart body (33554432)
+  --max-upload-parts N, --max-upload-files N, --max-upload-text N    multipart limits: parts (64), files (8, at most 16), bytes of one text field (65536)
+  --upload-dir D        where uploads are spooled (.gweb.uploads)
+  --csp                 Content-Security-Policy with a nonce; --csp=report-only, --csp=off; GWEB_CSP
+  --trust-proxy         believe X-Forwarded-For and X-Forwarded-Proto (--no-trust-proxy); GWEB_TRUST_PROXY
+  --security-headers    nosniff, Referrer-Policy, X-Frame-Options (on; --no-security-headers)
+  --hsts N              Strict-Transport-Security max-age in seconds, 0 off
+  --session-idle N, --session-max N      session idle and absolute lifetimes in seconds (86400, 2592000)
+  --drain-ms N          drain time after SIGTERM (10000; dev 200)
+  --drain-delay-ms N    keep accepting this long after SIGTERM while /__gweb/ready says 503 (0)
+  --log-format text|json, --log-level debug|info|warn|error
+  --metrics             serve Prometheus text at /__gweb/metrics (--no-metrics)
+  --job-runners N, --job-queue N, --job-attempts N    background jobs (1, 10000, 5)
+  --no-schedule         run jobs, fire no schedules (GWEB_SCHEDULE=0; --schedule is the default)
+  --probe               GET /__gweb/ready on the port, exit 0 on 200 (the Docker HEALTHCHECK)
+  --export DIR, --dev-id N                gweb export and gweb dev use these; --dev-id also sets the dev defaults (127.0.0.1, port 60053, 2 workers, access log, drain 200)
+  -h, --help            this text
+Variables only: GWEB_SECRET (1 to 4 comma-separated keys of 32 to 64 bytes), GWEB_ENV.
+A bad value stops the server with exit status 2 and a message that names it.
+
+""";
+
+// The settings from the flags (a[0] is the program name), over whatever is in cfg. False, with err set, on a flag
+// that is unknown, lacks its value, or has a value that is not valid for it.
+fn _config_parse(a: (const u8[:])[:], cfg: Config&, err: u8[>..]&) -> bool {
+    var i = 1;
+    while i < a.len {
+        let arg = a[i];
+        i += 1;
+        if !starts_with(arg, "--") {
+            format(err, "gweb: unexpected argument: ", arg);
+            return false;
+        }
+        let name, inline_value, has_inline = split_once(arg[2..], '=');
+        if name == "log" { format(err, "gweb: --log is now --access-log"); return false; }
+        // Modes: no variable of their own.
+        if name == "probe" { cfg.probe = true; continue; }
+        if name == "export" || name == "dev-id" {
+            if !has_inline && i >= a.len { format(err, "gweb: --", name, " needs a value"); return false; }
+            var v: u8[>..] = [];
+            if has_inline { v.append(inline_value); } else { v.append(a[i]); i += 1; }
+            var label: u8[>..] = [];
+            format(label, "--", name, " ", v);
+            if name == "dev-id" {
+                if !_cfg_int(cfg.dev_id, v, 0, 9223372036854775807, label, err) { return false; }
+            } else if !_cfg_text(cfg.export_dir, v, label, err) { return false; }
+            continue;
+        }
+        let off = starts_with(name, "no-") && (_cfg_has(CFG_BOOLS, name[3..]) || name == "no-csp");
+        let setting = if off { name[3..] } else { name };
+        let is_bool = _cfg_has(CFG_BOOLS, setting);
+        let known = is_bool || _cfg_has(CFG_INTS, setting) || _cfg_has(CFG_TEXTS, setting) || setting == "csp";
+        if !known {
+            format(err, "gweb: unknown flag: ", arg);
+            return false;
+        }
+        if off && has_inline { format(err, "gweb: --", name, " takes no value"); return false; }
+        let bare = !has_inline && (off || is_bool || setting == "csp");
+        if !has_inline && !bare && i >= a.len { format(err, "gweb: --", name, " needs a value"); return false; }
+        var value: u8[>..] = [];
+        if off { value.append("0"); }
+        else if has_inline { value.append(inline_value); }
+        else if bare { value.append("1"); }
+        else { value.append(a[i]); i += 1; }
+        var label: u8[>..] = [];
+        if has_inline { format(label, "--", name, "=", value); } else { format(label, "--", name, " ", value); }
+        if !_cfg_set(cfg, setting, value, label, err) { return false; }
+    }
+    return true;
+}
+
+// Loads the .env files, reads the variables, then the flags. a[0] is the program name. Prints the problem and exits
+// with 2 on a bad flag, variable, .env file or secret; --help prints the flags and exits 0.
 fn _config_from(a: (const u8[:])[:]) -> Config {
     var cfg = _default_config();
     var envname: u8[>..] = [];
     var env_err: u8[>..] = [];
     var dev = false;
-    for arg in a { if arg == "--dev-id" { dev = true; } }
+    for arg in a {
+        if arg == "--help" || arg == "-h" { write_stdout(CFG_HELP); exit(0); }
+        if arg == "--dev-id" || starts_with(arg, "--dev-id=") { dev = true; }
+    }
+    // The defaults of gweb dev (--dev-id): this machine only, because the dev overlay, /__gweb/id and the dev secret are
+    // not for a network (GWEB_HOST, a .env file or --host 0.0.0.0 opens it); port 60053, 2 workers, the access log, and a
+    // short drain, since every edit restarts it. The variables and flags below still win.
+    if dev {
+        cfg.host.clear();
+        cfg.host.append("127.0.0.1");
+        cfg.port = 60053;
+        cfg.workers = 2;
+        cfg.access_log = true;
+        cfg.drain_ms = 200;
+    }
     c_setenv("GWEB_ENV", if dev { "development" } else { "production" });
     _environment(envname);
     if !_load_env_files(envname, env_err) { print(env_err); exit(2); }
-    var e: u8[>..] = [];
-    if env("PORT", e) { let p, ok = parse_int(trim(e)); if ok { cfg.port = p; } }
-    e.clear();
-    if env("GWEB_WORKERS", e) { let w, ok = parse_int(trim(e)); if ok && w > 0 { cfg.workers = w; } }
-    var csp_flag = false;
-    let drain, has_drain = env_int("GWEB_DRAIN_MS");
-    if has_drain && drain >= 0 { cfg.drain_ms = drain; }
-    let delay, has_delay = env_int("GWEB_DRAIN_DELAY_MS");
-    if has_delay && delay >= 0 { cfg.drain_delay_ms = delay; }
-    let runners, has_runners = env_int("GWEB_JOB_RUNNERS");
-    if has_runners && runners >= 0 { cfg.job_runners = runners; }
-    e.clear();
-    if env("GWEB_LOG_FORMAT", e) && _valid_log_format(trim(e)) { cfg.log_format.clear(); cfg.log_format.append(trim(e)); }
-    e.clear();
-    if env("GWEB_LOG_LEVEL", e) && _valid_log_level(trim(e)) { cfg.log_level.clear(); cfg.log_level.append(trim(e)); }
-    e.clear();
-    if env("GWEB_METRICS", e) && trim(e) == "1" { cfg.metrics = true; }
-    e.clear();
-    if env("GWEB_SCHEDULE", e) && trim(e) == "0" { cfg.schedule = false; }
-    var i = 1;
-    while i < a.len {
-        let flag = a[i];
-        let has_value = i + 1 < a.len;
-        if flag == "--log" { cfg.log = true; i += 1; continue; }
-        if flag == "--csp" { csp_flag = true; i += 1; continue; }
-        if flag == "--metrics" { cfg.metrics = true; i += 1; continue; }
-        if flag == "--no-schedule" { cfg.schedule = false; i += 1; continue; }
-        if flag == "--probe" { cfg.probe = true; i += 1; continue; }
-        if has_value {
-            let v = a[i + 1];
-            let n, ok = parse_int(v);
-            if flag == "--port" && ok { cfg.port = n; i += 2; continue; }
-            if flag == "--workers" && ok && n > 0 { cfg.workers = n; i += 2; continue; }
-            if flag == "--idle-ms" && ok { cfg.idle_ms = n; i += 2; continue; }
-            if flag == "--max-body" && ok { cfg.max_body = n; i += 2; continue; }
-            if flag == "--max-upload" && ok && n > 0 { cfg.max_upload = n; i += 2; continue; }
-            if flag == "--dev-id" && ok { cfg.dev_id = n; i += 2; continue; }
-            if flag == "--upload-dir" && v.len > 0 && v.len <= 256 { cfg.upload_dir.clear(); cfg.upload_dir.append(v); i += 2; continue; }
-            if flag == "--export" && v.len > 0 && v.len <= 512 { cfg.export_dir.clear(); cfg.export_dir.append(v); i += 2; continue; }
-            if flag == "--drain-ms" && ok && n >= 0 { cfg.drain_ms = n; i += 2; continue; }
-            if flag == "--drain-delay-ms" && ok && n >= 0 { cfg.drain_delay_ms = n; i += 2; continue; }
-            if flag == "--job-runners" && ok && n >= 0 { cfg.job_runners = n; i += 2; continue; }
-            if flag == "--job-queue" && ok && n > 0 { cfg.job_queue = n; i += 2; continue; }
-            if flag == "--job-attempts" && ok && n > 0 { cfg.job_attempts = n; i += 2; continue; }
-            if flag == "--log-format" && _valid_log_format(v) { cfg.log_format.clear(); cfg.log_format.append(v); i += 2; continue; }
-            if flag == "--log-level" && _valid_log_level(v) { cfg.log_level.clear(); cfg.log_level.append(v); i += 2; continue; }
-            if flag == "--host" { cfg.host.clear(); cfg.host.append(v[..min(v.len, 64)]); i += 2; continue; }
-        }
-        print("unknown or incomplete flag: ", flag);
-        print("flags: --port N --host H --workers N --log --idle-ms N --max-body N --max-upload N --upload-dir D --csp --export DIR --drain-ms N --drain-delay-ms N --log-format text|json --log-level debug|info|warn|error --metrics --no-schedule --job-runners N --job-queue N --job-attempts N --probe (--dev-id N: gweb dev only)");
+    _old_env_names();
+    var err: u8[>..] = [];
+    if !_cfg_from_env(cfg, err) { print(err); exit(2); }
+    if !_config_parse(a, cfg, err) {
+        print(err);
+        print("run with --help for the flags");
         exit(2);
     }
-    _old_env_names();
     var secret_err: u8[>..] = [];
-    e.clear();
+    var e: u8[>..] = [];
     if env("GWEB_SECRET", e) && trim(e).len > 0 {
         if !_parse_secret(e, cfg.auth.keys, secret_err) { print(secret_err); exit(2); }
     } else if cfg.dev_id != 0 {
         if !_dev_secret(cfg.auth.keys, secret_err) { print(secret_err); exit(2); }
     }
-    cfg.auth.idle = _env_positive("GWEB_SESSION_IDLE", cfg.auth.idle);
-    cfg.auth.max = _env_positive("GWEB_SESSION_MAX", cfg.auth.max);
-    cfg.auth.trust_proxy = env_bool("GWEB_TRUST_PROXY", false);
-    cfg.security_headers = env_bool("GWEB_SECURITY_HEADERS", true);
-    cfg.hsts = _env_nonneg("GWEB_HSTS", 0);
-    cfg.csp = _env_csp("GWEB_CSP");
-    if csp_flag { cfg.csp = 1; }
     return cfg;
 }
 
@@ -662,14 +841,13 @@ fn _lower_is(s: const u8[:], word: const u8[:]) -> bool {
     return true;
 }
 
-// 1/true/yes/on and 0/false/no/off, case-insensitive; fallback when unset or anything else.
+// The boolean in the variable (1/0, true/false, yes/no, on/off, any case); fallback when it is unset or anything else.
+// A setting the server reads at start (GWEB_*) is checked there and stops it; this is for your own variables.
 fn env_bool(name: const u8[:], fallback: bool) -> bool {
     var e: u8[>..] = [];
     if !env(name, e) { return fallback; }
-    let t = trim(e);
-    for w in ["1", "true", "yes", "on"] { if _lower_is(t, w) { return true; } }
-    for w in ["0", "false", "no", "off"] { if _lower_is(t, w) { return false; } }
-    return fallback;
+    let b, ok = _parse_bool(e);
+    return if ok { b } else { fallback };
 }
 
 fn env_required(name: const u8[:]) -> bool {
@@ -679,41 +857,6 @@ fn env_required(name: const u8[:]) -> bool {
     format(msg, "config: ", name, " is not set\n");
     write_stderr(msg);
     return false;
-}
-
-// Only a positive integer replaces fallback; a bad lifetime is a startup error, not a silent default.
-fn _env_positive(name: const u8[:], fallback: i64) -> i64 {
-    var e: u8[>..] = [];
-    if !env(name, e) || trim(e).len == 0 { return fallback; }
-    let n, ok = parse_int(trim(e));
-    if ok && n > 0 { return n; }
-    print(name, " must be a positive whole number of seconds");
-    exit(2);
-    return fallback;
-}
-
-// Like env_positive, but 0 is allowed.
-fn _env_nonneg(name: const u8[:], fallback: i64) -> i64 {
-    var e: u8[>..] = [];
-    if !env(name, e) || trim(e).len == 0 { return fallback; }
-    let n, ok = parse_int(trim(e));
-    if ok && n >= 0 { return n; }
-    print(name, " must be a whole number of seconds, 0 or more");
-    exit(2);
-    return fallback;
-}
-
-// 1 for 1/true/yes/on, 2 for report-only, 0 for unset, empty or 0/false/no/off; anything else is a startup error.
-fn _env_csp(name: const u8[:]) -> i64 {
-    var e: u8[>..] = [];
-    if !env(name, e) || trim(e).len == 0 { return 0; }
-    let t = trim(e);
-    if _lower_is(t, "report-only") { return 2; }
-    for w in ["1", "true", "yes", "on"] { if _lower_is(t, w) { return 1; } }
-    for w in ["0", "false", "no", "off"] { if _lower_is(t, w) { return 0; } }
-    print(name, " must be 1, 0 or report-only");
-    exit(2);
-    return 0;
 }
 
 fn _env_name_start(c: u8) -> bool { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
@@ -903,7 +1046,7 @@ fn _respond<D>(req: const http::Request&, ctx: Ctx&, conn_fd: i32, cfg: const Co
         return -1, true;
     }
     let tracing = c_otel_on() != 0;
-    if cfg.log || tracing { _begin_request(req, ctx, tracing); }
+    if cfg.access_log || tracing { _begin_request(req, ctx, tracing); }
     if get_like && p.len > 1 && p[p.len - 1] == '/' {
         var to: u8[>..] = [];
         to.append(p[..p.len - 1]);
@@ -944,7 +1087,7 @@ fn _run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config,
     c_if_set_loop(slot, lp.handle);
     let tracing = c_otel_on() != 0;
     let json_log = cfg.log_format == "json";
-    let timed = cfg.log || cfg.metrics || tracing;
+    let timed = cfg.access_log || cfg.metrics || tracing;
     var raw: u8[>..] = [];
     loop {
         raw.clear();
@@ -957,6 +1100,9 @@ fn _run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config,
                 var ctx = _new_ctx(slot, owner_fd, cfg.hub);
                 ctx.start_us = t0;
                 ctx.upload_dir.append(cfg.upload_dir);
+                ctx.upload_parts = cfg.upload_parts;
+                ctx.upload_files = min(cfg.upload_files, ctx.uploads.cap);
+                ctx.upload_text = cfg.upload_text;
                 var spool_ok = true;
                 if ev == net::Event.Spooled {
                     var sp: u8[>..] = [];
@@ -1010,14 +1156,14 @@ fn _run_worker<D, S>(slot: i64, server: net::Socket, owner_fd: i32, cfg: Config,
                     blen = if static_index >= 0 { S(static_index).len } else { res.body.len };
                     if !sent || !keep { lp.close_connection(conn); }
                 }
-                if !internal && (cfg.log || cfg.metrics || ctx.sampled) {
+                if !internal && (cfg.access_log || cfg.metrics || ctx.sampled) {
                     let dur = c_now_us() - t0;
                     if cfg.metrics {
                         let route_index = if static_index >= 0 { -2 } else { ctx.route_label };
                         c_metrics_request(slot as i32, route_index as i32, _method_index(req.method) as i32,
                                           http::code(res.status) as i32, dur);
                     }
-                    if cfg.log {
+                    if cfg.access_log {
                         var line: u8[>..] = [];
                         _access_line(line, json_log, slot, req.method_text, req.target, label, res.status, dur, blen,
                                     ctx.request_id, ctx.trace_id, ctx.span_id);

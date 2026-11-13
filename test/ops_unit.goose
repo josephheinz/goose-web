@@ -221,12 +221,12 @@ fn test_config() {
     check(d.drain_ms == 10000 && d.drain_delay_ms == 0, "default drain");
     check_eq(d.log_format, "text", "default log format");
     check_eq(d.log_level, "info", "default log level");
-    check(!d.metrics && !d.probe && d.schedule && !d.log, "default switches");
+    check(!d.metrics && !d.probe && d.schedule && !d.access_log, "default switches");
     check(d.job_runners == 1 && d.job_queue == 10000 && d.job_attempts == 5, "default job settings");
 
     let c = gweb::_config_from(["server", "--drain-ms", "250", "--drain-delay-ms", "1000", "--log-format", "json",
                               "--log-level", "debug", "--metrics", "--job-runners", "3", "--job-queue", "50",
-                              "--job-attempts", "2", "--no-schedule", "--probe", "--port", "8080", "--log"]);
+                              "--job-attempts", "2", "--no-schedule", "--probe", "--port", "8080", "--access-log"]);
     check(c.drain_ms == 250, "--drain-ms");
     check(c.drain_delay_ms == 1000, "--drain-delay-ms");
     check_eq(c.log_format, "json", "--log-format json");
@@ -237,7 +237,7 @@ fn test_config() {
     check(c.job_attempts == 2, "--job-attempts");
     check(!c.schedule, "--no-schedule");
     check(c.probe, "--probe");
-    check(c.port == 8080 && c.log, "older flags still parse beside the new ones");
+    check(c.port == 8080 && c.access_log, "older flags still parse beside the new ones");
 
     let z = gweb::_config_from(["server", "--drain-ms", "0", "--job-runners", "0", "--log-level", "error", "--log-format", "text"]);
     check(z.drain_ms == 0 && z.job_runners == 0, "zero drain and no runners are allowed");
@@ -245,6 +245,89 @@ fn test_config() {
     check_eq(z.log_format, "text", "--log-format text");
     let w = gweb::_config_from(["server", "--log-level", "warn"]);
     check_eq(w.log_level, "warn", "--log-level warn");
+}
+
+// The flag parser takes err instead of exiting, so every refusal can be checked here. The variables are checked in
+// test/config.sh, which starts the real server: setenv cannot overwrite a value in this process.
+fn parse_err(flags: const u8[:][:]) -> u8[>..] {
+    var a: (const u8[:])[>..] = [];
+    a.push("server");
+    for f in flags { a.push(f); }
+    var cfg = gweb::_default_config();
+    var err: u8[>..] = [];
+    if gweb::_config_parse(a, cfg, err) { err.append("ok"); }
+    return err;
+}
+
+fn parse_cfg(flags: const u8[:][:]) -> gweb::Config {
+    var a: (const u8[:])[>..] = [];
+    a.push("server");
+    for f in flags { a.push(f); }
+    var cfg = gweb::_default_config();
+    var err: u8[>..] = [];
+    if !gweb::_config_parse(a, cfg, err) { print("parse failed: ", err); failures += 1; }
+    return cfg;
+}
+
+fn test_config_rules() {
+    // booleans: every spelling, on and off, as a bare flag, --no-X and --X=value
+    for w in ["1", "true", "yes", "on", "TRUE", "On"] {
+        var f: u8[>..] = [];
+        format(f, "--metrics=", w);
+        let fs: const u8[:] = f;
+        check(parse_cfg([fs]).metrics, f);
+    }
+    for w in ["0", "false", "no", "off", "False", "OFF"] {
+        var f: u8[>..] = [];
+        format(f, "--schedule=", w);
+        let fs: const u8[:] = f;
+        check(!parse_cfg([fs]).schedule, f);
+    }
+    check(parse_cfg(["--trust-proxy"]).auth.trust_proxy, "--trust-proxy");
+    check(!parse_cfg(["--no-security-headers"]).security_headers, "--no-security-headers");
+    check(!parse_cfg(["--no-schedule"]).schedule, "--no-schedule is --schedule=0");
+    check(parse_cfg(["--no-metrics"]).metrics == false, "--no-metrics");
+    check(parse_cfg(["--csp"]).csp == 1 && parse_cfg(["--csp=report-only"]).csp == 2 && parse_cfg(["--csp=off"]).csp == 0, "--csp, --csp=report-only, --csp=off");
+    check(parse_cfg(["--no-csp"]).csp == 0, "--no-csp");
+    check_eq(parse_err(["--metrics=maybe"]), "gweb: --metrics=maybe: must be 1, 0, true, false, yes, no, on or off", "a bad boolean names the flag");
+    // every setting has a flag in both forms
+    let k = parse_cfg(["--port=8081", "--host", "10.0.0.5", "--workers", "3", "--idle-ms=0", "--max-body", "2048", "--max-upload=4096",
+                       "--max-upload-parts", "10", "--max-upload-files", "16", "--max-upload-text=1000", "--upload-dir", "/tmp/up",
+                       "--hsts", "60", "--session-idle", "100", "--session-max=200", "--access-log"]);
+    check(k.port == 8081 && k.workers == 3 && k.idle_ms == 0 && k.max_body == 2048 && k.max_upload == 4096, "ints in both forms");
+    check_eq(k.host, "10.0.0.5", "--host");
+    check(k.upload_parts == 10 && k.upload_files == 16 && k.upload_text == 1000, "the multipart limits");
+    check_eq(k.upload_dir, "/tmp/up", "--upload-dir");
+    check(k.hsts == 60 && k.auth.idle == 100 && k.auth.max == 200 && k.access_log, "--hsts, session lifetimes and --access-log");
+    // ranges
+    check_eq(parse_err(["--port", "0"]), "gweb: --port 0: must be a whole number from 1 to 65535", "--port 0");
+    check_eq(parse_err(["--port", "65536"]), "gweb: --port 65536: must be a whole number from 1 to 65535", "--port 65536");
+    check_eq(parse_err(["--port=-1"]), "gweb: --port=-1: must be a whole number from 1 to 65535", "--port=-1");
+    check_eq(parse_err(["--port", "abc"]), "gweb: --port abc: must be a whole number from 1 to 65535", "--port abc");
+    check_eq(parse_err(["--port", "65535"]), "ok", "--port 65535");
+    check_eq(parse_err(["--idle-ms", "-1"]), "gweb: --idle-ms -1: must be a whole number, 0 or more", "negative --idle-ms");
+    check_eq(parse_err(["--max-body", "-5"]), "gweb: --max-body -5: must be a whole number, 1 or more", "negative --max-body");
+    check_eq(parse_err(["--workers", "0"]), "gweb: --workers 0: must be a whole number, 1 or more", "--workers 0");
+    check_eq(parse_err(["--max-upload-files", "17"]), "gweb: --max-upload-files 17: must be a whole number from 1 to 16", "--max-upload-files 17");
+    check_eq(parse_err(["--log-level", "loud"]), "gweb: --log-level loud: must be debug, info, warn or error", "bad --log-level");
+    check_eq(parse_err(["--log-format", "xml"]), "gweb: --log-format xml: must be text or json", "bad --log-format");
+    check_eq(parse_err(["--csp=sometimes"]), "gweb: --csp=sometimes: must be 1, 0 or report-only", "bad --csp");
+    // the message is true: missing value, unknown flag, a stray word, the renamed flag
+    check_eq(parse_err(["--port"]), "gweb: --port needs a value", "--port at the end needs a value");
+    check_eq(parse_err(["--export"]), "gweb: --export needs a value", "--export needs a value");
+    check_eq(parse_err(["--frobnicate"]), "gweb: unknown flag: --frobnicate", "an unknown flag");
+    check_eq(parse_err(["--no-port"]), "gweb: unknown flag: --no-port", "--no- of a setting that is not a boolean");
+    check_eq(parse_err(["--no-metrics=1"]), "gweb: --no-metrics takes no value", "--no-X takes no value");
+    check_eq(parse_err(["stray"]), "gweb: unexpected argument: stray", "a word that is not a flag");
+    check_eq(parse_err(["--log"]), "gweb: --log is now --access-log", "--log names its replacement");
+    // modes
+    check(parse_cfg(["--dev-id", "5"]).dev_id == 5 && parse_cfg(["--probe"]).probe, "--dev-id and --probe");
+    check_eq(parse_cfg(["--export", "out"]).export_dir, "out", "--export");
+    check_eq(parse_err(["--dev-id", "x"]), "gweb: --dev-id x: must be a whole number, 0 or more", "bad --dev-id");
+    // defaults are unchanged
+    let d = gweb::_default_config();
+    check_eq(d.host, "0.0.0.0", "the server's default host stays 0.0.0.0");
+    check(d.upload_parts == 64 && d.upload_files == 8 && d.upload_text == 65536, "default multipart limits");
 }
 
 // A job's ctx carries the hub, so jobs can gweb::publish.
@@ -263,6 +346,7 @@ fn main() {
     test_truncation();
     test_access_line();
     test_config();
+    test_config_rules();
     print(checks, " checks, ", failures, " failures");
     exit(if failures == 0 { 0 } else { 1 });
 }

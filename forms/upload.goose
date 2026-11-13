@@ -19,9 +19,8 @@ extern fn c_up_close(fd: i32) = "gweb_up_close";
 extern fn c_up_save(src: const u8[:], dest: const u8[:]) -> i32 = "gweb_up_save";
 
 const UPLOAD_WINDOW = 65536;       // bytes read from the spool file at a time
-const UPLOAD_MAX_PARTS = 64;
-const UPLOAD_MAX_FILES = 8;
-const UPLOAD_MAX_TEXT = 65536;     // one text field
+// The limits on parts, files and one text field are in Config (--max-upload-parts, --max-upload-files, --max-upload-text)
+// and reach here through ctx.upload_parts, upload_files and upload_text.
 const UPLOAD_MAX_HEAD = 16384;     // the headers of one part
 
 // Names the temp files; each worker thread's files also carry its slot, so a shared count cannot collide.
@@ -117,7 +116,7 @@ fn _part_begin(p: Part&, ctx: Ctx&, head: const u8[:]) -> i64 {
     if !_parse_part_head(head, name, fname, ctype, is_file) { return 400; }
     if name.len > p.name.cap || (is_file && name.len > 64) { return 400; }
     p.count += 1;
-    if p.count > UPLOAD_MAX_PARTS { return 413; }
+    if p.count > ctx.upload_parts { return 413; }
     p.is_file = is_file;
     p.name.clear();
     p.name.append(name);
@@ -132,7 +131,7 @@ fn _part_begin(p: Part&, ctx: Ctx&, head: const u8[:]) -> i64 {
     p.size = 0;
     p.fd = -1;
     if !is_file { return 0; }
-    if p.filename.len > 0 && ctx.uploads.len >= UPLOAD_MAX_FILES { return 413; }
+    if p.filename.len > 0 && ctx.uploads.len >= ctx.upload_files { return 413; }
     if ctx.upload_dir.len == 0 || ctx.upload_dir.len + 48 > p.path.cap { return 500; }
     for attempt in 4 {
         upload_seq += 1;
@@ -144,14 +143,14 @@ fn _part_begin(p: Part&, ctx: Ctx&, head: const u8[:]) -> i64 {
     return 500;
 }
 
-fn _part_data(p: Part&, data: const u8[:]) -> i64 {
+fn _part_data(p: Part&, ctx: const Ctx&, data: const u8[:]) -> i64 {
     if data.len == 0 { return 0; }
     if p.is_file {
         if c_up_write(p.fd, data) == 0 { return 500; }
         p.size += data.len;
         return 0;
     }
-    if p.text.len + data.len > UPLOAD_MAX_TEXT { return 413; }
+    if p.text.len + data.len > ctx.upload_text { return 413; }
     p.text.append(data);
     return 0;
 }
@@ -169,7 +168,7 @@ fn _part_end(p: Part&, ctx: Ctx&, body: u8[>..]&) -> i64 {
     c_up_close(p.fd);
     p.fd = -1;
     if p.filename.len == 0 && p.size == 0 { c_up_unlink(p.path); return 0; }
-    if ctx.uploads.len >= UPLOAD_MAX_FILES { c_up_unlink(p.path); return 413; }
+    if ctx.uploads.len >= ctx.upload_files { c_up_unlink(p.path); return 413; }
     var u = Upload { field: "", filename: "", content_type: "", size: p.size, path: "" };
     u.field.append(p.name);
     u.filename.append(p.filename);
@@ -242,12 +241,12 @@ fn _parse_multipart(fd: i32, mem: const u8[:], boundary: const u8[:], ctx: Ctx&,
             } else {
                 let i = find(avail, delim);
                 if i >= 0 {
-                    status = _part_data(part, avail[..i]);
+                    status = _part_data(part, ctx, avail[..i]);
                     if status == 0 { status = _part_end(part, ctx, body); }
                     pos += i + delim.len;
                     state = MP_AFTER;
                 } else {
-                    if avail.len > keep { status = _part_data(part, avail[..avail.len - keep]); pos += avail.len - keep; }
+                    if avail.len > keep { status = _part_data(part, ctx, avail[..avail.len - keep]); pos += avail.len - keep; }
                     more = false;
                 }
             }

@@ -5,7 +5,7 @@
 // fenced code, `---`. Inline: *em*, **strong**, `code`, links, images, <autolinks>, hard breaks, backslash escapes.
 // Raw HTML is escaped. A link or image URL must be relative, or start with http:, https: or mailto:;
 // any other construct stays plain text. Absolute links get rel="noopener".
-// Limits: input is cut at 64 KiB, containers nest 8 deep (deeper markers are text), URLs are at most 2000 bytes.
+// Limits: input is cut at 64 KiB (a third argument, max_input, changes that), containers nest 8 deep (deeper markers are text), URLs are at most 2000 bytes.
 
 namespace gweb;
 
@@ -13,7 +13,7 @@ import std;
 import gweb;
 import site.template;
 
-let MD_MAX_INPUT = 65536;
+let MD_MAX_INPUT = 65536;   // the default of max_input
 let MD_MAX_DEPTH = 8;
 let MD_MAX_URL = 2000;
 
@@ -426,8 +426,8 @@ fn _md_inline(out: u8[>..]&, t: const u8[:]) {
 
 // ---------------------------------------------------------------- blocks
 
-fn markdown(out: u8[>..]&, src0: const u8[:]) {
-    let src = _md_cut(src0, MD_MAX_INPUT);
+fn markdown(out: u8[>..]&, src0: const u8[:], max_input: i64 = MD_MAX_INPUT) {
+    let src = _md_cut(src0, max(max_input, 0));
     var para: u8[>..] = [];
     var para_open = false;
     var boxes: MdBox[8] = [MdBox { .. }; 8];
@@ -695,9 +695,9 @@ fn markdown(out: u8[>..]&, src0: const u8[:]) {
 // ---------------------------------------------------------------- plain text
 
 // The text of the Markdown with no markup, white space collapsed, at most max bytes: a cut text ends at a word with "…".
-fn markdown_text(out: u8[>..]&, src: const u8[:], max: i64) {
+fn markdown_text(out: u8[>..]&, src: const u8[:], max: i64, max_input: i64 = MD_MAX_INPUT) {
     var html: u8[>..] = [];
-    markdown(html, src);
+    markdown(html, src, max_input);
     var text: u8[>..] = [];
     var i = 0;
     var space = true;
