@@ -56,7 +56,11 @@ fn main() {
     if !env("SITE_URL", e) {
         var base: u8[>..] = [];
         gweb::site_url(req, base);
-        check_eq(base, "https://ex.test", "site_url from Host and X-Forwarded-Proto");
+        check_eq(base, "http://ex.test", "site_url ignores X-Forwarded-Proto without GWEB_TRUST_PROXY");
+        base.clear();
+        gweb::c_setenv("GWEB_TRUST_PROXY", "1");
+        gweb::site_url(req, base);
+        check_eq(base, "https://ex.test", "site_url from Host and X-Forwarded-Proto when trusted");
         let plain, ok2 = http::parse_request("GET / HTTP/1.1\r\nHost: ex.test:8080\r\n\r\n");
         base.clear();
         gweb::site_url(plain, base);

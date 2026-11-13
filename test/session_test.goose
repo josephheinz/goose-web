@@ -38,6 +38,7 @@ fn count(s: const u8[:], sub: const u8[:]) -> i64 {
 
 fn ctx_with(k1: const u8[:], k2: const u8[:]) -> gweb::Ctx {
     var ctx = gweb::_new_ctx(0, -1);
+    ctx.auth.trust_proxy = true;   // the tests of the HTTPS rules need X-Forwarded-Proto to count
     var n = 0;
     if k1.len > 0 { ctx.auth.keys.k[n].append(k1); n += 1; }
     if k2.len > 0 { ctx.auth.keys.k[n].append(k2); n += 1; }
@@ -262,6 +263,18 @@ fn session_tests() {
     check(c17.session.uid == 5, "__Host- uid");
     var c18 = ctx_with(KEY1, "");
     check(!load(c18, hv, NOW, "", "__Host-gw_session"), "__Host- cookie ignored without HTTPS");
+
+    // Without GWEB_TRUST_PROXY the header changes nothing: plain names, no Secure.
+    var c19 = ctx_with(KEY1, "");
+    c19.auth.trust_proxy = false;
+    var res19 = http::new_response();
+    check(gweb::_login_at(req16, c19, res19, 5, 1, gweb::LoginOptions { .. }, NOW), "login behind an untrusted header");
+    check(count(c19.set_cookies, "Set-Cookie: gw_session=") == 1 && find(c19.set_cookies, "__Host-") < 0 && find(c19.set_cookies, "Secure") < 0, "plain session name and no Secure when untrusted");
+    var pv: u8[>..] = [];
+    set_value(c19.set_cookies, "gw_session", pv);
+    var c20 = ctx_with(KEY1, "");
+    c20.auth.trust_proxy = false;
+    check(load(c20, pv, NOW, "X-Forwarded-Proto: https\r\n", "gw_session"), "plain cookie loads when the header is untrusted");
 
     // refresh
     var r1 = ctx_with(KEY1, "");

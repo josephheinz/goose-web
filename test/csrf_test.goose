@@ -40,20 +40,28 @@ fn count(s: const u8[:], sub: const u8[:]) -> i64 {
     }
 }
 
-// Runs csrf_ok on a request built from method, header lines and body.
-fn run(method: const u8[:], headers: const u8[:][:], body: const u8[:], res: http::Response&) -> bool {
+// Runs csrf_ok on a request built from method, header lines and body. trust is GWEB_TRUST_PROXY.
+fn run(method: const u8[:], headers: const u8[:][:], body: const u8[:], res: http::Response&, trust: bool) -> bool {
     var raw: u8[>..] = [];
     format(raw, method, " / HTTP/1.1\r\nHost: a\r\n");
     for h in headers { format(raw, h); }
     format(raw, "Content-Length: ", body.len, "\r\n\r\n", body);
     let req, parsed = http::parse_request(raw);
     if parsed != http::Read.Ready { failures += 1; print("FAIL request did not parse: ", raw); }
-    return gweb::_csrf_ok(req, res);
+    var ctx = gweb::_new_ctx(0, -1);
+    ctx.auth.trust_proxy = trust;
+    return gweb::_csrf_ok(req, ctx, res);
 }
 
+// Proxy trust on: X-Forwarded-Proto counts.
 fn verdict(method: const u8[:], headers: const u8[:][:], body: const u8[:]) -> bool {
     var res = http::new_response();
-    return run(method, headers, body, res);
+    return run(method, headers, body, res, true);
+}
+
+fn verdict_untrusted(method: const u8[:], headers: const u8[:][:], body: const u8[:]) -> bool {
+    var res = http::new_response();
+    return run(method, headers, body, res, false);
 }
 
 fn main() {
@@ -67,13 +75,14 @@ fn main() {
 
     // csrf_cookie_name
     let plain, p1 = http::parse_request("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
-    check_eq(gweb::_csrf_cookie_name(plain), "gw_csrf", "name without proxy header");
+    check_eq(gweb::_csrf_cookie_name(plain, true), "gw_csrf", "name without proxy header");
     let https, p2 = http::parse_request("GET / HTTP/1.1\r\nHost: a\r\nX-Forwarded-Proto: https\r\n\r\n");
-    check_eq(gweb::_csrf_cookie_name(https), "__Host-gw_csrf", "name under https");
+    check_eq(gweb::_csrf_cookie_name(https, true), "__Host-gw_csrf", "name under https");
+    check_eq(gweb::_csrf_cookie_name(https, false), "gw_csrf", "the header is ignored without GWEB_TRUST_PROXY");
     let spaced, p3 = http::parse_request("GET / HTTP/1.1\r\nHost: a\r\nX-Forwarded-Proto:  https \r\n\r\n");
-    check_eq(gweb::_csrf_cookie_name(spaced), "__Host-gw_csrf", "https with spaces");
+    check_eq(gweb::_csrf_cookie_name(spaced, true), "__Host-gw_csrf", "https with spaces");
     let http1, p4 = http::parse_request("GET / HTTP/1.1\r\nHost: a\r\nX-Forwarded-Proto: http\r\n\r\n");
-    check_eq(gweb::_csrf_cookie_name(http1), "gw_csrf", "name under http");
+    check_eq(gweb::_csrf_cookie_name(http1, true), "gw_csrf", "name under http");
 
     // csrf_begin without a cookie
     var ctx = gweb::_new_ctx(0, -1);
@@ -116,6 +125,7 @@ fn main() {
     // https
     let hs, p7 = http::parse_request("GET / HTTP/1.1\r\nHost: a\r\nX-Forwarded-Proto: https\r\n\r\n");
     var ctx_e = gweb::_new_ctx(0, -1);
+    ctx_e.auth.trust_proxy = true;
     var res_e = http::new_response();
     gweb::csrf_begin(hs, ctx_e, res_e);
     var want_host: u8[..160] = "";
@@ -123,9 +133,15 @@ fn main() {
     check_eq(ctx_e.set_cookies, want_host, "__Host- cookie line");
     let hs2, p8 = http::parse_request("GET / HTTP/1.1\r\nHost: a\r\nX-Forwarded-Proto: https\r\nCookie: gw_csrf=0123456789abcdef0123456789abcdef\r\n\r\n");
     var ctx_f = gweb::_new_ctx(0, -1);
+    ctx_f.auth.trust_proxy = true;
     var res_f = http::new_response();
     gweb::csrf_begin(hs2, ctx_f, res_f);
     check(ctx_f.csrf != T && starts_with(ctx_f.set_cookies, "Set-Cookie: __Host-gw_csrf="), "plain cookie ignored under https");
+    // The same request without GWEB_TRUST_PROXY: the header is a client's claim, so the plain name and no Secure.
+    var ctx_u = gweb::_new_ctx(0, -1);
+    var res_u = http::new_response();
+    gweb::csrf_begin(hs, ctx_u, res_u);
+    check(starts_with(ctx_u.set_cookies, "Set-Cookie: gw_csrf=") && find(ctx_u.set_cookies, "Secure") < 0, "no __Host- or Secure without GWEB_TRUST_PROXY");
 
     // a cookie buffer too full for the 86-byte token line
     var ctx_g = gweb::_new_ctx(0, -1);
@@ -157,7 +173,7 @@ fn main() {
 
     // csrf_ok: safe methods
     var res_s = http::new_response();
-    check(run("GET", [], "", res_s) && res_s.status == http::Status.Ok && res_s.body.len == 0 && res_s.headers.len == 0, "GET passes and leaves res alone");
+    check(run("GET", [], "", res_s, false) && res_s.status == http::Status.Ok && res_s.body.len == 0 && res_s.headers.len == 0, "GET passes and leaves res alone");
     check(verdict("HEAD", [], ""), "HEAD passes");
     check(verdict("OPTIONS", [], ""), "OPTIONS passes");
 
@@ -166,15 +182,15 @@ fn main() {
     check(verdict("POST", [COOKIE, HEADER], ""), "cookie and header");
     check(!verdict("POST", [COOKIE, BAD_HEADER, FORM], BODY), "a wrong header beats a right field");
     var res_n = http::new_response();
-    check(!run("POST", [HEADER], "", res_n) && res_n.status == http::Status.Forbidden, "no cookie gives 403");
+    check(!run("POST", [HEADER], "", res_n, false) && res_n.status == http::Status.Forbidden, "no cookie gives 403");
     check(!verdict("POST", [COOKIE], ""), "cookie and no token");
     check(!verdict("POST", [COOKIE, FORM], "_csrf=0123456789abcdef0123456789abcdee"), "one digit off");
     check(!verdict("POST", ["Cookie: gw_csrf=abc\r\n", FORM], "_csrf=abc"), "equal but invalid");
     var res_t = http::new_response();
-    run("POST", [], "", res_t);
+    run("POST", [], "", res_t, false);
     check_eq(res_t.body, DENIED, "token 403 body");
     var res_x = http::new_response();
-    check(!run("POST", ["Sec-Fetch-Site: cross-site\r\n", COOKIE, HEADER], "", res_x) && res_x.body == CROSS, "cross-site refused with the exact body");
+    check(!run("POST", ["Sec-Fetch-Site: cross-site\r\n", COOKIE, HEADER], "", res_x, false) && res_x.body == CROSS, "cross-site refused with the exact body");
     check(!verdict("POST", ["Sec-Fetch-Site: same-site\r\n", COOKIE, HEADER], ""), "same-site refused");
     check(verdict("POST", ["Sec-Fetch-Site: same-origin\r\n", COOKIE, HEADER], ""), "same-origin passes");
     check(verdict("POST", ["Sec-Fetch-Site: none\r\n", COOKIE, HEADER], ""), "none passes");
@@ -188,6 +204,8 @@ fn main() {
     check(verdict("POST", [COOKIE, HEADER, "Content-Type: application/json\r\n"], "{}"), "json body with the header");
     check(!verdict("POST", ["X-Forwarded-Proto: https\r\n", COOKIE, HEADER], ""), "plain cookie refused under https");
     check(verdict("POST", ["X-Forwarded-Proto: https\r\n", "Cookie: __Host-gw_csrf=0123456789abcdef0123456789abcdef\r\n", HEADER], ""), "__Host- cookie passes under https");
+    check(verdict_untrusted("POST", ["X-Forwarded-Proto: https\r\n", COOKIE, HEADER], ""), "plain cookie passes when the proxy header is not trusted");
+    check(!verdict_untrusted("POST", ["X-Forwarded-Proto: https\r\n", "Cookie: __Host-gw_csrf=0123456789abcdef0123456789abcdef\r\n", HEADER], ""), "__Host- cookie not read when the proxy header is not trusted");
     check(verdict("POST", [COOKIE, FORM], "title=x&_csrf=0123456789abcdef0123456789abcdef&add=1"), "the field among others");
 
     print(checks - failures, " of ", checks, " checks pass");

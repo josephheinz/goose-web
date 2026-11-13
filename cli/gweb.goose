@@ -2553,8 +2553,8 @@ fn gen_route_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     let rq = if body { "r" } else { "req" };
     format(m, "fn route_", i, SIG, " {   // app/", d.rel, if d.rel.len > 0 { "/" } else { "" }, "route.goose\n");
     if body { gen_upload_prelude(m, d.route_ns, d.max_upload); }
-    if d.csrf_const { format(m, "    if ", d.route_ns, "::CSRF && !gweb::_csrf_ok(", rq, ", res) { return; }\n"); }
-    else if d.methods & 0x3c != 0 { format(m, "    if !gweb::_csrf_ok(", rq, ", res) { return; }\n"); }
+    if d.csrf_const { format(m, "    if ", d.route_ns, "::CSRF && !gweb::_csrf_ok(", rq, ", ctx, res) { return; }\n"); }
+    else if d.methods & 0x3c != 0 { format(m, "    if !gweb::_csrf_ok(", rq, ", ctx, res) { return; }\n"); }
     middleware_before(m, d, rq);
     m.append("    match req.method {\n");
     for k in 7 {
@@ -2625,7 +2625,7 @@ fn gen_page_fn(m: u8[>..]&, d: const Dir&, i: i64) {
     m.append("    }\n");
     if d.has_post {
         gen_upload_prelude(m, d.page_ns, d.max_upload);
-        m.append("    if !gweb::_csrf_ok(r, res) { return; }\n");
+        m.append("    if !gweb::_csrf_ok(r, ctx, res) { return; }\n");
     }
     middleware_before(m, d, rq);
     if d.revalidate > 0 {

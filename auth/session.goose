@@ -74,10 +74,9 @@ fn signed_cookie(req: const http::Request&, ctx: const Ctx&, name: const u8[:], 
 
 // ---------------------------------------------------------------- session cookie
 
-// "__Host-gw_session" behind an HTTPS proxy (X-Forwarded-Proto), else "gw_session"; the same rule as csrf_cookie_name.
-fn _session_cookie_name(req: const http::Request&) -> const u8[:] {
-    let proto, has = http::header(req, "x-forwarded-proto");
-    return if has && trim(proto) == "https" { "__Host-gw_session" } else { "gw_session" };
+// "__Host-gw_session" behind an HTTPS proxy, else "gw_session"; the same rule as _csrf_cookie_name (trust is GWEB_TRUST_PROXY).
+fn _session_cookie_name(req: const http::Request&, trust: bool) -> const u8[:] {
+    return if _forwarded_https(req, trust) { "__Host-gw_session" } else { "gw_session" };
 }
 
 // A persistent cookie lives until the absolute limit; the idle deadline is enforced from the signed exp.
@@ -184,7 +183,7 @@ fn _issue_session(req: const http::Request&, ctx: Ctx&, s: const Session&, now: 
     if ctx.auth.keys.n == 0 { return false; }
     var value: u8[>..] = [];
     if !_encode_session(value, ctx.auth.keys.k[0], s) { return false; }
-    let name = _session_cookie_name(req);
+    let name = _session_cookie_name(req, ctx.auth.trust_proxy);
     return set_cookie(ctx, name, value, _session_cookie_opts(name, s, ctx.auth.max, now));
 }
 
@@ -193,7 +192,7 @@ fn _session_at(req: const http::Request&, ctx: Ctx&, now: i64) -> bool {
     if ctx.session.state == SessionState.Absent { return false; }
     ctx.session.state = SessionState.Absent;
     if ctx.auth.keys.n == 0 { return false; }
-    let v, has = http::cookie(req, _session_cookie_name(req));
+    let v, has = http::cookie(req, _session_cookie_name(req, ctx.auth.trust_proxy));
     if !has { return false; }
     var s = Session { .. };
     if !_parse_session_value(ctx, v, now, s) { return false; }
@@ -245,7 +244,7 @@ fn _login_at(req: const http::Request&, ctx: Ctx&, res: http::Response&, uid: i6
     s.data.append(opts.data);
 
     // Cleared first: a failure after this point leaves no half-logged-in state in the reply.
-    let cname = _csrf_cookie_name(req);
+    let cname = _csrf_cookie_name(req, ctx.auth.trust_proxy);
     if !clear_cookie(ctx, cname, CookieOptions { secure: starts_with(cname, "__Host-"), .. }) { return _fail_login(res, "session unavailable"); }
     ctx.csrf.clear();
     if !_issue_session(req, ctx, s, now) { return _fail_login(res, "session unavailable"); }
@@ -261,9 +260,9 @@ fn login(req: const http::Request&, ctx: Ctx&, res: http::Response&, uid: i64, v
 
 // Clears the session and CSRF cookies. Call it from a POST, which the CSRF check covers.
 fn logout(req: const http::Request&, ctx: Ctx&) {
-    let sname = _session_cookie_name(req);
+    let sname = _session_cookie_name(req, ctx.auth.trust_proxy);
     clear_cookie(ctx, sname, CookieOptions { secure: starts_with(sname, "__Host-"), .. });
-    let cname = _csrf_cookie_name(req);
+    let cname = _csrf_cookie_name(req, ctx.auth.trust_proxy);
     clear_cookie(ctx, cname, CookieOptions { secure: starts_with(cname, "__Host-"), .. });
     ctx.csrf.clear();
     ctx.session = Session { state: SessionState.Absent, .. };

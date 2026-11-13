@@ -46,6 +46,8 @@ show() { echo "$1" | sed 's/^/    /'; }
 
 # Not a fixture secret anywhere else: the session and CSRF cookies are signed with it.
 export GWEB_SECRET=00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+# The HTTPS checks send X-Forwarded-Proto: https, which counts only when the proxy is trusted.
+export GWEB_TRUST_PROXY=1
 export GWEB_PKG_CACHE="$WORK/pkgcache"
 
 # 1. The package, as a git source.
@@ -325,6 +327,17 @@ req d2 GET admin.test /admin/shop/orders
 check "$([ "$(status d2)" = 303 ] && echo ok)" "after logout /admin/shop/orders is guarded again"
 if alive; then ok; else bad "the server died during the run:"; show "$(tail -n 20 "$WORK/server.log")"; fi
 stop
+
+# 2k. Without GWEB_TRUST_PROXY the same header is a client's claim: plain cookie names, no Secure.
+GWEB_TRUST_PROXY=0
+if start; then
+  req nt GET admin.test /admin/login -H 'X-Forwarded-Proto: https' -b /dev/null -c /dev/null
+  check "$(has_header nt 'set-cookie: gw_csrf=' && ! has_header nt 'set-cookie: __host-' && ! grep -qi '^set-cookie:.*secure' "$WORK/nt.h" && echo ok)" "untrusted X-Forwarded-Proto: the CSRF cookie stays gw_csrf, not __Host- and not Secure"
+else
+  bad "the server did not answer with GWEB_TRUST_PROXY=0"; show "$(cat "$WORK/server.log" 2>/dev/null)"
+fi
+stop
+GWEB_TRUST_PROXY=1
 
 # 3. gweb test: package views and components in the host project.
 if out=$("$GWEB" -C "$WORK/site" test 2>&1); then

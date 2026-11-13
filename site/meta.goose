@@ -37,7 +37,8 @@ fn meta_robots(ctx: Ctx&, s: const u8[:]) {
     ctx.meta.robots.append(s[.._utf8_cut(s, 64)]);
 }
 
-// SITE_URL wins because Host comes from the client; the fallback is for development.
+// SITE_URL wins because Host comes from the client; the fallback is for development. X-Forwarded-Proto counts only
+// when GWEB_TRUST_PROXY is on, like the cookie names.
 fn site_url(req: const http::Request&, out: u8[>..]&) {
     var e: u8[>..] = [];
     if env("SITE_URL", e) {
@@ -46,7 +47,7 @@ fn site_url(req: const http::Request&, out: u8[>..]&) {
         if t.len > 0 { out.append(t); return; }
     }
     let proto, has_proto = http::header(req, "x-forwarded-proto");
-    out.append(if has_proto && trim(proto) == "https" { "https" } else { "http" });
+    out.append(if has_proto && trim(proto) == "https" && env_bool("GWEB_TRUST_PROXY", false) { "https" } else { "http" });
     out.append("://");
     let host, has_host = http::header(req, "host");
     if has_host { out.append(trim(host)); }

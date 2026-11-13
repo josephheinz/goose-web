@@ -93,7 +93,7 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     check "$([ "$(status secret)" = 200 ] && echo ok)" "the page that opted out is still served"
     stop
   fi
-  # Without SITE_URL the base is Host, and X-Forwarded-Proto picks the scheme.
+  # Without SITE_URL the base is Host; X-Forwarded-Proto picks the scheme only under GWEB_TRUST_PROXY.
   if ! start "$WORK/ok"; then
     bad "the server did not answer on port $PORT without SITE_URL"
   else
@@ -101,6 +101,15 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     serves smh2 /sitemap.xml 'application/xml' "$WORK/want.xml"
     robots_for "http://127.0.0.1:$PORT" > "$WORK/want.txt"
     serves rbh /robots.txt 'text/plain' "$WORK/want.txt"
+    sitemap_for "https://shop.test" > "$WORK/want.xml"
+    sitemap_for "http://shop.test" > "$WORK/want.xml"
+    serves smxu /sitemap.xml 'application/xml' "$WORK/want.xml" -H 'Host: shop.test' -H 'X-Forwarded-Proto: https'
+    stop
+  fi
+  # With GWEB_TRUST_PROXY the forwarded scheme counts.
+  if ! start "$WORK/ok" GWEB_TRUST_PROXY=1; then
+    bad "the server did not answer on port $PORT with GWEB_TRUST_PROXY"
+  else
     sitemap_for "https://shop.test" > "$WORK/want.xml"
     serves smx /sitemap.xml 'application/xml' "$WORK/want.xml" -H 'Host: shop.test' -H 'X-Forwarded-Proto: https'
     stop
