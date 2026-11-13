@@ -77,6 +77,7 @@ var component_errors = 0;              // translator errors of this gen; the bui
 var uses_fragments = false;
 var uses_boost = false;               // a layout or page has <body gw-boost> (serves gwn.js)
 var uses_trans = false;               // markup uses gw-enter or gw-leave (serves gwt.js)
+var uses_sse = false;                 // markup uses gw-sse (serves gwe.js, and gws.js which it imports)
 var uses_mods = false;                // a component imports gwm.js (on: modifiers)
 var uses_life = false;                // a component calls life() (imports gwl.js)
 var uses_children = false;            // a component calls a child component (imports gwc.js)
@@ -87,6 +88,7 @@ var targets: Target[>..<];
 var tpl_script = false;
 var tpl_boost = false;
 var tpl_trans = false;
+var tpl_sse = false;
 var last_errors: u8[>..];
 var warnings = 0;
 var last_warnings: u8[>..];
@@ -829,6 +831,7 @@ fn template_tag(path: const u8[:], ln: i64, inner: const u8[:], line: const u8[:
 let GW_PRELOAD = "<link rel=\"modulepreload\" href=\"/_gw/gwi.js\">";
 let GW_FRAG = "<script type=\"module\" src=\"/_gw/gwf.js\"></script>";
 let GW_TRANS = "<script type=\"module\" src=\"/_gw/gwt.js\"></script>";
+let GW_SSE = "<script type=\"module\" src=\"/_gw/gwe.js\"></script>";
 let GW_NAV = "<script type=\"module\" src=\"/_gw/gwn.js\"></script>";
 
 // The module tags of the template being compiled: gwf.js for gw-target, gwn.js for <body gw-boost>.
@@ -838,6 +841,7 @@ fn script_tag(out: u8[>..]&) {
     if tpl_script { t.append(GW_FRAG); }
     if tpl_boost { t.append(GW_NAV); }
     if tpl_trans { t.append(GW_TRANS); }
+    if tpl_sse { t.append(GW_SSE); }
     out.append("out.append(\""); lit(out, t); out.append("\"); ");
 }
 
@@ -985,7 +989,7 @@ fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:
     if name == "slot" {
         if kind != K_LAYOUT { err(path, ln, "@slot() is for layout.html only"); }
         if args.len > 0 { err(path, ln, "@slot() takes no arguments"); }
-        if kind == K_LAYOUT && (tpl_script || tpl_boost || tpl_trans) { script_tag(out); }
+        if kind == K_LAYOUT && (tpl_script || tpl_boost || tpl_trans || tpl_sse) { script_tag(out); }
         out.append("F(); ");
     } else if name[0] >= 'A' && name[0] <= 'Z' && find(name, "::") < 0 {
         if in_frag {
@@ -1013,9 +1017,11 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
     if tpl_boost { uses_boost = true; }
     tpl_trans = find(src, "gw-enter") >= 0 || find(src, "gw-leave") >= 0;
     if tpl_trans { uses_trans = true; }
+    tpl_sse = find(src, "gw-sse") >= 0;
+    if tpl_sse { uses_sse = true; }
     out.append(header);
     if wrap { out.append("if gw_part == 0 { "); }
-    if (tpl_script || tpl_boost || tpl_trans) && kind != K_LAYOUT { script_tag(out); }
+    if (tpl_script || tpl_boost || tpl_trans || tpl_sse) && kind != K_LAYOUT { script_tag(out); }
     var stack: u8[>..] = [];      // 'i' for if, 'f' for for, 'g' for fragment
     var stack_lines: i64[>..] = [];
     var raw = tscan::MARKUP;
@@ -1795,13 +1801,15 @@ let RT_NAV_PRETTY = embed_file("../client/gwn.js");
 let RT_NAV_MIN = embed_file("../client/gwn.min.js");
 let RT_STORE_PRETTY = embed_file("../client/gws.js");
 let RT_STORE_MIN = embed_file("../client/gws.min.js");
+let RT_SSE_PRETTY = embed_file("../client/gwe.js");
+let RT_SSE_MIN = embed_file("../client/gwe.min.js");
 
-// which: 0 is gwi.js (the core), 1 is gwf.js (fragments), 2 is gwh.js (typed fetch), 3 is gwl.js (lifecycle), 4 is gwm.js (modifiers), 5 is gwc.js (child components), 6 is gwn.js (client navigation), 7 is gws.js (stores), 8 is gwt.js (transitions).
+// which: 0 is gwi.js (the core), 1 is gwf.js (fragments), 2 is gwh.js (typed fetch), 3 is gwl.js (lifecycle), 4 is gwm.js (modifiers), 5 is gwc.js (child components), 6 is gwn.js (client navigation), 7 is gws.js (stores), 8 is gwt.js (transitions), 9 is gwe.js (server push).
 fn runtime_js(which: i64, min: bool, out: u8[>..]&) {
     let home = goose_web_home();
     if home.len > 0 {
         var p: u8[>..] = [];
-        let base = if which == 1 { "/client/gwf" } else if which == 2 { "/client/gwh" } else if which == 3 { "/client/gwl" } else if which == 4 { "/client/gwm" } else if which == 5 { "/client/gwc" } else if which == 6 { "/client/gwn" } else if which == 7 { "/client/gws" } else if which == 8 { "/client/gwt" } else { "/client/gwi" };
+        let base = if which == 1 { "/client/gwf" } else if which == 2 { "/client/gwh" } else if which == 3 { "/client/gwl" } else if which == 4 { "/client/gwm" } else if which == 5 { "/client/gwc" } else if which == 6 { "/client/gwn" } else if which == 7 { "/client/gws" } else if which == 8 { "/client/gwt" } else if which == 9 { "/client/gwe" } else { "/client/gwi" };
         format(p, home, base, if min { ".min.js" } else { ".js" });
         if read(p, out) { return; }
     }
@@ -1814,6 +1822,7 @@ fn runtime_js(which: i64, min: bool, out: u8[>..]&) {
     else if which == 6 { out.append(if min { RT_NAV_MIN } else { RT_NAV_PRETTY }); }
     else if which == 7 { out.append(if min { RT_STORE_MIN } else { RT_STORE_PRETTY }); }
     else if which == 8 { out.append(if min { RT_TRANS_MIN } else { RT_TRANS_PRETTY }); }
+    else if which == 9 { out.append(if min { RT_SSE_MIN } else { RT_SSE_PRETTY }); }
     else { out.append(if min { RT_MIN } else { RT_PRETTY }); }
 }
 
@@ -1876,8 +1885,9 @@ fn gen_runtime(dev: bool) {
     if uses_mods { gen_runtime_file(4, "gwm.js", dev, gw_dir); }
     if uses_children { gen_runtime_file(5, "gwc.js", dev, gw_dir); }
     if uses_boost { gen_runtime_file(6, "gwn.js", dev, gw_dir); }
-    if uses_stores { gen_runtime_file(7, "gws.js", dev, gw_dir); }
+    if uses_stores || uses_sse { gen_runtime_file(7, "gws.js", dev, gw_dir); }
     if uses_trans { gen_runtime_file(8, "gwt.js", dev, gw_dir); }
+    if uses_sse { gen_runtime_file(9, "gwe.js", dev, gw_dir); }
 }
 
 // The indices of component_names, each component after the components its markup calls with @Name( (a cycle is cut at
@@ -2039,6 +2049,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     uses_http = false;
     uses_mods = false;
     uses_trans = false;
+    uses_sse = false;
     uses_life = false;
     uses_children = false;
     uses_stores = false;
@@ -2133,7 +2144,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     check_targets();
     check_http();
     if errors > 0 { return false; }
-    if component_names.len > 0 || store_names.len > 0 || uses_fragments || uses_boost || uses_trans { gen_runtime(dev); }
+    if component_names.len > 0 || store_names.len > 0 || uses_fragments || uses_boost || uses_trans || uses_sse { gen_runtime(dev); }
     var main_file: u8[>..] = [];
     format(main_file, root, "/main.goose");
     write(main_file, gen_main());

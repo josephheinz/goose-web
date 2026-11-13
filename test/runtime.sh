@@ -6,7 +6,7 @@
 # 1. Each client/*.min.js carries the FNV-1a hash of its source in its banner
 #    (client/build.sh writes it), so a stale minified file fails.
 # 2. Each existing .min.js is under its byte ceiling.
-# 3. test/morph.sh, test/reactive.sh and test/nav_test.mjs (client navigation) and test/transition_test.mjs pass.
+# 3. test/morph.sh, test/reactive.sh and test/nav_test.mjs (client navigation) and test/transition_test.mjs and test/sse_test.mjs pass.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(dirname "$HERE")
@@ -15,7 +15,7 @@ fail=0
 ok() { pass=$((pass + 1)); }
 bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 
-# name ceiling; a later step adds gwe 768.
+# name ceiling.
 CEILINGS="gwi 4096
 gwh 512
 gwf 1536
@@ -24,7 +24,8 @@ gwm 512
 gwc 1024
 gwn 1536
 gws 1024
-gwt 768"
+gwt 768
+gwe 768"
 
 for src in "$ROOT"/client/gw*.js; do
   case "$src" in *.min.js) continue ;; esac
@@ -54,6 +55,18 @@ if sh "$HERE/reactive.sh"; then ok; else bad "test/reactive.sh"; fi
 . "$HERE/jsdom_dir.sh"
 if JSDOM_DIR=$DIR node "$HERE/nav_test.mjs"; then ok; else bad "test/nav_test.mjs"; fi
 if JSDOM_DIR=$DIR node "$HERE/transition_test.mjs"; then ok; else bad "test/transition_test.mjs"; fi
+# sse_test.mjs runs its store cases on the compiled RCart store when there is a ./gweb to generate it.
+GWD=""
+if [ -x "$ROOT/gweb" ]; then
+  WORK=$(mktemp -d "${TMPDIR:-/tmp}/gweb-sse.XXXXXX")
+  mkdir -p "$WORK/app" "$WORK/components" "$WORK/stores"
+  echo '<p>sse suite</p>' > "$WORK/app/page.html"
+  cp "$HERE"/components/RCart*.gshtml "$WORK/components/"
+  cp "$HERE"/components/stores/RCart.gshtml "$WORK/stores/"
+  if "$ROOT/gweb" -C "$WORK" gen >"$WORK/gen.log" 2>&1; then GWD="$WORK/.gooseweb/_gw"; else cat "$WORK/gen.log"; fi
+fi
+if JSDOM_DIR=$DIR GW_DIR=$GWD node "$HERE/sse_test.mjs"; then ok; else bad "test/sse_test.mjs"; fi
+[ -n "${WORK:-}" ] && rm -rf "$WORK"
 
 echo "runtime: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

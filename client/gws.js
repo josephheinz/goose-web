@@ -3,6 +3,8 @@
 import { defs, run, state } from "./gwi.js";
 
 const J = JSON.stringify, ALL = -1 >>> 1;
+// The loaded stores by name, each a writer (gwe.js): w(values) replaces the state values it names.
+export const stores = {};
 
 // def: i builds the initial state, u recomputes the computeds, h holds the functions, b the bit of each name.
 // key: the localStorage key of @store(local: "key"). The state is built once, when first needed: the page's
@@ -34,21 +36,23 @@ export function store(name, def, key) {
   };
   // A function called from a component handler (c is its change handle): it runs on the store's state, and every
   // subscriber whose names changed takes the new values; the caller's root through c, the others through run.
-  for (const k in def.h) {
-    o[k] = (c, ...a) => {
-      const t = get(), was = {};
-      for (const n in def.b) was[n] = J(t[n]);
-      def.h[k](t, { m() {} }, ...a);
-      def.u(t, ALL);
-      const ch = Object.keys(def.b).filter((n) => J(t[n]) != was[n]);
-      if (!ch.length) return;
-      try { key && localStorage.setItem(key, J(t)); } catch {}
-      subs = subs.filter((x) => x[0].isConnected);
-      for (const [r, map] of subs) {
-        const m = put(state(r), map, ch);
-        m && (r == c.r ? c.m(m) : run(r, defs[r.dataset.component], 0, [], 0, 0, m));
-      }
-    };
-  }
+  // Runs f on the store's state; every subscriber whose names changed takes the new values (the caller's
+  // root through c, the others through run).
+  const hit = (c, f) => {
+    const t = get(), was = {};
+    for (const n in def.b) was[n] = J(t[n]);
+    f(t);
+    def.u(t, ALL);
+    const ch = Object.keys(def.b).filter((n) => J(t[n]) != was[n]);
+    if (!ch.length) return;
+    try { key && localStorage.setItem(key, J(t)); } catch {}
+    subs = subs.filter((x) => x[0].isConnected);
+    for (const [r, map] of subs) {
+      const m = put(state(r), map, ch);
+      m && (r == c.r ? c.m(m) : run(r, defs[r.dataset.component], 0, [], 0, 0, m));
+    }
+  };
+  for (const k in def.h) o[k] = (c, ...a) => hit(c, (t) => def.h[k](t, { m() {} }, ...a));
+  stores[name] = (v) => hit({}, (t) => { for (const n in v) n in def.b && (t[n] = v[n]); });
   return o;
 }

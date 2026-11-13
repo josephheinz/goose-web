@@ -122,6 +122,9 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
 check "$(! body_has whole 'gwt.js' && ! body_has plain 'gwt.js' && echo ok)" "a site without gw-enter or gw-leave: no gwt.js tag"
 req notrans GET /_gw/gwt.js
 check "$([ "$(status notrans)" = 404 ] && echo ok)" "a site without gw-enter or gw-leave does not serve /_gw/gwt.js"
+check "$(! body_has whole 'gwe.js' && ! body_has plain 'gwe.js' && echo ok)" "a site without gw-sse: no gwe.js tag"
+req nosse GET /_gw/gwe.js
+check "$([ "$(status nosse)" = 404 ] && echo ok)" "a site without gw-sse does not serve /_gw/gwe.js"
 
     req tk0 GET /
     check "$([ "$(grep -c '^set-cookie: gw_csrf=[0-9a-f]\{32\}; path=/; httponly; samesite=lax$' "$WORK/tk0.h")" = 1 ] && [ "$(grep -c '^set-cookie:' "$WORK/tk0.h")" = 1 ] && has_header tk0 'cache-control: no-store' && body_has tk0 'name="_csrf" value="' && echo ok)" "GET / without a cookie: one gw_csrf cookie, no-store, a _csrf field"
@@ -219,6 +222,38 @@ if out=$("$GWEB" -C "$WORK/trans" build 2>&1); then
   URL="http://127.0.0.1:$PORT"
 else
   bad "gweb build of the gw-enter site"; echo "$out"
+fi
+
+# 1d. gwe.js (DESIGN-ADDENDUM-12, item 10): the tag and the file only where gw-sse is used (it imports gws.js).
+cp -R "$HERE/fragments/sse" "$WORK/sse"
+if out=$("$GWEB" -C "$WORK/sse" build 2>&1); then
+  EPORT=$((PORT + 3))
+  "$WORK/sse/.gooseweb/server" --port "$EPORT" >/dev/null 2>&1 &
+  PID=$!
+  URL="http://127.0.0.1:$EPORT"
+  up=""
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.5
+    if curl -s -o /dev/null "$URL/"; then up=yes; break; fi
+  done
+  if [ -z "$up" ]; then
+    bad "the gw-sse server did not answer on port $EPORT"
+  else
+    req ehome GET /
+    check "$([ "$(body_count ehome 'src="/_gw/gwe.js"')" = 1 ] && body_has ehome '<link rel="modulepreload" href="/_gw/gwi.js"><script type="module" src="/_gw/gwe.js"></script>' && ! body_has ehome 'gwf.js' && echo ok)" "gw-sse: / has the gwe.js tag (once, with the gwi.js preload)"
+    req eplain GET /plain
+    check "$(! body_has eplain 'gwe.js' && echo ok)" "a page without gw-sse has no gwe.js tag"
+    req ejs GET /_gw/gwe.js
+    check "$([ "$(status ejs)" = 200 ] && has_header ejs 'content-type: text/javascript' && body_has ejs 'EventSource' && echo ok)" "gw-sse: /_gw/gwe.js is served as javascript"
+    req ejss GET /_gw/gws.js
+    check "$([ "$(status ejss)" = 200 ] && echo ok)" "gw-sse: /_gw/gws.js (imported by gwe.js) is served"
+  fi
+  kill "$PID" 2>/dev/null
+  wait "$PID" 2>/dev/null
+  PID=""
+  URL="http://127.0.0.1:$PORT"
+else
+  bad "gweb build of the gw-sse site"; echo "$out"
 fi
 
 # 2. Expected failures. The page is <p>x</p>, the case on line 2, <p>y</p>.

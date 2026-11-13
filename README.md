@@ -347,6 +347,27 @@ Put `gw-boost` on the `<body>` tag of `app/layout.html` and same-origin links (n
 
 `gw-enter="fade-in"` and `gw-leave="fade-out"` on a keyed element (`gw-key`, e.g. a `{#for}` row) add the class on insert, and on removal keep the element with the class and `gw-leaving` until its `animationend`/`transitionend` (or 1 s). Pages and components that use them load `/_gw/gwt.js`; other sites do not.
 
+## Server push (client)
+
+`gw-sse="/events"` on an element makes `/_gw/gwe.js` (added to pages that use it, and only those) open one `EventSource` for each distinct URL, on load and for elements added later by a morph. Events are standard SSE, named:
+
+```
+event: fragment
+data: cart
+data: <p>3 items</p>
+data: <p>total 30</p>
+
+event: store
+data: Cart
+data: {"count":3}
+```
+
+- `fragment`: the first data line is the target id, the rest is HTML (the browser joins data lines with `\n`). `#cart` is morphed like a `gw-target` reply; a missing id, or one inside a component, is ignored.
+- `store`: the first line is the store's name, the rest a JSON object whose values replace the store's state values it names; subscribed components update. A store not loaded on the page is ignored.
+- Other events are ignored; errors go to `gw:error`; the browser reconnects on its own.
+
+`web::sse_event(out, event, data)`, `web::sse_fragment(out, name, html)` and `web::sse_store(out, store, json)` format these events (each line of data gets `data: `). The streaming server half (`subscribe`/`publish`) is separate.
+
 ## Example
 
 `../examples/shop` is the benchmark site: pages, a JSON API, a todo list in

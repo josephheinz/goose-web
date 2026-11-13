@@ -71,6 +71,15 @@ csrf_test() {
   "$WORK/csrf/csrf_test"
 }
 
+sse_test() {
+  mkdir "$WORK/sse"
+  sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
+      -e "s|^import net from \"../../goose-net\";|import net from \"$GWEB_NET\";|" \
+      "$HERE/sse_test.goose" > "$WORK/sse/sse_test.goose"
+  "$GOOSE" build -o "$WORK/sse/sse_test" "$WORK/sse/sse_test.goose"
+  "$WORK/sse/sse_test"
+}
+
 catchall_test() {
   mkdir "$WORK/catchall"
   sed -e "s|^import web from \"..\";|import web from \"$GWEB_WEB\";|" \
@@ -83,6 +92,7 @@ catchall_test() {
 step cookie_test cookie_test
 step csrf_test csrf_test
 step catchall_test catchall_test
+step sse_test sse_test
 step components sh "$HERE/components.sh"
 step runtime sh "$HERE/runtime.sh"
 step templates sh "$HERE/templates.sh"

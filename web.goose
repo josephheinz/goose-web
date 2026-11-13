@@ -265,6 +265,48 @@ fn apply_cookies(ctx: Ctx&, res: http::Response&) -> bool {
     return true;
 }
 
+// ---------------------------------------------------------------- server-sent events (Addendum 12 section 7.9)
+
+// Appends one SSE event: `event: E`, then each line of data as `data: LINE` (a line ends at \n, \r\n or \r, so
+// data with a trailing newline ends in an empty data line and the browser joins it back), then a blank line.
+// E must not contain a line break.
+fn sse_event(out: u8[>..]&, event: const u8[:], data: const u8[:]) {
+    out.append("event: ");
+    out.append(event);
+    out.append("\n");
+    var start = 0;
+    var i = 0;
+    while i <= data.len {
+        if i == data.len || data[i] == '\n' || data[i] == '\r' {
+            out.append("data: ");
+            out.append(data[start..i]);
+            out.append("\n");
+            if i < data.len && data[i] == '\r' && i + 1 < data.len && data[i + 1] == '\n' { i += 1; }
+            start = i + 1;
+        }
+        i += 1;
+    }
+    out.append("\n");
+}
+
+// The `fragment` event: gwe.js morphs #name with html.
+fn sse_fragment(out: u8[>..]&, name: const u8[:], html: const u8[:]) {
+    var d: u8[>..] = [];
+    d.append(name);
+    d.append("\n");
+    d.append(html);
+    sse_event(out, "fragment", d);
+}
+
+// The `store` event: gwe.js writes the values json names into the store.
+fn sse_store(out: u8[>..]&, store: const u8[:], json: const u8[:]) {
+    var d: u8[>..] = [];
+    d.append(store);
+    d.append("\n");
+    d.append(json);
+    sse_event(out, "store", d);
+}
+
 // ---------------------------------------------------------------- responses
 
 fn html(res: http::Response&, status: http::Status) {
