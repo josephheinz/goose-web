@@ -3,6 +3,7 @@
 //   goose build test/ops_unit.goose && test/ops_unit
 import web from "..";
 import web.ops;
+import web.jobs;
 import net from "../../goose-net";
 import net.http;
 import std;

@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.3.0 (unreleased)
+## v0.3.0
 
 Needs the matching goose-net release (spool mode, `net::Hub`, `Loop.detach`, chunked responses, `http::accepts`, `net.lifecycle`).
 
@@ -42,6 +42,7 @@ Needs the matching goose-net release (spool mode, `net::Hub`, `Loop.detach`, chu
 - Metrics (`--metrics`, Prometheus text at `/__gweb/metrics`) and OpenTelemetry tracing (OTLP/HTTP JSON, `traceparent`).
 - Background jobs and schedules: `app/jobs.goose`, `jobs::enqueue`, `jobs::every`, `jobs::cron`, `--no-schedule`.
 - Linux and Docker: a Dockerfile and `.dockerignore` for new apps, systemd units in `deploy/`, `test/linux.sh`, and `docs/DEPLOY.md`. Windows is supported through WSL2 and Docker only.
+- Jobs can `web::publish` to SSE and WebSocket clients.
 - Behaviour change: `/__gweb/` is reserved; an `app/__gweb` folder is a build error.
 - Reactive components: `@prop`, `@state`, `@computed`, `@watch`. gweb finds which markup reads which names and, after a handler, updates only those text nodes, attribute lists and `{#if}`/`{#for}` blocks. Markup names state directly (`{count}`). A throwing handler leaves the page unchanged. `struct State` components still work.
 - Pages call reactive components with named props: `@Counter(start: 3, label: p.name)`.

@@ -4,7 +4,7 @@ You need the [Goose compiler](https://aardappel.github.io/goose/), `git`, and
 `node` if you run `gweb test`.
 
 ```
-git clone --branch v0.2.1 --depth 1 https://github.com/josephheinz/goose-web
+git clone --branch v0.3.0 --depth 1 https://github.com/josephheinz/goose-web
 cd goose-web && goose build -o gweb cli/gweb.goose
 ln -s "$PWD/gweb" ~/bin/gweb           # or: cp gweb ~/bin/
 ```
