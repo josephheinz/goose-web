@@ -1,0 +1,1 @@
+<div class="hero"><h2>{props.title}</h2>{#if props.badge.text.len > 0}<span class="badge">{props.badge.text}:{props.badge.level}</span>{/if}{#for c in props.ctas}<a class="cta{#if c.primary} primary{/if}" href="{c.url}">{c.label}</a>{/for}</div>

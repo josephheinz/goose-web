@@ -19,6 +19,7 @@ import tscan;
 import html;
 import pins;
 import structs;
+import views;
 
 // ---------------------------------------------------------------- C helpers (proc.c)
 
@@ -76,6 +77,7 @@ let K_LAYOUT = 1;
 let K_NOT_FOUND = 2;
 let K_ERROR = 3;
 let K_LOADING = 4;
+let K_VIEW = 5;                       // views/<group>/<Name>.html (DESIGN-ADDENDUM-19)
 
 let METHODS =["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
 let VARIANTS = ["Get", "Head", "Post", "Put", "Patch", "Delete", "Options"];
@@ -136,6 +138,9 @@ var uses_http = false;                 // a component imports gwh.js (http::get 
 var http_calls: Target[>..<];          // each string-literal url of an http call (post: POST, name: get or post)
 var targets: Target[>..<];
 var tpl_script = false;
+var view_slots: u8[>..];              // `group\tName\tslot\tallow\n` for each @slot("x") of a view template
+var view_group: u8[..32];             // the view being compiled
+var view_name: u8[..64];
 var tpl_boost = false;
 var tpl_trans = false;
 var tpl_sse = false;
@@ -710,7 +715,7 @@ fn load_packages() {
             }
         }
         // A package folder inside the project's own scanned folders would be read twice.
-        for own in ["app", "components", "lib", "public"] {
+        for own in ["app", "components", "lib", "public", "views"] {
             var ob: u8[>..] = [];
             format(ob, cwd, "/", own);
             var clean: u8[>..] = [];
@@ -1082,6 +1087,7 @@ fn scan() {
     }
     scan_components();
     scan_stores();
+    vw::scan();
     // A public file may not shadow a route at the same literal URL.
     for d in dirs {
         if !d.route && !d.page_html { continue; }
@@ -1148,6 +1154,17 @@ fn copy_prefixed(src: const u8[:], ns: const u8[:], code: u8[>..]&) -> bool {
 
 // forms: a page.goose or route.goose, whose struct <Name>Form gets a generated fn decode after the user's last line.
 fn copy_prefixed_forms(src: const u8[:], ns: const u8[:], code: u8[>..]&, forms: bool) -> bool {
+    if !read_checked(src, code) { return false; }
+    var extra: u8[>..] = [];
+    if forms { form_decoders(src, code, extra); }
+    var more: u8[>..] = [];
+    if extra.len > 0 { more.append("import gweb.forms.valid; import gweb.forms.upload; "); }
+    write_prefixed(src, ns, code, extra, more);
+    return true;
+}
+
+// Reads a user's Goose file for copying: no namespace line of its own; notes sqlite and key use.
+fn read_checked(src: const u8[:], code: u8[>..]&) -> bool {
     if !read(src, code) { return false; }
     for line, i in split(code, '\n') {
         if starts_with(trim_start(line), "namespace ") {
@@ -1156,17 +1173,25 @@ fn copy_prefixed_forms(src: const u8[:], ns: const u8[:], code: u8[>..]&, forms:
         }
     }
     if imports_sqlite(code) { uses_sqlite = true; }
-    var extra: u8[>..] = [];
-    if forms { form_decoders(src, code, extra); }
     if mentions_keys(code) { uses_keys = true; }
+    return true;
+}
+
+// Writes .gooseweb/NS.goose: the namespace and any wanted imports on line 1 (the user's imports are not repeated), the
+// user's code, then extra (generated code). On line 1, so the user's line numbers stay the same.
+fn write_prefixed(src: const u8[:], ns: const u8[:], code: const u8[:], extra: const u8[:], wanted: const u8[:]) {
     var out: u8[>..] = [];
     format(out, "namespace ", ns, "; ");
-    if extra.len > 0 {
-        // On line 1, so the user's line numbers stay the same.
+    if wanted.len > 0 {
         var have: u8[>..] = [];
         imports_of(code, have);
-        if find(have, "import gweb.forms.valid;") < 0 { out.append("import gweb.forms.valid; "); }
-        if find(have, "import gweb.forms.upload;") < 0 { out.append("import gweb.forms.upload; "); }
+        for imp in split(trim(wanted), ' ') {
+            // wanted is "import a.b; import c;": rebuild each statement from its two words
+            if imp == "import" { continue; }
+            var stmt: u8[>..] = [];
+            format(stmt, "import ", imp, " ");
+            if find(have, stmt[..stmt.len - 1]) < 0 { out.append(stmt[..stmt.len - 1]); out.push(' '); }
+        }
     }
     out.append(code);
     out.append(extra);
@@ -1181,7 +1206,6 @@ fn copy_prefixed_forms(src: const u8[:], ns: const u8[:], code: u8[>..]&, forms:
         if i == 0 { format(srcmap_text, "L 1 1 0:0:0 ", prefix, ":0:", line.len, "\n"); }
         else if line.len > 0 { format(srcmap_text, "L ", i + 1, " ", i + 1, " 0:0:", line.len, "\n"); }
     }
-    return true;
 }
 
 fn ident_byte(c: u8) -> bool {
@@ -1332,7 +1356,7 @@ fn imports_of(src: const u8[:], out: u8[>..]&) {
 }
 
 fn add_default_imports(imports: u8[>..]&) {
-    for imp in ["import std;", "import net.http;", "import gweb;", "import gweb.site.template;", "import gweb.forms.valid;", "import gweb.site.meta;"] {
+    for imp in ["import std;", "import net.http;", "import gweb;", "import gweb.site.template;", "import gweb.forms.valid;", "import gweb.site.meta;", "import gweb.site.markdown;"] {
         if find(imports, imp) < 0 { imports.append(imp); imports.push(' '); }
     }
     for n in component_names {
@@ -1950,9 +1974,52 @@ fn image_call(path: const u8[:], ln: i64, args: const u8[:], out: u8[>..]&) {
     out.append("out.append(\""); lit(out, tag); out.append("\"); ");
 }
 
+// @slot("name") or @slot("name", "View1 View2") in a view template (DESIGN-ADDENDUM-19, D2): the hole's name, and the views
+// it allows (none listed: all). Both are string literals; the generated registry records them in ViewMeta.slots.
+// A layouts view also gets the page's module tags at its first slot, as layout.html does.
+fn view_slot(path: const u8[:], ln: i64, args: const u8[:], out: u8[>..]&) {
+    let parts = split(args, ',');
+    var ok = parts.len >= 1 && parts.len <= 2;
+    let first = if parts.len >= 1 { trim(parts[0]) } else { "\"\"" };
+    let second = if parts.len == 2 { trim(parts[1]) } else { "\"\"" };
+    let name, nok = plain_literal(first);
+    let allow, aok = plain_literal(second);
+    ok = ok && nok && aok;
+    if ok {
+        if name.len == 0 || name.len > 32 || name[0] < 'a' || name[0] > 'z' { ok = false; }
+        for c in name { if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-') { ok = false; } }
+        for c in allow { if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ') { ok = false; } }
+    }
+    if !ok { err(path, ln, "@slot(\"name\") or @slot(\"name\", \"View1 View2\"): string literals, the name [a-z][a-z0-9_-]*"); return; }
+    if view_slots.len > 0 {
+        for l in split(view_slots, '\n') {
+            let f = split(l, '\t');
+            if f.len == 4 && f[0] == view_group && f[1] == view_name && f[2] == name {
+                var m: u8[>..] = [];
+                format(m, "two slots named ", name);
+                err(path, ln, m);
+                return;
+            }
+        }
+    }
+    var count = 0;
+    for l in split(view_slots, '\n') {
+        let f = split(l, '\t');
+        if f.len == 4 && f[0] == view_group && f[1] == view_name { count += 1; }
+    }
+    if count >= 8 { err(path, ln, "a view has at most 8 slots"); return; }
+    format(view_slots, view_group, "\t", view_name, "\t", name, "\t", trim(allow), "\n");
+    if view_group == "layouts" && (tpl_script || tpl_boost || tpl_trans || tpl_sse) { script_tag(out); }
+    out.append("Z(out, req, ctx, doc, at, \"");
+    lit(out, name);
+    out.append("\"); ");
+}
+
 fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:], kind: i64, in_frag: bool, out: u8[>..]&,
                  segs: u8[>..]&, name_col: i64, args_col: i64) {
-    if name == "slot" {
+    if name == "slot" && kind == K_VIEW {
+        view_slot(path, ln, args, out);
+    } else if name == "slot" {
         if kind != K_LAYOUT { err(path, ln, "@slot() is for layout.html only"); }
         if args.len > 0 { err(path, ln, "@slot() takes no arguments"); }
         if kind == K_LAYOUT && (tpl_script || tpl_boost || tpl_trans || tpl_sse) { script_tag(out); }
@@ -1962,7 +2029,7 @@ fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:
     } else if name == "image" {
         image_call(path, ln, args, out);
     } else if name == "meta" {
-        if kind != K_LAYOUT { err(path, ln, "@meta() is for layout.html only"); }
+        if kind != K_LAYOUT && !(kind == K_VIEW && view_group == "layouts") { err(path, ln, "@meta() is for layout.html and views/layouts only"); }
         if args.len > 0 { err(path, ln, "@meta() takes no arguments"); }
         out.append("gweb::render_meta(out, req, ctx); ");
     } else if name[0] >= 'A' && name[0] <= 'Z' && find(name, "::") < 0 {
@@ -3220,6 +3287,7 @@ fn gen_main_body(m: u8[>..]&, test: bool) {
     }
     if has_not_found { m.append("import nf;\n"); }
     if has_config { m.append("import config;\n"); }
+    if vw::has_views() { m.append("import views;\n"); }
     if has_sitemap { m.append("import smap;\n"); }
     if has_socket { m.append("import socket;\n"); }
     if test { for ns in test_files { format(m, "import ", ns, ";\n"); } }
@@ -3906,6 +3974,13 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     http_calls.clear();
     gen_components(dev);
     if is_dir("locales") { gen_locales(); }
+    view_slots.clear();
+    let registry = vw::gen();
+    if registry.len > 0 {
+        var vf: u8[>..] = [];
+        format(vf, root, "/views.goose");
+        write(vf, registry);
+    }
     if is_dir("lib") { scan_lib_for_sqlite("lib"); }
     uses_hub = has_socket;
     scan_for_hub("app");
@@ -4812,11 +4887,11 @@ fn server_cmd(extra: u8[:][:], dev: bool) -> u8[>..] {
 fn stamp() -> i64 {
     var count = 0;
     var newest = 0;
-    for dir in ["app", "lib", "public", "components", "locales", "stores"] { newest = max(newest, c_tree_stamp(dir, count)); }
+    for dir in ["app", "lib", "public", "components", "locales", "stores", "views"] { newest = max(newest, c_tree_stamp(dir, count)); }
     // Path packages are edited beside the project; a git package is a cached tag and never changes.
     for pk in pkgs {
         if pk.git { continue; }
-        for sub in ["app", "lib", "public", "components", "stores"] {
+        for sub in ["app", "lib", "public", "components", "stores", "views"] {
             var dir: u8[>..] = [];
             format(dir, pk.dir, "/", sub);
             newest = max(newest, c_tree_stamp(dir, count));
