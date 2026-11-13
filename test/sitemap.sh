@@ -130,6 +130,24 @@ else
   bad "gweb build with public/robots.txt"; echo "$out"
 fi
 
+# 2b. sitemap_base and fn robots (DESIGN-ADDENDUM-19, D10): the base and the robots text come from the request's host.
+if out=$("$GWEB" -C "$HERE/sitemap/multi" build 2>&1); then
+  if ! start "$HERE/sitemap/multi" SITE_URL=https://ignored.example; then
+    bad "the multi-host server did not answer on port $PORT"
+  else
+    printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
+      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' \
+      '<url><loc>https://a.test/</loc></url>' '<url><loc>https://a.test/p?a=1&amp;b=2</loc></url>' '</urlset>' > "$WORK/want.xml"
+    serves mm /sitemap.xml 'application/xml' "$WORK/want.xml" -H 'Host: a.test'
+    printf 'User-agent: *\nDisallow: /private\nSitemap: https://b.test/sitemap.xml\n' > "$WORK/want.txt"
+    serves mr /robots.txt 'text/plain' "$WORK/want.txt" -H 'Host: b.test'
+    stop
+  fi
+  rm -rf "$HERE/sitemap/multi/.gooseweb"
+else
+  bad "gweb build of the multi-host site"; echo "$out"
+fi
+
 # 3. Expected failures. expect_fail MESSAGE PATH SETUP: SETUP runs in a copy of the site, and the build must say PATH: error: MESSAGE.
 expect_fail() {
   msg=$1; where=$2; setup=$3

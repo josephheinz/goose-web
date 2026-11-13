@@ -1,6 +1,7 @@
 /* A per-thread response cache: no locks, bounded by entry count and bytes. */
 #include "cache_core.h"
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -16,6 +17,7 @@ int gc_init(gc_cache *c, size_t max_entries, size_t max_bytes, int64_t (*now)(vo
     c->max_entries = max_entries ? max_entries : GC_MAX_ENTRIES;
     c->max_bytes = max_bytes ? max_bytes : GC_MAX_BYTES;
     c->now = now ? now : mono_ms;
+    c->epoch = gc_epoch();
     c->entries = calloc(c->max_entries, sizeof(gc_entry));
     return c->entries != NULL;
 }
@@ -38,6 +40,16 @@ static long find(gc_cache *c, const uint8_t *key, size_t klen) {
     for (size_t i = 0; i < c->count; i++)
         if (c->entries[i].klen == klen && memcmp(c->entries[i].key, key, klen) == 0) return (long)i;
     return -1;
+}
+
+static _Atomic int64_t process_epoch;
+
+void gc_clear(gc_cache *c) { while (c->count > 0) drop(c, c->count - 1); }
+void gc_epoch_bump(void) { atomic_fetch_add_explicit(&process_epoch, 1, memory_order_release); }
+int64_t gc_epoch(void) { return atomic_load_explicit(&process_epoch, memory_order_acquire); }
+void gc_sync(gc_cache *c) {
+    int64_t e = gc_epoch();
+    if (c->epoch != e) { gc_clear(c); c->epoch = e; }
 }
 
 int gc_put(gc_cache *c, const uint8_t *key, size_t klen, const uint8_t *val, size_t vlen, int64_t ttl_ms) {

@@ -25,6 +25,18 @@ fn sitemap_init(req: const http::Request&, s: Sitemap&) {
     site_url(req, s.base);
 }
 
+// Replaces the base URL of every entry, such as "https://example.com": a site that serves several hosts calls it from
+// entries with the current host's URL. A trailing / is dropped. An empty url keeps the old base.
+fn sitemap_base(s: Sitemap&, url: const u8[:]) {
+    var copy_of: u8[>..] = [];
+    copy_of.append(trim(url));
+    var n = copy_of.len;
+    while n > 0 && copy_of[n - 1] == '/' { n -= 1; }
+    if n == 0 { return; }
+    s.base.clear();
+    s.base.append(copy_of[..n]);
+}
+
 fn digit(c: u8) -> bool { return c >= '0' && c <= '9'; }
 
 fn lastmod_ok(s: const u8[:]) -> bool {
@@ -52,8 +64,7 @@ fn sitemap_add(s: Sitemap&, path: const u8[:], lastmod: const u8[:] = "") -> boo
     if s.count >= SITEMAP_MAX_URLS { return false; }
     // Worst case: every path byte escapes to six.
     if s.body.len + s.base.len + path.len * 6 + 128 > SITEMAP_MAX_BYTES { return false; }
-    s.body.append("<url><loc>");
-    escape(s.body, s.base);
+    s.body.append("<url><loc>\x01");   // \x01 stands for the base; sitemap_reply writes it, so sitemap_base works at any time
     escape(s.body, path);
     s.body.append("</loc>");
     if lastmod.len > 0 { s.body.append("<lastmod>"); s.body.append(lastmod); s.body.append("</lastmod>"); }
@@ -68,8 +79,25 @@ fn sitemap_reply(res: http::Response&, s: const Sitemap&) {
     res.content_type.append("application/xml; charset=utf-8");
     http::set_header(res, "Cache-Control", "public, max-age=3600");
     res.body.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n");
-    res.body.append(s.body);
+    var base: u8[>..] = [];
+    escape(base, s.base);
+    var rest: const u8[:] = s.body;
+    loop {
+        let k = find(rest, "\x01");
+        if k < 0 { res.body.append(rest); break; }
+        res.body.append(rest[..k]);
+        res.body.append(base);
+        rest = rest[k + 1..];
+    }
     res.body.append("</urlset>\n");
+}
+
+// The headers of /robots.txt; an app's fn robots(req, ctx, out) in app/sitemap.goose then writes the body.
+fn robots_begin(res: http::Response&) {
+    res.status = http::Status.Ok;
+    res.content_type.clear();
+    res.content_type.append("text/plain; charset=utf-8");
+    http::set_header(res, "Cache-Control", "public, max-age=3600");
 }
 
 fn robots_reply(req: const http::Request&, res: http::Response&) {

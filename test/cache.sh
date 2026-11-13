@@ -81,6 +81,27 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     check "$([ "$(status k1)" = 200 ] && ! same k1 k2 && has_header k1 'set-cookie: seen=1' && has_header k2 'set-cookie: seen=1' \
       && ! has_header k1 'etag: ' && echo ok)" "/cookie sets a cookie: never cached, no ETag"
 
+    # cache_serve_key and cache_store_key: the key is host + path; no TTL, so the entry lasts until the epoch changes.
+    req ka GET /keyed -H 'Host: a.test'
+    req ka2 GET /keyed -H 'Host: a.test'
+    req kb GET /keyed -H 'Host: b.test'
+    check "$([ "$(status ka)" = 200 ] && same ka ka2 && ! same ka kb && echo ok)" "/keyed: one entry per host, the second GET of a host is the cached reply"
+    check "$(has_header ka 'etag: ' && [ "$(etag ka)" = "$(etag ka2)" ] && echo ok)" "/keyed: the stored reply has an ETag"
+    req kc GET /keyed -H 'Host: a.test' -H "If-None-Match: $(etag ka)"
+    check "$([ "$(status kc)" = 304 ] && echo ok)" "/keyed: If-None-Match gets 304"
+    req ke GET /bump
+    check "$([ "$(status ke)" = 200 ] && grep -q bumped "$WORK/ke.b" && echo ok)" "/bump: epoch_bump answers 200"
+    req ka3 GET /keyed -H 'Host: a.test'
+    req kb2 GET /keyed -H 'Host: b.test'
+    check "$([ "$(status ka3)" = 200 ] && ! same ka ka3 && ! same kb kb2 && echo ok)" "after epoch_bump both hosts render again"
+    req ka4 GET /keyed -H 'Host: a.test'
+    check "$(same ka3 ka4 && echo ok)" "and the new reply is cached"
+    req ct GET /cached
+    req ct2 GET /cached
+    req ke2 GET /bump
+    req ct3 GET /cached
+    check "$(same ct ct2 && ! same ct2 ct3 && echo ok)" "epoch_bump also clears the REVALIDATE cache"
+
     sleep 3
     req e GET /cached
     check "$([ "$(status e)" = 200 ] && ! same a e && [ "$(etag e)" != "$TAG" ] && echo ok)" "after 3 s the page is rendered again"

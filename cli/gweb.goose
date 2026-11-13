@@ -88,6 +88,7 @@ var has_state_init = false;
 var has_config = false;
 var has_sitemap = false;               // app/sitemap.goose exists
 var has_entries = false;               // and defines fn entries(
+var has_robots = false;                // and defines fn robots(
 var has_socket = false;                // app/socket.goose exists
 var socket_open = false;               // and defines these handlers
 var socket_message = false;
@@ -1048,6 +1049,7 @@ fn scan() {
     has_config = false;
     has_sitemap = false;
     has_entries = false;
+    has_robots = false;
     has_socket = false;
     has_state_shutdown = false;
     has_jobs = false;
@@ -2848,7 +2850,11 @@ fn gen_sitemap(m: u8[>..]&) {
         m.append("    match req.method {\n        Get, Head => {},\n");
         m.append("        Options => { gweb::options(res, \"GET, HEAD, OPTIONS\"); return; },\n");
         m.append("        _ => { gweb::method_not_allowed(res, \"GET, HEAD, OPTIONS\"); return; },\n    }\n");
-        if name == "robots_txt" { m.append("    gweb::robots_reply(req, res);\n}\n"); continue; }
+        if name == "robots_txt" {
+            if has_robots { m.append("    gweb::robots_begin(res);\n    smap::robots(req, ctx, res.body);\n}\n"); }
+            else { m.append("    gweb::robots_reply(req, res);\n}\n"); }
+            continue;
+        }
         m.append("    var s = gweb::Sitemap { base: [], body: [], count: 0 };\n    gweb::sitemap_init(req, s);\n");
         for d in dirs {
             if !d.page_html || !d.in_sitemap || find(d.rel, "[") >= 0 { continue; }
@@ -4081,7 +4087,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
             if !defines(code, "check") { err("app/config.goose", 0, "config.goose needs fn check() -> bool"); }
         }
     }
-    if has_sitemap && copy_prefixed("app/sitemap.goose", "smap", code_sm) { has_entries = defines(code_sm, "entries"); }
+    if has_sitemap && copy_prefixed("app/sitemap.goose", "smap", code_sm) { has_entries = defines(code_sm, "entries"); has_robots = defines(code_sm, "robots"); }
     var code_so: u8[>..] = [];
     if has_socket && copy_prefixed("app/socket.goose", "socket", code_so) {
         socket_open = defines(code_so, "open");

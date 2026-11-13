@@ -149,6 +149,7 @@ step security_test goose_test security_test
 step crypto_test.c c_test crypto_test "$ROOT/src/crypto.c"
 step env_test.c c_test env_test "$ROOT/src/sys.c"
 step rate_test.c c_test rate_test "$ROOT/src/rate.c" -lpthread
+step cache_test.c c_test cache_test "$ROOT/src/cache_core.c"
 step testing_test testing_test
 step i18n_test i18n_test
 step sse_test sse_test

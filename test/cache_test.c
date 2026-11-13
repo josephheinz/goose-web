@@ -44,8 +44,8 @@ int main(void) {
 
     uint8_t big[GC_MAX_KEY + 1];
     memset(big, 'k', sizeof big);
-    CHECK(gc_put(&c, big, GC_MAX_KEY, S("v"), 1000), "a key of 1024 bytes");
-    CHECK(!gc_put(&c, big, GC_MAX_KEY + 1, S("v"), 1000), "a key of 1025 bytes is refused");
+    CHECK(gc_put(&c, big, GC_MAX_KEY, S("v"), 1000), "a key of GC_MAX_KEY bytes");
+    CHECK(!gc_put(&c, big, GC_MAX_KEY + 1, S("v"), 1000), "a key over GC_MAX_KEY bytes is refused");
     gc_free(&c);
 
     /* Eviction: the entry that expires soonest goes, not the oldest. */
@@ -91,6 +91,32 @@ int main(void) {
     CHECK(c.count == 512, "512 entries at most");
     CHECK(!has(&c, "/p0", NULL) && has(&c, "/p599", NULL), "the earliest deadlines were evicted");
     gc_free(&c);
+
+    /* The epoch: a bump empties every cache the next time it is used (D7). */
+    CHECK(gc_init(&c, 0, 0, fake_now), "init for the epoch");
+    clock_ms = 0;
+    gc_cache d;
+    CHECK(gc_init(&d, 0, 0, fake_now), "a second cache");
+    put(&c, "/e1", "a", 100000);
+    gc_put(&d, S("/e2"), S("b"), 100000);
+    gc_sync(&c);
+    gc_sync(&d);
+    CHECK(has(&c, "/e1", "a") && has(&d, "/e2", "b"), "no bump: entries stay");
+    int64_t e0 = gc_epoch();
+    gc_epoch_bump();
+    CHECK(gc_epoch() == e0 + 1, "the epoch counts up");
+    gc_sync(&c);
+    CHECK(c.count == 0 && !has(&c, "/e1", NULL), "after a bump the cache is empty");
+    CHECK(d.count == 1, "another cache is cleared only when it is used");
+    gc_sync(&d);
+    CHECK(d.count == 0, "the second cache clears on its sync");
+    put(&c, "/e3", "c", 100000);
+    gc_sync(&c);
+    CHECK(has(&c, "/e3", "c"), "an entry stored after the bump survives a sync");
+    gc_clear(&c);
+    CHECK(c.count == 0 && c.bytes == 0, "gc_clear empties the cache");
+    gc_free(&c);
+    gc_free(&d);
 
     /* The thread-local cache keeps its entries. */
     gc_cache *l = gc_local();

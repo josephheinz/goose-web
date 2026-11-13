@@ -5,7 +5,7 @@
 
 #define GC_MAX_ENTRIES 512
 #define GC_MAX_BYTES (16 * 1024 * 1024)
-#define GC_MAX_KEY 1024
+#define GC_MAX_KEY 1280
 
 typedef struct gc_entry {
     uint8_t *key;
@@ -22,6 +22,7 @@ typedef struct gc_cache {
     size_t max_entries;
     size_t max_bytes;
     int64_t (*now)(void);
+    int64_t epoch;      /* the process epoch this cache last saw */
 } gc_cache;
 
 /* Zero limits mean the defaults; a NULL clock means a monotonic one. Returns 0 when out of memory. */
@@ -36,6 +37,15 @@ int gc_put(gc_cache *c, const uint8_t *key, size_t klen, const uint8_t *val, siz
 
 /* 1 with *val and *vlen pointing into the cache (valid until the next put or get), 0 on a miss or an expired entry. */
 int gc_get(gc_cache *c, const uint8_t *key, size_t klen, const uint8_t **val, size_t *vlen);
+
+/* Drops every entry. */
+void gc_clear(gc_cache *c);
+
+/* The process-wide epoch (DESIGN-ADDENDUM-19, D7). gc_epoch_bump runs on any thread after a content change;
+   gc_sync, called before a get or put, clears a cache that last saw an older epoch. */
+void gc_epoch_bump(void);
+int64_t gc_epoch(void);
+void gc_sync(gc_cache *c);
 
 /* The calling thread's cache, made on first use; NULL when out of memory. */
 gc_cache *gc_local(void);
