@@ -410,6 +410,7 @@ readable `gwi.js`.
 | `test/files_test.goose` | `send_file`: types, ETag and 304, HEAD, options and hostile paths. |
 | `test/cmsready.sh`, `test/cmsready/` | A CMS package from a git source, mounted at `/admin` with a module inside it, and a host app: catch-all pages from SQLite, views by name, markdown, `/media`, two hosts with a keyed cache and `epoch_bump`, sitemap per host, an admin edit, an upload. The worked example in `docs/site/building-a-cms.md`. |
 | `test/views.sh`, `test/views/` | Views: the generated codec, forms and registry (`gweb test` on `test/views/site`), package views, build errors, `reserved_prefixes`, a variable-size state `Msg`. |
+| `test/slotcheck.sh` | `@slot()` inside `<title>`, `<textarea>`, `<script>` or `<style>` is a build error (1.1). |
 | `test/richforms.sh`, `test/richforms/` | The rich generated form (1.1): posted text after an error, help linked by `aria-describedby`, repeater buttons applied by `g_parse`, `ITEM_LABEL`, and their build errors. |
 | `test/pkgdeps.sh`, `test/pkgdeps/` | `package NAME SOURCE` (1.1) with a small C-free package: the root, check, test, lsp-gen and export, a gweb package that needs one, conflicts and errors, `GWEB_PKG_NAME`. |
 | `test/pgdeps.sh`, `test/pgdeps/` | goose-postgres as a declared package: the example app builds, and runs against a throwaway server. Skips without a checkout, libpq or `pg_ctl`. |

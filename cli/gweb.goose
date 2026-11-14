@@ -2292,10 +2292,65 @@ fn template_call(path: const u8[:], ln: i64, name: const u8[:], args: const u8[:
     }
 }
 
+// The next `<name` of one of the raw text elements at or after pos (case does not matter), or -1; which is its index.
+fn raw_text_open(line: const u8[:], pos: i64, which: i64&) -> i64 {
+    let names = ["title", "textarea", "script", "style"];
+    var i = pos;
+    while i < line.len {
+        if line[i] == '<' {
+            for n, k in names { if tscan::opens_element(line, i, n) { which = k; return i; } }
+        }
+        i += 1;
+    }
+    return -1;
+}
+
+fn raw_text_close(line: const u8[:], pos: i64, name: const u8[:]) -> i64 {
+    var i = pos;
+    while i + 1 < line.len {
+        if line[i] == '<' && line[i + 1] == '/' && tscan::starts_nocase(line, i + 2, name) { return i; }
+        i += 1;
+    }
+    return -1;
+}
+
+// A layout or view @slot() writes code that calls the page in: inside <title>, <textarea>, <script> or <style> it
+// would be text, or be moved by the parser. Build error at the line.
+fn check_slot_context(path: const u8[:], src: const u8[:]) {
+    let names = ["title", "textarea", "script", "style"];
+    var open = -1;
+    for line, li in split(src, '\n') {
+        var pos = 0;
+        while pos <= line.len {
+            if open < 0 {
+                var which = 0;
+                let at = raw_text_open(line, pos, which);
+                if at < 0 { break; }
+                open = which;
+                pos = at + 1 + names[which].len;
+            } else {
+                let close = raw_text_close(line, pos, names[open]);
+                let rel = find(line[min(pos, line.len)..], "@slot(");
+                let slot = if rel >= 0 { pos + rel } else { -1 };
+                if slot >= 0 && (close < 0 || slot < close) {
+                    var m: u8[>..] = [];
+                    format(m, "@slot() inside <", names[open], "> would be written as text, not as a slot; put it outside the element");
+                    err(path, li + 1, m);
+                    pos = slot + 6;
+                } else if close >= 0 {
+                    open = -1;
+                    pos = close + 2;
+                } else { break; }
+            }
+        }
+    }
+}
+
 // Every HTML line becomes one Goose line, so errors keep their line numbers.
 fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], kind: i64, wrap: bool,
                     frags: u8[>..]&, out: u8[>..]&, recs: u8[>..]&) -> bool {
     let before = errors;
+    if (kind == K_LAYOUT || kind == K_VIEW) && find(src, "@slot(") >= 0 { check_slot_context(path, src); }
     tpl_script = find(src, "gw-target=\"") >= 0;
     tpl_boost = has_boost(src);
     if tpl_boost { uses_boost = true; }

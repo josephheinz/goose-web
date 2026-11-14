@@ -439,6 +439,8 @@ fn gw_parse(req: const http::Request&, name: const u8[:], v: T&, errs: gweb::Fie
 **Slots.** `@slot("main")` and `@slot("left", "Hero Text")` (an allow list of view names) are holes in a view template.
 Each compiles to `Z(out, req, ctx, doc, at, "left");`, where `Z` is a function you pass when you render. Layout views
 (group `layouts`) may also use `@meta()` and get the page's module tags at their first slot.
+A slot inside `<title>`, `<textarea>`, `<script>` or `<style>` is a build error at its line (1.1): there it would
+be text, not a hole. The same holds for `@slot()` in `layout.html`.
 
 **Generated, in the view's namespace:** `fn read(json, p: Props&) -> i64` (the warning count), `fn write(out, p)`,
 `fn defaults(out)`, `fn form(out, json, errs, prefix)`, `fn form_req(out, req, json, errs, prefix)`, `fn parse(req, prefix, out, errs) -> bool` and
