@@ -67,6 +67,9 @@ fn before(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) -> b
 
 A package does not hard-code its mount. gweb writes `NAME::MOUNT` (here `cms::MOUNT`) into the package's namespace.
 
+An admin that loads pages with `gw-target` or `gw-boost` gets a `401` and a `gw:unauthorized` event when the session has
+expired, not the login page morphed into the target. The runtime goes to the login unless a listener cancels the event.
+
 `login/submit` checks the password with `gweb::password_verify` and calls `gweb::login`. The session and CSRF cookies are
 `Path=/`, host-only, and `__Host-` behind HTTPS. Mounts do not change them. Because the cookie is host-only, put the
 admin on one host.
@@ -161,7 +164,8 @@ gweb::send_file(req, ctx, res, "data/media", rel, opts);
 ```
 
 `send_file` refuses `..`, dotfiles and symlinks out of the root, answers 304 on `If-None-Match`, supports HEAD and
-streams big files. See [Serving files from disk](../../README.md#serving-files-from-disk).
+streams big files. Set `opts.sandbox = true` for a PDF or any type a browser might script (HTML and SVG are sandboxed already).
+`gweb::image_size(bytes)` (`import gweb.site.image;`) gives an upload's width and height. See [Serving files from disk](../../README.md#serving-files-from-disk).
 
 ## 9. Test it
 
