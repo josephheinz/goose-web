@@ -125,16 +125,49 @@ fn _vf_label(out: u8[>..]&, id: const u8[:], label: const u8[:]) {
     out.append("<label for=\""); escape(out, id); out.append("\">"); escape(out, label); out.append("</label> ");
 }
 
-fn _vf_tail(out: u8[>..]&, id: const u8[:], help: const u8[:], errs: const FieldErrors&) {
-    if help.len > 0 { out.append(" <small class=\"gw-help\">"); escape(out, help); out.append("</small>"); }
+// The forms come in two modes. Plain (g_form, form): the 1.0 markup. Rich (g_form_req, form_req): the posted text of a
+// field that failed, help text linked to its control, and item buttons in a repeater. rich is false in plain mode,
+// and req is then an empty request.
+
+// The text a control shows: what was posted when a rich form is drawn after a failed POST and the field has an error
+// (so "12a" is not replaced by the default), else the stored value, as text.
+fn _vf_shown(out: u8[>..]&, req: const http::Request&, id: const u8[:], errs: const FieldErrors&, rich: bool, value: const u8[:]) {
+    if rich && req.method == http::Method.Post && has_error(errs, id) {
+        var v: u8[>..] = [];
+        if form(req, id, v) { out.append(v); return; }
+    }
+    out.append(value);
+}
+
+// What goes in a control's start tag: aria-invalid and aria-describedby. Rich mode lists the help id and the error id.
+fn _vf_desc(out: u8[>..]&, id: const u8[:], help: const u8[:], errs: const FieldErrors&, rich: bool) {
+    if !rich { invalid(out, errs, id); return; }
+    let bad = has_error(errs, id);
+    if bad { out.append(" aria-invalid=\"true\""); }
+    if help.len == 0 && !bad { return; }
+    out.append(" aria-describedby=\"");
+    if help.len > 0 { escape(out, id); out.append("-help"); }
+    if help.len > 0 && bad { out.push(' '); }
+    if bad { escape(out, id); out.append("-error"); }
+    out.push('"');
+}
+
+fn _vf_tail(out: u8[>..]&, id: const u8[:], help: const u8[:], errs: const FieldErrors&, rich: bool) {
+    if help.len > 0 {
+        out.append(" <small class=\"gw-help\"");
+        if rich { out.append(" id=\""); escape(out, id); out.append("-help\""); }
+        out.push('>'); escape(out, help); out.append("</small>");
+    }
     field_error(out, errs, id);
     out.append("</p>\n");
 }
 
 fn _vf_text(out: u8[>..]&, prefix: const u8[:], field: const u8[:], label: const u8[:], help: const u8[:], editor: const u8[:],
-           cap: i64, value: const u8[:], errs: const FieldErrors&, required: bool) {
+           cap: i64, value: const u8[:], errs: const FieldErrors&, required: bool, req: const http::Request&, rich: bool) {
     var id: u8[>..] = [];
     _vname(id, prefix, field);
+    var shown: u8[>..] = [];
+    _vf_shown(shown, req, id, errs, rich, value);
     out.append("<p class=\"gw-field\">");
     _vf_label(out, id, label);
     let area = editor == "textarea" || editor == "markdown" || (editor.len == 0 && cap > 200);
@@ -143,51 +176,57 @@ fn _vf_text(out: u8[>..]&, prefix: const u8[:], field: const u8[:], label: const
     } else {
         out.append("<input type=\"");
         escape(out, if editor.len > 0 { editor } else { "text" });
-        out.append("\" id=\""); escape(out, id); out.append("\" name=\""); escape(out, id); out.append("\" value=\""); escape(out, value); out.push('"');
+        out.append("\" id=\""); escape(out, id); out.append("\" name=\""); escape(out, id); out.append("\" value=\""); escape(out, shown); out.push('"');
     }
     out.append(" maxlength=\""); format(out, cap); out.push('"');
     if required { out.append(" required"); }
     if editor.len > 0 { out.append(" data-editor=\""); escape(out, editor); out.push('"'); }
-    invalid(out, errs, id);
-    if area { out.push('>'); escape(out, value); out.append("</textarea>"); } else { out.push('>'); }
-    _vf_tail(out, id, help, errs);
+    _vf_desc(out, id, help, errs, rich);
+    if area { out.push('>'); escape(out, shown); out.append("</textarea>"); } else { out.push('>'); }
+    _vf_tail(out, id, help, errs, rich);
 }
 
 fn _vf_int(out: u8[>..]&, prefix: const u8[:], field: const u8[:], label: const u8[:], help: const u8[:], editor: const u8[:],
-          value: i64, errs: const FieldErrors&, required: bool) {
+          value: i64, errs: const FieldErrors&, required: bool, req: const http::Request&, rich: bool) {
     var id: u8[>..] = [];
     _vname(id, prefix, field);
+    var text: u8[>..] = [];
+    format(text, value);
+    var shown: u8[>..] = [];
+    _vf_shown(shown, req, id, errs, rich, text);
     out.append("<p class=\"gw-field\">");
     _vf_label(out, id, label);
     out.append("<input type=\"");
     escape(out, if editor.len > 0 { editor } else { "number" });
-    out.append("\" id=\""); escape(out, id); out.append("\" name=\""); escape(out, id); out.append("\" value=\""); format(out, value); out.push('"');
+    out.append("\" id=\""); escape(out, id); out.append("\" name=\""); escape(out, id); out.append("\" value=\""); escape(out, shown); out.push('"');
     if required { out.append(" required"); }
-    invalid(out, errs, id);
+    _vf_desc(out, id, help, errs, rich);
     out.push('>');
-    _vf_tail(out, id, help, errs);
+    _vf_tail(out, id, help, errs, rich);
 }
 
 fn _vf_bool(out: u8[>..]&, prefix: const u8[:], field: const u8[:], label: const u8[:], help: const u8[:], value: bool,
-           errs: const FieldErrors&) {
+           errs: const FieldErrors&, rich: bool) {
     var id: u8[>..] = [];
     _vname(id, prefix, field);
     out.append("<p class=\"gw-field\"><input type=\"checkbox\" id=\""); escape(out, id); out.append("\" name=\""); escape(out, id);
-    out.append(if value { "\" checked>" } else { "\">" });
+    out.push('"');
+    if rich { _vf_desc(out, id, help, errs, rich); }
+    out.append(if value { " checked>" } else { ">" });
     out.push(' ');
     _vf_label(out, id, label);
-    _vf_tail(out, id, help, errs);
+    _vf_tail(out, id, help, errs, rich);
 }
 
 fn _vf_enum(out: u8[>..]&, prefix: const u8[:], field: const u8[:], label: const u8[:], help: const u8[:],
-           names: const u8[:][:], current: const u8[:], errs: const FieldErrors&, required: bool) {
+           names: const u8[:][:], current: const u8[:], errs: const FieldErrors&, required: bool, rich: bool) {
     var id: u8[>..] = [];
     _vname(id, prefix, field);
     out.append("<p class=\"gw-field\">");
     _vf_label(out, id, label);
     out.append("<select id=\""); escape(out, id); out.append("\" name=\""); escape(out, id); out.push('"');
     if required { out.append(" required"); }
-    invalid(out, errs, id);
+    _vf_desc(out, id, help, errs, rich);
     out.push('>');
     for n in names {
         out.append("<option");
@@ -195,7 +234,7 @@ fn _vf_enum(out: u8[>..]&, prefix: const u8[:], field: const u8[:], label: const
         out.push('>'); escape(out, n); out.append("</option>");
     }
     out.append("</select>");
-    _vf_tail(out, id, help, errs);
+    _vf_tail(out, id, help, errs, rich);
 }
 
 fn _vf_group_open(out: u8[>..]&, label: const u8[:]) {
@@ -203,13 +242,52 @@ fn _vf_group_open(out: u8[>..]&, label: const u8[:]) {
 }
 fn _vf_group_close(out: u8[>..]&) { out.append("</fieldset>\n"); }
 
-fn _vf_list_open(out: u8[>..]&, prefix: const u8[:], field: const u8[:], label: const u8[:], count: i64) {
+// A repeater. Rich mode starts with a hidden default button, so Enter in a text field redraws the form as a plain Save
+// and does not press the first item's button; each item ends with Up, Down and Remove, and the list with Add. They are
+// submit buttons named PREFIX+FIELD+".act", with the value add, up:K, down:K or del:K. g_parse applies one.
+fn _vf_act_button(out: u8[>..]&, prefix: const u8[:], field: const u8[:], value: const u8[:], k: i64, text: const u8[:], off: bool, what: const u8[:]) {
+    out.append("<button type=\"submit\" name=\""); escape(out, prefix); escape(out, field); out.append(".act\" value=\""); out.append(value);
+    if k >= 0 { out.push(':'); format(out, k); }
+    out.push('"');
+    if off { out.append(" disabled"); }
+    out.append(" aria-label=\""); out.append(what);
+    if k >= 0 { out.push(' '); format(out, k + 1); }
+    out.append("\">"); out.append(text); out.append("</button>");
+}
+
+fn _vf_list_open(out: u8[>..]&, prefix: const u8[:], field: const u8[:], label: const u8[:], count: i64, rich: bool) {
     out.append("<fieldset class=\"gw-list\"><legend>"); escape(out, label); out.append("</legend>\n");
     out.append("<input type=\"hidden\" name=\""); escape(out, prefix); escape(out, field); out.append(".n\" value=\""); format(out, count); out.append("\">\n");
+    if rich {
+        out.append("<button type=\"submit\" name=\""); escape(out, prefix); escape(out, field); out.append(".act\" value=\"\" hidden tabindex=\"-1\"></button>\n");
+    }
 }
-fn _vf_list_close(out: u8[>..]&) { out.append("</fieldset>\n"); }
-fn _vf_item_open(out: u8[>..]&, k: i64) { out.append("<fieldset class=\"gw-item\"><legend>#"); format(out, k + 1); out.append("</legend>\n"); }
-fn _vf_item_close(out: u8[>..]&) { out.append("</fieldset>\n"); }
+fn _vf_list_close(out: u8[>..]&, prefix: const u8[:], field: const u8[:], count: i64, cap: i64, rich: bool) {
+    if rich {
+        out.append("<p class=\"gw-list-actions\">");
+        _vf_act_button(out, prefix, field, "add", -1, "Add", count >= cap, "Add an item");
+        out.append("</p>\n");
+    }
+    out.append("</fieldset>\n");
+}
+// label is the item's ITEM_LABEL field, "" when the view has none; it is shown in rich mode.
+fn _vf_item_open(out: u8[>..]&, k: i64, label: const u8[:], rich: bool) {
+    out.append("<fieldset class=\"gw-item\"><legend>#"); format(out, k + 1);
+    if rich && label.len > 0 { out.append(": "); escape(out, label); }
+    out.append("</legend>\n");
+}
+fn _vf_item_close(out: u8[>..]&, prefix: const u8[:], field: const u8[:], k: i64, count: i64, rich: bool) {
+    if rich {
+        out.append("<p class=\"gw-item-actions\">");
+        _vf_act_button(out, prefix, field, "up", k, "Up", k == 0, "Move up item");
+        out.push(' ');
+        _vf_act_button(out, prefix, field, "down", k, "Down", k + 1 >= count, "Move down item");
+        out.push(' ');
+        _vf_act_button(out, prefix, field, "del", k, "Remove", false, "Remove item");
+        out.append("</p>\n");
+    }
+    out.append("</fieldset>\n");
+}
 
 // ---------------------------------------------------------------- parsing a posted form (the admin forms)
 // The field names are prefix + field; a nested struct adds "name.", a repeater item "name.K.".
@@ -248,4 +326,23 @@ fn _vp_count(req: const http::Request&, prefix: const u8[:], field: const u8[:],
     if n < 0 { n = 0; }
     if n > cap { add_error(errs, id, "Too many items."); return cap; }
     return n;
+}
+
+// The repeater action in a posted form: kind 1 add, 2 del, 3 up, 4 down (with the item index k), 0 for none.
+fn _vp_act(req: const http::Request&, prefix: const u8[:], field: const u8[:]) -> i64, i64 {
+    var id: u8[>..] = [];
+    _vname(id, prefix, field);
+    id.append(".act");
+    var v: u8[>..] = [];
+    if !form(req, id, v) { return 0, 0; }
+    let t = trim(v);
+    if t == "add" { return 1, 0; }
+    var kind = 0;
+    if starts_with(t, "del:") { kind = 2; }
+    else if starts_with(t, "up:") { kind = 3; }
+    else if starts_with(t, "down:") { kind = 4; }
+    if kind == 0 { return 0, 0; }
+    let n, ok = parse_int(t[find(t, ":") + 1..]);
+    if !ok || n < 0 { return 0, 0; }
+    return kind, n;
 }

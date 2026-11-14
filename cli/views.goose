@@ -501,7 +501,7 @@ fn gen_write_struct(m: u8[>..]&, sname: const u8[:]) {
 fn lit_arg(m: u8[>..]&, s: const u8[:]) { m.push('"'); m.append(s); m.push('"'); }
 
 fn gen_form_struct(m: u8[>..]&, sname: const u8[:]) {
-    format(m, "fn gw_form_", sname, "(out: u8[>..]&, prefix: const u8[:], v: const ", sname, "&, errs: const gweb::FieldErrors&) {\n");
+    format(m, "fn gw_form_", sname, "(out: u8[>..]&, prefix: const u8[:], v: const ", sname, "&, errs: const gweb::FieldErrors&, req: const http::Request&, rich: bool) {\n");
     for f in fields {
         if f.owner != sname { continue; }
         var label: u8[>..] = [];
@@ -509,26 +509,30 @@ fn gen_form_struct(m: u8[>..]&, sname: const u8[:]) {
         m.append("    ");
         if f.kind == K_TEXT {
             format(m, "gweb::_vf_text(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", \"", f.editor, "\", ", f.cap, ", v.", f.name,
-                   ", errs, ", if f.required { "true" } else { "false" }, ");");
+                   ", errs, ", if f.required { "true" } else { "false" }, ", req, rich);");
         }
         else if f.kind == K_INT {
             format(m, "gweb::_vf_int(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", \"", f.editor, "\", v.", f.name,
-                   ", errs, ", if f.required { "true" } else { "false" }, ");");
+                   ", errs, ", if f.required { "true" } else { "false" }, ", req, rich);");
         }
-        else if f.kind == K_BOOL { format(m, "gweb::_vf_bool(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", v.", f.name, ", errs);"); }
+        else if f.kind == K_BOOL { format(m, "gweb::_vf_bool(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", v.", f.name, ", errs, rich);"); }
         else if f.kind == K_ENUM {
             format(m, "gweb::_vf_enum(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", ");
             names_array(m, f.ty);
-            format(m, ", gw_name_", f.ty, "(v.", f.name, "), errs, ", if f.required { "true" } else { "false" }, ");");
+            format(m, ", gw_name_", f.ty, "(v.", f.name, "), errs, ", if f.required { "true" } else { "false" }, ", rich);");
         }
         else if f.kind == K_GROUP {
             format(m, "{ gweb::_vf_group_open(out, \"", label, "\"); var gp: u8[>..] = []; format(gp, prefix, \"", f.name, ".\"); gw_form_", f.ty,
-                   "(out, gp, v.", f.name, ", errs); gweb::_vf_group_close(out); }");
+                   "(out, gp, v.", f.name, ", errs, req, rich); gweb::_vf_group_close(out); }");
         }
         else if f.kind == K_LIST {
-            format(m, "{ gweb::_vf_list_open(out, prefix, \"", f.name, "\", \"", label, "\", v.", f.name, ".len); var n = 0; for it in v.", f.name,
-                   " { var ip: u8[>..] = []; format(ip, prefix, \"", f.name, ".\", n, \".\"); gweb::_vf_item_open(out, n); gw_form_", f.ty,
-                   "(out, ip, it, errs); gweb::_vf_item_close(out); n += 1; } gweb::_vf_list_close(out); }");
+            // The item's legend shows its ITEM_LABEL field in rich forms.
+            var item_label: u8[>..] = [];
+            if item_label_field.len > 0 { format(item_label, "it.", item_label_field); } else { item_label.append("\"\""); }
+            format(m, "{ gweb::_vf_list_open(out, prefix, \"", f.name, "\", \"", label, "\", v.", f.name, ".len, rich); var n = 0; for it in v.", f.name,
+                   " { var ip: u8[>..] = []; format(ip, prefix, \"", f.name, ".\", n, \".\"); gweb::_vf_item_open(out, n, ", item_label, ", rich); gw_form_", f.ty,
+                   "(out, ip, it, errs, req, rich); gweb::_vf_item_close(out, prefix, \"", f.name, "\", n, v.", f.name, ".len, rich); n += 1; } gweb::_vf_list_close(out, prefix, \"",
+                   f.name, "\", v.", f.name, ".len, ", f.cap, ", rich); }");
         }
         else {
             format(m, "{ var fname: u8[>..] = []; format(fname, prefix, \"", f.name, "\"); ", find_ns(f.ty), "::gw_field(out, fname, v.", f.name,
@@ -569,6 +573,28 @@ fn gen_parse_struct(m: u8[>..]&, sname: const u8[:]) {
     m.append("}\n");
 }
 
+// The repeater buttons of a rich form (up, down, del, add), applied after the items are read. Returns true when one
+// was applied; the errors the parse added are dropped then, since the form is shown again, not saved.
+fn gen_act_struct(m: u8[>..]&, sname: const u8[:]) {
+    format(m, "fn gw_act_", sname, "(req: const http::Request&, prefix: const u8[:], v: ", sname, "&, errs: gweb::FieldErrors&, before: i64) -> bool {\n");
+    var has_list = false;
+    for f in fields {
+        if f.owner != sname || f.kind != K_LIST { continue; }
+        has_list = true;
+        let n = f.name;
+        format(m, "    let kind, k = gweb::_vp_act(req, prefix, \"", n, "\");\n    if kind == 0 { return false; }\n");
+        m.append("    errs.n = before;\n    if before == 0 { errs.dropped = false; }\n");
+        format(m, "    if kind == 1 {\n        if v.", n, ".len < ", f.cap, " { v.", n, ".push(", f.ty, " { .. }); }\n",
+               "        else { var id: u8[>..] = []; format(id, prefix, \"", n, ".n\"); gweb::add_error(errs, id, \"Too many items.\"); }\n    }\n");
+        format(m, "    else if kind == 2 && k < v.", n, ".len {\n        var i = k;\n        while i + 1 < v.", n, ".len { v.", n, "[i] = v.", n, "[i + 1]; i += 1; }\n        v.", n, ".pop();\n    }\n");
+        format(m, "    else if kind == 3 && k > 0 && k < v.", n, ".len { let t = v.", n, "[k]; v.", n, "[k] = v.", n, "[k - 1]; v.", n, "[k - 1] = t; }\n");
+        format(m, "    else if kind == 4 && k + 1 < v.", n, ".len { let t = v.", n, "[k]; v.", n, "[k] = v.", n, "[k + 1]; v.", n, "[k + 1] = t; }\n");
+        m.append("    return true;\n");
+    }
+    if !has_list { m.append("    return false;\n"); }
+    m.append("}\n");
+}
+
 fn gen_enum_helpers(m: u8[>..]&) {
     for e in enum_names {
         let vs = variants_of(e);
@@ -588,12 +614,32 @@ fn field_kind_ty(f: const Fld&) -> const u8[:] {
     return "";
 }
 
+// let ITEM_LABEL = "title"; names a text field of the repeater's item. A rich form shows it in the item's legend.
+fn check_item_label(src: const u8[:], code: const u8[:]) {
+    item_label_field.clear();
+    let name = let_literal(code, "ITEM_LABEL");
+    if name.len == 0 { return; }
+    var list_ty: u8[..96] = "";
+    for f in fields { if f.owner == "Props" && f.kind == K_LIST { list_ty.clear(); list_ty.append(f.ty); } }
+    var ln = 0;
+    for line, i in split(code, '\n') { if starts_with(trim_start(line), "let ITEM_LABEL ") { ln = i + 1; } }
+    var m: u8[>..] = [];
+    if list_ty.len == 0 { err(src, ln, "ITEM_LABEL needs a repeater in Props"); return; }
+    let idx = find_field(list_ty, name);
+    if idx < 0 || fields[idx].kind != K_TEXT {
+        format(m, "ITEM_LABEL: \"", name, "\" is not a text field of ", list_ty);
+        err(src, ln, m);
+        return;
+    }
+    item_label_field.append(name);
+}
+
 // Generates the view's namespace file and its template. Returns false after reporting.
 fn gen_view(v: View&) -> bool {
     var code: u8[>..] = [];
     if !read_checked(v.goose, code) { return false; }
     let before = errors;
-    for n in ["read", "write", "defaults", "form", "parse"] {
+    for n in ["read", "write", "defaults", "form", "form_req", "parse"] {
         if defines(code, n) {
             var m: u8[>..] = [];
             format(m, "fn ", n, " is generated for every view; rename yours");
@@ -609,7 +655,7 @@ fn gen_view(v: View&) -> bool {
     enum_names.clear();
     enum_vars.clear();
     let lines = split(code, '\n');
-    if parse_struct(v.goose, lines, "Props", true, 0) && parse_inner(v.goose, lines) { apply_ui(v.goose, code); }
+    if parse_struct(v.goose, lines, "Props", true, 0) && parse_inner(v.goose, lines) { apply_ui(v.goose, code); check_item_label(v.goose, code); }
     if errors > before { return false; }
     var extra: u8[>..] = [];
     extra.append("\n// gweb: view codec, form and parser (generated)\n");
@@ -626,6 +672,7 @@ fn gen_view(v: View&) -> bool {
         gen_write_struct(extra, f.owner);
         gen_form_struct(extra, f.owner);
         gen_parse_struct(extra, f.owner);
+        if f.owner == "Props" { gen_act_struct(extra, f.owner); }
     }
     extra.append("""
 fn read(text: const u8[:], p: Props&) -> i64 {
@@ -641,21 +688,28 @@ fn defaults(out: u8[>..]&) { var p = Props { .. }; gw_write_Props(out, p); }
 fn form(out: u8[>..]&, text: const u8[:], errs: const gweb::FieldErrors&, prefix: const u8[:]) {
     var p = Props { .. };
     read(text, p);
-    gw_form_Props(out, prefix, p, errs);
+    let none = http::empty_request();
+    gw_form_Props(out, prefix, p, errs, none, false);
+}
+fn form_req(out: u8[>..]&, req: const http::Request&, text: const u8[:], errs: const gweb::FieldErrors&, prefix: const u8[:]) {
+    var p = Props { .. };
+    read(text, p);
+    gw_form_Props(out, prefix, p, errs, req, true);
 }
 fn parse(req: const http::Request&, prefix: const u8[:], out: u8[>..]&, errs: gweb::FieldErrors&) -> bool {
     var p = Props { .. };
     let before = errs.n;
     gw_parse_Props(req, prefix, p, errs);
+    let acted = gw_act_Props(req, prefix, p, errs, before);
 """);
     // validate names its fields plainly ("title"); the form shows errors under the control's name, so they get the prefix.
     if defines(code, "validate") {
-        extra.append("    if errs.n == before {\n        var ve = gweb::no_errors();\n        validate(p, ve);\n");
+        extra.append("    if errs.n == before && !acted {\n        var ve = gweb::no_errors();\n        validate(p, ve);\n");
         extra.append("        for k in ve.n {\n            var fname: u8[>..] = [];\n            if ve.items[k].field.len > 0 { format(fname, prefix, ve.items[k].field); }\n");
         extra.append("            gweb::add_error(errs, fname, ve.items[k].message);\n        }\n    }\n");
     }
     // The JSON is written after an error too: it holds what the user sent, so the page can show the form again as typed.
-    extra.append("    write(out, p);\n    return errs.n == before;\n}\n");
+    extra.append("    write(out, p);\n    return errs.n == before && !acted;\n}\n");
     var more: u8[>..] = [];
     more.append("import json; import net.http; import gweb; import gweb.site.views; import gweb.forms.valid; ");
     write_prefixed(v.goose, v.ns, code, extra, more);
@@ -700,6 +754,7 @@ fn gen_meta(v: const View&, label: const u8[:], slots: const u8[:]) {
 }
 
 var cur_code: u8[>..];
+var item_label_field: u8[>..];       // let ITEM_LABEL = "field"; of the view being generated, "" for none
 
 // ---------------------------------------------------------------- everything
 
@@ -757,6 +812,9 @@ fn gen_group(m: u8[>..]&, g: const u8[:], a: i64, b: i64) {
     m.append("    return false;\n}\n");
     format(m, "fn ", g, "_form(out: u8[>..]&, name: const u8[:], props_json: const u8[:], errs: const gweb::FieldErrors&, prefix: const u8[:]) -> bool {\n    let i = ", g, "_index(name);\n");
     for k in a..b { format(m, "    if i == ", k - a, " { ", views[k].ns, "::form(out, props_json, errs, prefix); return true; }\n"); }
+    m.append("    return false;\n}\n");
+    format(m, "fn ", g, "_form_req(out: u8[>..]&, req: const http::Request&, name: const u8[:], props_json: const u8[:], errs: const gweb::FieldErrors&, prefix: const u8[:]) -> bool {\n    let i = ", g, "_index(name);\n");
+    for k in a..b { format(m, "    if i == ", k - a, " { ", views[k].ns, "::form_req(out, req, props_json, errs, prefix); return true; }\n"); }
     m.append("    return false;\n}\n");
     format(m, "fn ", g, "_parse(req: const http::Request&, name: const u8[:], prefix: const u8[:], out_json: u8[>..]&, errs: gweb::FieldErrors&) -> bool {\n    let i = ", g, "_index(name);\n");
     for k in a..b { format(m, "    if i == ", k - a, " { return ", views[k].ns, "::parse(req, prefix, out_json, errs); }\n"); }

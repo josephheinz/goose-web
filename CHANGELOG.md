@@ -5,6 +5,7 @@
 A minor release: additions, and fixes that keep documented behaviour.
 
 - New: Goose packages for an app. `package NAME SOURCE` in `gweb.packages` (or in a package's `gweb.package`) declares a library such as goose-postgres in the generated root, so app files say `import pg;`. Works for build, `test`, `check`, `lsp-gen` and `export`. A path, `owner/repo@tag` or a git URL. `GWEB_PKG_NAME` overrides a source. Conflicting versions and reserved names are errors at the line. See `docs/site/packages.md`. Tests: `test/pkgdeps.sh` (a C-free package) and `test/pgdeps.sh` (goose-postgres, skipped without a checkout, libpq or `pg_ctl`).
+- New: `g_form_req(out, req, name, json, errs, prefix)` (and `form_req` in the view's namespace), the rich generated form. It shows the posted text of a field that failed (the Addendum 20 gap: `g_parse` keeps a default for text that did not parse), links help text to its control (`id="NAME-help"` and `aria-describedby="NAME-help NAME-error"`), and draws repeater controls: Up, Down, Remove and Add as submit buttons named `PREFIX+field.act`, which `g_parse` applies (it returns false with no errors, so the page draws the form again). `let ITEM_LABEL = "field";` labels each item's legend. `g_form` and `form` keep their markup. Tests: `test/richforms.sh`.
 
 ## v1.0.0
 

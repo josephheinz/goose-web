@@ -380,7 +380,7 @@ readable `gwi.js`.
 | `forms/upload.goose`, `src/upload.c` | Multipart parser, `gweb::Upload`, `save_upload`, `check_upload`; file helpers in C. |
 | `site/errors.goose`, `src/inflight.c` | `ErrorInfo`, `gweb::fail`, crash replies, dev error detail; the in-flight request table. |
 | `http/static.goose` | Static files: hashed URLs, immutable caching, gzip variants, ETag and 304. |
-| `site/views.goose` | Views runtime: `ViewMeta`, `FieldUi`, `Renamed`, the lenient JSON readers (`jr_*`) and the form controls the generated code calls. In `site/` because a view is page content, like `meta` and `template`. |
+| `site/views.goose` | Views runtime: `ViewMeta`, `FieldUi`, `Renamed`, the lenient JSON readers (`jr_*`), the form controls (plain and rich: posted text, help ids, repeater buttons) and the repeater action reader the generated code calls. In `site/` because a view is page content, like `meta` and `template`. |
 | `site/markdown.goose` | `gweb::markdown` and `markdown_text`: the safe Markdown subset. In `site/` for the same reason. |
 | `cli/structs.goose` | The struct and enum field scanner shared by the form decoders and the views generator. |
 | `cli/views.goose` | The views generator: scans `views/`, writes each view's codec and form, and the `views` registry. |
@@ -410,6 +410,9 @@ readable `gwi.js`.
 | `test/files_test.goose` | `send_file`: types, ETag and 304, HEAD, options and hostile paths. |
 | `test/cmsready.sh`, `test/cmsready/` | A CMS package from a git source, mounted at `/admin` with a module inside it, and a host app: catch-all pages from SQLite, views by name, markdown, `/media`, two hosts with a keyed cache and `epoch_bump`, sitemap per host, an admin edit, an upload. The worked example in `docs/site/building-a-cms.md`. |
 | `test/views.sh`, `test/views/` | Views: the generated codec, forms and registry (`gweb test` on `test/views/site`), package views, build errors, `reserved_prefixes`, a variable-size state `Msg`. |
+| `test/richforms.sh`, `test/richforms/` | The rich generated form (1.1): posted text after an error, help linked by `aria-describedby`, repeater buttons applied by `g_parse`, `ITEM_LABEL`, and their build errors. |
+| `test/pkgdeps.sh`, `test/pkgdeps/` | `package NAME SOURCE` (1.1) with a small C-free package: the root, check, test, lsp-gen and export, a gweb package that needs one, conflicts and errors, `GWEB_PKG_NAME`. |
+| `test/pgdeps.sh`, `test/pgdeps/` | goose-postgres as a declared package: the example app builds, and runs against a throwaway server. Skips without a checkout, libpq or `pg_ctl`. |
 | `test/markdown_test.goose` | `gweb::markdown`: the subset, hostile input, limits, speed. |
 | `test/auth.sh`, `cache.sh`, `sitemap.sh`, `push.sh` | Auth, page cache, sitemap and server push suites. |
 | `test/forms.sh`, `errors.sh` | Site suites: forms, uploads, `error.html`, crash replies. |

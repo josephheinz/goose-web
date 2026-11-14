@@ -441,7 +441,7 @@ Each compiles to `Z(out, req, ctx, doc, at, "left");`, where `Z` is a function y
 (group `layouts`) may also use `@meta()` and get the page's module tags at their first slot.
 
 **Generated, in the view's namespace:** `fn read(json, p: Props&) -> i64` (the warning count), `fn write(out, p)`,
-`fn defaults(out)`, `fn form(out, json, errs, prefix)`, `fn parse(req, prefix, out, errs) -> bool` and
+`fn defaults(out)`, `fn form(out, json, errs, prefix)`, `fn form_req(out, req, json, errs, prefix)`, `fn parse(req, prefix, out, errs) -> bool` and
 `fn render<Z, D>(out, req, ctx, props, doc, at)`. Do not define those names.
 
 **Generated, in the module `views`** (`import views;`), for each group `g`:
@@ -451,6 +451,7 @@ g_count() -> i64                       g_name(i) -> const u8[:]              g_i
 g_meta(i) -> gweb::ViewMeta            // label, icon, fields (kind, cap, required), slots and their allow lists
 g_render(out, req, ctx, name, props_json, doc, at, Z) -> bool      // false: no such view
 g_defaults(name, out_json) -> bool     g_form(out, name, props_json, errs, prefix) -> bool
+g_form_req(out, req, name, props_json, errs, prefix) -> bool       // the rich form, below (1.1)
 g_parse(req, name, prefix, out_json, errs) -> bool                 // form to canonical JSON, then your validate
 ```
 
@@ -474,7 +475,25 @@ for `T[>..<]`).
 
 `validate` names fields plainly (`"title"`); `g_parse` puts the form prefix in front of each error, so the message
 shows under the control (`w.title`). After an error `g_parse` still writes the JSON it read (a field that did not
-parse keeps its default), so the page can draw the form again with what the user typed: `g_form(out, name, json, errs, prefix)`.
+parse keeps its default), so the page can draw the form again: `g_form(out, name, json, errs, prefix)`. To show the
+text the user typed, use `g_form_req`.
+
+**The rich form (1.1).** `g_form_req(out, req, name, json, errs, prefix)` draws the same controls as `g_form`, and:
+
+- **Shows what was typed.** After a failed POST, a field that has an error shows the posted text (`12a`, or text over
+  its cap), not the default that `g_parse` kept. A GET request, and a field without an error, show the stored value.
+  Pass the POST request you parsed. A foreign field (`ns::T`) draws itself through `gw_field` and is not changed.
+- **Links help to the control.** `<small class="gw-help" id="NAME-help">`, and the control's `aria-describedby` lists
+  the help id and the error id (`NAME-help NAME-error`).
+- **Repeater buttons that work without JS.** Each item ends with Up, Down and Remove, the list ends with Add, all
+  submit buttons named `PREFIX + field + ".act"` with the value `up:K`, `down:K`, `del:K` or `add`. `g_parse` reads
+  the items, applies the action, drops the errors of the other fields, and returns false with no errors: draw the form
+  again with `g_form_req` instead of saving. At the limit, Add is disabled, and a posted Add gives "Too many items."
+  A hidden first button (`value=""`) makes Enter in a text field act as Save, not as the first item's button.
+- **Labels items.** `let ITEM_LABEL = "title";` names a text field of the item struct. The legend reads `#2: Eggs`.
+  A name that is not a text field of the item is a build error at the line.
+
+`g_form` and `form` keep their 1.0 markup.
 
 The struct scanner is `cli/structs.goose`; the form decoders (Forms and validation) use it too.
 
