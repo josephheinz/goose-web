@@ -381,6 +381,7 @@ readable `gwi.js`.
 | `site/errors.goose`, `src/inflight.c` | `ErrorInfo`, `gweb::fail`, crash replies, dev error detail; the in-flight request table. |
 | `http/static.goose` | Static files: hashed URLs, immutable caching, gzip variants, ETag and 304. |
 | `site/views.goose` | Views runtime: `ViewMeta`, `FieldUi`, `Renamed`, the lenient JSON readers (`jr_*`), the form controls (plain and rich: posted text, help ids, repeater buttons) and the repeater action reader the generated code calls. In `site/` because a view is page content, like `meta` and `template`. |
+| `site/image.goose`, `cli/image.goose` | `gweb::image_size` and `image_size_file`: pixel sizes from PNG, GIF, JPEG, WebP and SVG headers. std only; `cli/image.goose` is a symlink, so `@image()` at build time and the runtime share it. |
 | `site/markdown.goose` | `gweb::markdown` and `markdown_text`: the safe Markdown subset. In `site/` for the same reason. |
 | `cli/structs.goose` | The struct and enum field scanner shared by the form decoders and the views generator. |
 | `cli/views.goose` | The views generator: scans `views/`, writes each view's codec and form, and the `views` registry. |
@@ -411,6 +412,7 @@ readable `gwi.js`.
 | `test/cmsready.sh`, `test/cmsready/` | A CMS package from a git source, mounted at `/admin` with a module inside it, and a host app: catch-all pages from SQLite, views by name, markdown, `/media`, two hosts with a keyed cache and `epoch_bump`, sitemap per host, an admin edit, an upload. The worked example in `docs/site/building-a-cms.md`. |
 | `test/views.sh`, `test/views/` | Views: the generated codec, forms and registry (`gweb test` on `test/views/site`), package views, build errors, `reserved_prefixes`, a variable-size state `Msg`. |
 | `test/unauth_test.goose`, `test/unauth_test.mjs` | `require_login` answers 401 with `GW-Login` for a request that sends `GW-Auth: 401` and 303 otherwise; `gwf.js` and `gwn.js` send the header, fire `gw:unauthorized` and navigate unless it is canceled. |
+| `test/image_test.goose` | `gweb::image_size` on built-in and fixture images, `image_size_file`. |
 | `test/slotcheck.sh` | `@slot()` inside `<title>`, `<textarea>`, `<script>` or `<style>` is a build error (1.1). |
 | `test/richforms.sh`, `test/richforms/` | The rich generated form (1.1): posted text after an error, help linked by `aria-describedby`, repeater buttons applied by `g_parse`, `ITEM_LABEL`, and their build errors. |
 | `test/pkgdeps.sh`, `test/pkgdeps/` | `package NAME SOURCE` (1.1) with a small C-free package: the root, check, test, lsp-gen and export, a gweb package that needs one, conflicts and errors, `GWEB_PKG_NAME`. |

@@ -1004,6 +1004,11 @@ is read from the file at build time (PNG, GIF, JPEG, WebP, SVG; no `width`/`heig
 `attrs` is a string literal copied as written, and `loading` or `decoding` in it replace the defaults.
 There is no resizing; make the variants yourself.
 
+At run time, `import gweb.site.image;` gives `gweb::image_size(data) -> w, h, known` for the bytes of an image
+(the reader `@image()` uses at build time) and `gweb::image_size_file(path) -> w, h, known`. A size is `known`
+when the header is complete and the width and height are above 0; an SVG in percent or `em` has none. Use it
+for an upload's size, as `check_upload` has checked its type.
+
 ```goose
 fn load(req: const http::Request&, ctx: gweb::Ctx&) -> Props {
     ctx.title = "Pricing";

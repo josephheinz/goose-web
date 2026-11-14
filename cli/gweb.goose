@@ -20,6 +20,7 @@ import html;
 import pins;
 import structs;
 import views;
+import image;     // cli/image.goose is site/image.goose (a symlink): the reader gweb::image_size shares with the runtime
 
 // ---------------------------------------------------------------- C helpers (proc.c)
 
@@ -1949,152 +1950,6 @@ fn asset_call(path: const u8[:], ln: i64, args: const u8[:], out: u8[>..]&) {
     if i >= 0 { out.append("out.append(\""); lit(out, statics[i].hashed); out.append("\"); "); }
 }
 
-// ---------------------------------------------------------------- image sizes
-
-fn img_byte(d: const u8[:], i: i64) -> i64 { if i < 0 || i >= d.len { return 0; } return d[i]; }
-fn img_be(d: const u8[:], at: i64, n: i64) -> i64 {
-    var v = 0;
-    for k in n { v = v * 256 + img_byte(d, at + k); }
-    return v;
-}
-fn img_le(d: const u8[:], at: i64, n: i64) -> i64 {
-    var v = 0;
-    for k in n { v = v * 256 + img_byte(d, at + n - 1 - k); }
-    return v;
-}
-fn img_space(c: u8) -> bool { c == ' ' || c == '\t' || c == '\n' || c == '\r' }
-
-// A length of digits, an optional fraction and an optional px unit; rounded to whole pixels. Any other unit is not a pixel size.
-fn svg_dim(v: const u8[:]) -> i64, bool {
-    let t = trim(v);
-    var i = 0;
-    var whole = 0;
-    while i < t.len && t[i] >= '0' && t[i] <= '9' { whole = whole * 10 + (t[i] - '0'); i += 1; }
-    var digits = i;
-    if i < t.len && t[i] == '.' {
-        i += 1;
-        if i < t.len && t[i] >= '0' && t[i] <= '9' { if t[i] >= '5' { whole += 1; } digits += 1; }
-        while i < t.len && t[i] >= '0' && t[i] <= '9' { i += 1; digits += 1; }
-    }
-    if digits == 0 { return 0, false; }
-    if i < t.len && !(t[i..] == "px") { return 0, false; }
-    return whole, whole > 0;
-}
-
-// The value of attribute name in an <svg ...> tag, or "". A name inside another (stroke-width) is skipped by requiring space before it.
-fn svg_attr(tag: const u8[:], name: const u8[:]) -> const u8[:] {
-    var pos = 0;
-    while pos < tag.len {
-        let k = find(tag[pos..], name);
-        if k < 0 { return ""; }
-        let at = pos + k;
-        pos = at + name.len;
-        if at == 0 || !img_space(tag[at - 1]) { continue; }
-        var j = pos;
-        while j < tag.len && img_space(tag[j]) { j += 1; }
-        if j >= tag.len || tag[j] != '=' { continue; }
-        j += 1;
-        while j < tag.len && img_space(tag[j]) { j += 1; }
-        if j >= tag.len || (tag[j] != '"' && tag[j] != '\'') { continue; }
-        let q = tag[j];
-        var e = j + 1;
-        while e < tag.len && tag[e] != q { e += 1; }
-        if e >= tag.len { return ""; }
-        return tag[j + 1..e];
-    }
-    return "";
-}
-
-fn svg_size(d: const u8[:]) -> i64, i64, bool {
-    let at = find(d, "<svg");
-    if at < 0 { return 0, 0, false; }
-    var end = at;
-    var quote: u8 = 0;
-    while end < d.len {
-        let c = d[end];
-        if quote != 0 { if c == quote { quote = 0; } }
-        else if c == '"' || c == '\'' { quote = c; }
-        else if c == '>' { break; }
-        end += 1;
-    }
-    let tag = d[at..end];
-    let w, wok = svg_dim(svg_attr(tag, "width"));
-    let h, hok = svg_dim(svg_attr(tag, "height"));
-    if wok && hok { return w, h, true; }
-    // viewBox is "min-x min-y width height", separated by spaces or commas.
-    let vb = svg_attr(tag, "viewBox");
-    var n = 0;
-    var vw = 0;
-    var vh = 0;
-    var vok = true;
-    var i = 0;
-    while i < vb.len {
-        while i < vb.len && (img_space(vb[i]) || vb[i] == ',') { i += 1; }
-        var j = i;
-        while j < vb.len && !img_space(vb[j]) && vb[j] != ',' { j += 1; }
-        if j > i {
-            if n == 2 { let x, ok = svg_dim(vb[i..j]); vw = x; vok = vok && ok; }
-            if n == 3 { let x, ok = svg_dim(vb[i..j]); vh = x; vok = vok && ok; }
-            n += 1;
-        }
-        i = j;
-    }
-    if n == 4 && vok { return vw, vh, true; }
-    return 0, 0, false;
-}
-
-// Reads the pixel size from the file's header; false for an unknown format or a truncated file.
-fn image_size(d: const u8[:]) -> i64, i64, bool {
-    if d.len >= 24 && img_be(d, 0, 4) == 2303741511 && img_be(d, 4, 4) == 218765834 && d[12..16] == "IHDR" {
-        let w = img_be(d, 16, 4);
-        let h = img_be(d, 20, 4);
-        return w, h, w > 0 && h > 0;
-    }
-    if d.len >= 10 && (starts_with(d, "GIF87a") || starts_with(d, "GIF89a")) {
-        let w = img_le(d, 6, 2);
-        let h = img_le(d, 8, 2);
-        return w, h, w > 0 && h > 0;
-    }
-    if d.len >= 4 && img_byte(d, 0) == 255 && img_byte(d, 1) == 216 {
-        var i = 2;
-        while i + 4 <= d.len {
-            if d[i] != 255 { i += 1; continue; }
-            let m = img_byte(d, i + 1);
-            if m == 255 { i += 1; continue; }
-            // Markers with no length: TEM, RSTn, SOI, and a stuffed zero.
-            if m == 0 || m == 1 || m == 216 || (m >= 208 && m <= 215) { i += 2; continue; }
-            if m == 217 { break; }
-            let seg = img_be(d, i + 2, 2);
-            if seg < 2 { break; }
-            if m >= 192 && m <= 207 && m != 196 && m != 200 && m != 204 {
-                if i + 9 > d.len { break; }
-                let h = img_be(d, i + 5, 2);
-                let w = img_be(d, i + 7, 2);
-                return w, h, w > 0 && h > 0;
-            }
-            i += 2 + seg;
-        }
-        return 0, 0, false;
-    }
-    if d.len >= 30 && starts_with(d, "RIFF") && d[8..12] == "WEBP" {
-        let kind = d[12..16];
-        if kind == "VP8 " && img_byte(d, 23) == 157 && img_byte(d, 24) == 1 && img_byte(d, 25) == 42 {
-            let w = img_le(d, 26, 2) & 16383;
-            let h = img_le(d, 28, 2) & 16383;
-            return w, h, w > 0 && h > 0;
-        }
-        if kind == "VP8L" && img_byte(d, 20) == 47 {
-            let b = img_le(d, 21, 4);
-            return (b & 16383) + 1, ((b >> 14) & 16383) + 1, true;
-        }
-        if kind == "VP8X" {
-            return img_le(d, 24, 3) + 1, img_le(d, 27, 3) + 1, true;
-        }
-        return 0, 0, false;
-    }
-    return svg_size(d);
-}
-
 // ---------------------------------------------------------------- @image
 
 // Where the top-level comma after from is, or args.len: quotes and brackets hide the commas inside them.
@@ -2139,7 +1994,7 @@ fn sets_attr(attrs: const u8[:], name: const u8[:]) -> bool {
         let at = pos + k;
         let e = at + name.len;
         pos = e;
-        if (at == 0 || img_space(attrs[at - 1])) && (e == attrs.len || attrs[e] == '=' || img_space(attrs[e])) { return true; }
+        if (at == 0 || gweb::_img_space(attrs[at - 1])) && (e == attrs.len || attrs[e] == '=' || gweb::_img_space(attrs[e])) { return true; }
     }
     return false;
 }
@@ -2183,7 +2038,7 @@ fn image_call(path: const u8[:], ln: i64, args: const u8[:], out: u8[>..]&) {
     if i < 0 { return; }
     var data: u8[>..] = [];
     if !read(statics[i].file, data) { return; }
-    let w, h, known = image_size(data);
+    let w, h, known = gweb::image_size(data);
     var tag: u8[>..] = [];
     format(tag, "<img src=\"", statics[i].hashed, "\"");
     if known { format(tag, " width=\"", w, "\" height=\"", h, "\""); }
