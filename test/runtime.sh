@@ -54,6 +54,7 @@ if sh "$HERE/morph.sh"; then ok; else bad "test/morph.sh"; fi
 if sh "$HERE/reactive.sh"; then ok; else bad "test/reactive.sh"; fi
 . "$HERE/jsdom_dir.sh"
 if JSDOM_DIR=$DIR node "$HERE/nav_test.mjs"; then ok; else bad "test/nav_test.mjs"; fi
+if JSDOM_DIR=$DIR node "$HERE/unauth_test.mjs"; then ok; else bad "test/unauth_test.mjs"; fi
 if JSDOM_DIR=$DIR node "$HERE/transition_test.mjs"; then ok; else bad "test/transition_test.mjs"; fi
 if JSDOM_DIR=$DIR node "$HERE/morph_export_test.mjs"; then ok; else bad "test/morph_export_test.mjs"; fi
 # sse_test.mjs runs its store cases on the compiled RCart store when there is a ./gweb to generate it.

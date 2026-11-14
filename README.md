@@ -753,6 +753,12 @@ fn before(req: const http::Request&, ctx: gweb::Ctx&, res: http::Response&) -> b
 - Passwords: `gweb::password_hash` makes a `$pbkdf2-sha256$600000$...` string; `password_verify("", pw)`
   for an unknown user costs the same as a wrong password; `password_needs_rehash` tells you when to re-store.
   A login holds a worker for a fraction of a second, so rate-limit it.
+- **An expired session in a fragment or boosted request** (1.1). `gwf.js` and `gwn.js` send `GW-Auth: 401`. For such a
+  request `require_login` answers `401` with `GW-Login: <login URL, with next for a GET>`, instead of the 303, so the
+  login page is not morphed into the page. The client fires a cancelable `gw:unauthorized` event on `window` (detail:
+  the reply). If no listener calls `preventDefault()`, it navigates to the URL it requested, and the server's redirect
+  takes the browser to the login. A request without the header (a browser, curl, an older runtime) gets the 303.
+  `gwn.js` now fetches with the header too, so a boosted link to a guarded page behaves the same way.
 - `gweb::require_login_api` answers `401` JSON. In templates: `gweb::user_id(ctx)`, `gweb::logged_in(ctx)`.
 - A page's `fn POST` cannot refuse with a `429`; do the login in a `route.goose` and point the form at it.
 - Behind a TLS proxy (`X-Forwarded-Proto: https` and `GWEB_TRUST_PROXY=1`) the cookie is `__Host-gw_session` with `Secure`.

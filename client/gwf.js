@@ -7,6 +7,8 @@ const D = document;
 // A reply without the GW-Fragment echo (a redirect to another page) becomes a normal navigation;
 // the last request for a target wins. A 422 with the echo is morphed like a 200; a multipart form posts FormData;
 // after 150 ms a link, or a form with gw-loading, fills the box with its loading template, restored on failure.
+// A 401 (require_login, for a request that sends GW-Auth: 401) fires a cancelable gw:unauthorized event on window, with
+// the reply as detail; unless a listener cancels it, the page navigates to the URL, and the server sends it to the login.
 function frag(type, sel, attr, form) {
   D.addEventListener(type, async (e) => {
     const el = e.target.closest?.(sel);
@@ -25,7 +27,8 @@ function frag(type, sel, attr, form) {
       if (t && box.gw == n) saved = [...box.childNodes], box.replaceChildren(t.content.cloneNode(true));
     }, 150);
     try {
-      const r = await fetch(url, { method: post ? "POST" : "GET", body: post ? data : null, headers: { "GW-Fragment": name } });
+      const r = await fetch(url, { method: post ? "POST" : "GET", body: post ? data : null, headers: { "GW-Fragment": name, "GW-Auth": "401" } });
+      if (r.status == 401) return dispatchEvent(new CustomEvent("gw:unauthorized", { cancelable: 1, detail: r })) && location.assign(url);
       if (!r.ok && !(r.status == 422 && r.headers.get("GW-Fragment") == name)) throw Error("fragment " + name + ": " + r.status + " from " + url.pathname);
       if (r.headers.get("GW-Fragment") != name) return location.assign(r.url);
       const html = await r.text();

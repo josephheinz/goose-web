@@ -144,6 +144,7 @@ step catchall_test catchall_test
 step crypto_test goose_test crypto_test
 step env_test goose_test env_test
 step session_test goose_test session_test
+step unauth_test goose_test unauth_test
 step rate_test goose_test rate_test
 step security_test goose_test security_test
 step crypto_test.c c_test crypto_test "$ROOT/src/crypto.c"

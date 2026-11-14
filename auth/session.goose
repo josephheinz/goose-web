@@ -291,6 +291,13 @@ fn _pct_encode(out: u8[>..]&, s: const u8[:]) {
     }
 }
 
+// True when the request says its client handles a 401: gwf.js and gwn.js send GW-Auth: 401. A request without it, from a
+// browser, a script or an older runtime, gets the redirect.
+fn _wants_401(req: const http::Request&) -> bool {
+    let v, has = http::header(req, "gw-auth");
+    return has && trim(v) == "401";
+}
+
 fn _require_login_at(req: const http::Request&, ctx: Ctx&, res: http::Response&, login_path: const u8[:], now: i64) -> bool {
     no_store(res);
     if _session_at(req, ctx, now) { return true; }
@@ -305,11 +312,21 @@ fn _require_login_at(req: const http::Request&, ctx: Ctx&, res: http::Response&,
         // redirect cuts at 1024 bytes, which could split a %XX; a too-long target goes without next instead.
         if to.len > 1024 { to.clear(); to.append(login_path); }
     }
+    if _wants_401(req) {
+        res.status = http::Status.Unauthorized;
+        res.content_type.clear();
+        res.content_type.append("text/plain; charset=utf-8");
+        res.body.clear();
+        res.body.append("login required");
+        http::set_header(res, "GW-Login", to[..min(to.len, 1024)]);
+        return false;
+    }
     redirect(ctx, to, 303);
     return false;
 }
 
-// True when logged in; else a 303 to login_path (with ?next= for GET and HEAD) and false.
+// True when logged in; else a 303 to login_path (with ?next= for GET and HEAD) and false. A fragment or boosted request
+// (GW-Auth: 401, sent by gwf.js and gwn.js) gets 401 and a GW-Login header with that URL instead.
 fn require_login(req: const http::Request&, ctx: Ctx&, res: http::Response&, login_path: const u8[:]) -> bool {
     return _require_login_at(req, ctx, res, login_path, _now_s());
 }

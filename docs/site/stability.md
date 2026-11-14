@@ -97,7 +97,7 @@ renamed, re-typed or removed in any release.
 
 The template tags in the README Templates table (`{expr}`, `{#raw}`, `{#if}`, `{#for}`, `{#let}`, `@f()`, `@Name()`,
 `@slot()`, `{-- --}`), the literal-brace and `@` rules, the component syntax, and the client subset of `.gshtml`
-(it may grow, not shrink). `gw-target`, `gw-key`, `gw-loading`, the `GW-Fragment` request header, and the
+(it may grow, not shrink). `gw-target`, `gw-key`, `gw-loading`, the `GW-Fragment` request header, the `GW-Auth: 401` request header, the `gw:unauthorized` event and the `GW-Login` reply header (1.1), and the
 `gw_read`, `gw_write`, `gw_field` and `gw_parse` conventions in views, `ITEM_LABEL`, and the generated `g_form_req` and `.act` button names (1.1).
 
 ### Commands, flags and environment

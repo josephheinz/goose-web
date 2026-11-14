@@ -36,6 +36,10 @@ fn POST(req: const http::Request&, ctx: gweb::Ctx&) -> Props {
   `fn POST(` in that page.
 - The request carries `GW-Fragment: NAME`. The reply echoes it. An unknown
   name gives the whole page.
+- The request also carries `GW-Auth: 401`. When the session has expired,
+  `require_login` then answers `401` with a `GW-Login` header (not a redirect), and the
+  runtime fires `gw:unauthorized` on `window` and, unless a listener cancels it,
+  navigates to the login. Without the header the reply is the 303 as before.
 - Give `gw-key` to every item of a list that can be reordered or lose an
   item other than the last.
 - `fn POST(req, ctx) -> Props` runs in place of `load` for a POST. It needs
