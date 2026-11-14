@@ -25,7 +25,8 @@ gwc 1024
 gwn 1536
 gws 1024
 gwt 768
-gwe 768"
+gwe 768
+gwq 384"
 
 for src in "$ROOT"/client/gw*.js; do
   case "$src" in *.min.js) continue ;; esac

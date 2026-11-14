@@ -59,7 +59,9 @@ package cms file:///srv/repos/cms-lib.git@v2
   `state`, `t`, `views`, `jobs`, `config`, `site`, `nf`, `smap`, `socket`), a name a gweb package has, and a name
   declared with two sources. The error is at the line and names both sources and who asked for them.
 - A line `package at /x` still means a folder named `package`, mounted.
-- A Goose package that needs C (libpq) needs its library on the machine. `gweb build` fails the way `goose build` does.
+- A Goose package that needs C (libpq, libcurl) needs its library on the machine. `gweb build` fails the way
+  `goose build` does. The Dockerfile adds libcurl for goose-blob and libpq for goose-postgres (1.2); see
+  [Docker](../DEPLOY.md#docker).
 
 A gweb package may need Goose packages. Its `gweb.package` has the same lines, and a relative path is relative to
 the package folder:
@@ -74,6 +76,14 @@ gweb merges them into the project's list. The same source twice is one line. Two
 `blob: two sources: A (gweb.packages:2) and B (package cms, /path/gweb.package:3); declare one version`. Declare the
 one you want in the project's `gweb.packages` and change the package, or set `GWEB_PKG_BLOB`. A package with `package`
 lines says `gweb 1.1`, since gweb 1.0 refuses the line.
+
+## Media storage
+
+`package blob josephheinz/goose-blob@v0.1.0`, then `import blob;`. `blob::open("file:data/media", "/media/")`, or an
+`s3://` URL. Serve disk media with `gweb::send_file(req, ctx, res, blob::root(s), key, opts)`. On S3, redirect to
+`blob::presign_get` (`gweb::redirect` takes URLs up to 8 KiB, 1.2), or use `blob::url` with a public bucket or a CDN.
+The S3 backend needs libcurl; the Dockerfile adds it. Full reference: the
+[goose-blob README](https://github.com/josephheinz/goose-blob).
 
 ## Write one
 

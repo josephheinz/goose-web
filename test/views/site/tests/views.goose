@@ -205,6 +205,14 @@ fn test_form(t: gweb::Tester&) {
     var bad: u8[>..] = [];
     gweb::expect(t, !views::widgets_form(bad, "Nope", "{}", errs, ""), "form of an unknown view is false");
 
+    // ENUM_LABELS and editor: "radio" (1.2); the value sent stays the variant name.
+    var sc: u8[>..] = [];
+    gweb::expect(t, views::sections_form(sc, "TwoColumn", "{\"gap\":\"Wide\"}", errs, "s."), "form of TwoColumn");
+    has(t, sc, "<fieldset class=\"gw-field gw-radio\" id=\"s.gap\"><legend>Gap</legend><label><input type=\"radio\" name=\"s.gap\" value=\"Narrow\"> Narrow</label> <label><input type=\"radio\" name=\"s.gap\" value=\"Wide\" checked> Wide gap</label> </fieldset>", "editor radio with a label from ENUM_LABELS");
+    var ld: u8[>..] = [];
+    gweb::expect(t, views::types_form(ld, "Landing", "{}", errs, ""), "form of Landing");
+    has(t, ld, "<select id=\"theme\" name=\"theme\"><option value=\"Light\" selected>Light</option><option value=\"Dark\">Dark &amp; calm</option></select>", "ENUM_LABELS in a select");
+
     gweb::add_error(errs, "title", "Too short.");
     var e: u8[>..] = [];
     views::widgets_form(e, "Hero", "{}", errs, "");
@@ -278,4 +286,9 @@ fn test_parse(t: gweb::Tester&) {
     let req8 = post_req(raw, "intro=Hello");
     views::types_parse(req8, "Landing", "", out8, errs8);
     eq(t, out8, "{\"theme\":\"Light\",\"intro\":\"Hello\"}", "an absent optional enum keeps its default");
+    var errs9 = gweb::no_errors();
+    var out9: u8[>..] = [];
+    let req9 = post_req(raw, "gap=Wide&reverse=on");
+    gweb::expect(t, views::sections_parse(req9, "TwoColumn", "", out9, errs9), "a radio group parses");
+    eq(t, out9, "{\"gap\":\"Wide\",\"reverse\":true}", "the radio's value is the variant name");
 }

@@ -87,7 +87,7 @@ A `gweb::` function, type or constant is stable if the README, a page under `doc
 `DESIGN-ADDENDUM` documents it, or if it is in the Signatures block. That covers `Ctx`, `Config`, `Level`,
 `FieldErrors`, `FileOptions`, `Schedules`, `Sitemap`, `ErrorInfo`, `ViewMeta` and `FieldUi`, and the functions named
 in the README sections (cookies, CSRF, sessions, rate limits, CORS, forms, uploads, files, streaming, push, logging
-and metrics, i18n, Markdown, cache, jobs, tests). Added in 1.1: `FileOptions.sandbox`, `gweb::image_size`, `gweb::image_size_file`, `jobs::every_local`, and the generated `g_form_req`. Names in the Limits table keep their stated defaults. A limit may
+and metrics, i18n, Markdown, cache, jobs, tests). Added in 1.1: `FileOptions.sandbox`, `gweb::image_size`, `gweb::image_size_file`, `jobs::every_local`, and the generated `g_form_req`. Added in 1.2: `gweb::EnumLabel`, and redirect URLs up to 8,192 bytes. Names in the Limits table keep their stated defaults. A limit may
 grow; it never shrinks.
 
 **Not stable:** a name the docs do not mention, and every name that begins with `_` (see Internal names). They may be
@@ -99,6 +99,7 @@ The template tags in the README Templates table (`{expr}`, `{#raw}`, `{#if}`, `{
 `@slot()`, `{-- --}`), the literal-brace and `@` rules, the component syntax, and the client subset of `.gshtml`
 (it may grow, not shrink). `gw-target`, `gw-key`, `gw-loading`, the `GW-Fragment` request header, the `GW-Auth: 401` request header, the `gw:unauthorized` event and the `GW-Login` reply header (1.1), and the
 `gw_read`, `gw_write`, `gw_field` and `gw_parse` conventions in views, `ITEM_LABEL`, and the generated `g_form_req` and `.act` button names (1.1).
+Added in 1.2: `gw-trigger`, `gw-url`, `ENUM_LABELS` and `editor: "radio"` for enum fields.
 
 ### Commands, flags and environment
 

@@ -35,6 +35,7 @@ var fields: Fld[>..<];               // every parsed struct field of the view be
 var meta_text: u8[>..];              // per view, the Goose statements that fill its ViewMeta
 var enum_names: u8[..64][>..<];      // enums written as helpers for the view being generated
 var enum_vars: u8[>..];
+var enum_labels: u8[>..];            // "Enum\tVariant\tlabel\n" from let ENUM_LABELS, for the view being generated
 var parsed: u8[..96][>..<];         // the structs parse_struct has read for this view              // "Enum\tA,B,C\n" for each
 
 fn has_views() -> bool { return views.len > 0; }
@@ -416,6 +417,43 @@ fn apply_ui(src: const u8[:], code: const u8[:]) {
     };
 }
 
+// Reads let ENUM_LABELS = [gweb::EnumLabel { ty: "Gap", variant: "Wide", label: "Wide gap" }]; each names an enum of
+// the view's fields and one of its variants.
+fn apply_enum_labels(src: const u8[:], code: const u8[:]) {
+    enum_labels.clear();
+    each_literal(code, "ENUM_LABELS", "EnumLabel") { text, ln =>
+        let ty, tok = key_literal(text, "ty");
+        let variant, vok = key_literal(text, "variant");
+        let label, lok = key_literal(text, "label");
+        if !tok || !vok || !lok { err(src, ln, "each gweb::EnumLabel needs ty, variant and label (string literals only)"); }
+        else {
+            var known = false;
+            for v in split(variants_of(ty), ',') { if v.len > 0 && v == variant { known = true; } }
+            if !known {
+                var m: u8[>..] = [];
+                format(m, "ENUM_LABELS: ", ty, ".", variant, " is not a variant of an enum of this view's fields");
+                err(src, ln, m);
+            } else if label.len == 0 || label.len > 64 || find(label, "\t") >= 0 {
+                err(src, ln, "ENUM_LABELS: a label is 1 to 64 bytes");
+            } else { format(enum_labels, ty, "\t", variant, "\t", label, "\n"); }
+        }
+    };
+}
+
+// The label of a variant: from ENUM_LABELS, else "".
+fn enum_label(ty: const u8[:], variant: const u8[:]) -> const u8[:] {
+    for l in split(enum_labels, '\n') {
+        let f = split(l, '\t');
+        if f.len == 3 && f[0] == ty && f[1] == variant { return f[2]; }
+    }
+    return "";
+}
+
+fn has_enum_labels(ty: const u8[:]) -> bool {
+    for v in split(variants_of(ty), ',') { if enum_label(ty, v).len > 0 { return true; } }
+    return false;
+}
+
 // The stored keys that also read as field `name`.
 fn renamed_from(code: const u8[:], name: const u8[:], keys: u8[>..]&) {
     each_literal(code, "RENAMED", "Renamed") { text, ln =>
@@ -516,6 +554,19 @@ fn gen_form_struct(m: u8[>..]&, sname: const u8[:]) {
                    ", errs, ", if f.required { "true" } else { "false" }, ", req, rich);");
         }
         else if f.kind == K_BOOL { format(m, "gweb::_vf_bool(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", v.", f.name, ", errs, rich);"); }
+        else if f.kind == K_ENUM && (f.editor == "radio" || has_enum_labels(f.ty)) {
+            format(m, "{ let ui = gweb::_EnumUi { field: \"", f.name, "\", label: \"", label, "\", help: \"", f.help, "\", radio: ",
+                   if f.editor == "radio" { "true" } else { "false" }, ", required: ", if f.required { "true" } else { "false" }, ", names: ");
+            m.push('"');
+            for v, i in split(variants_of(f.ty), ',') { if i > 0 { m.append("\\n"); } m.append(v); }
+            m.append("\", labels: \"");
+            for v, i in split(variants_of(f.ty), ',') {
+                if i > 0 { m.append("\\n"); }
+                let l = enum_label(f.ty, v);
+                m.append(if l.len > 0 { l } else { v });
+            }
+            format(m, "\" }; gweb::_vf_choice(out, prefix, ui, gw_name_", f.ty, "(v.", f.name, "), errs, rich); }");
+        }
         else if f.kind == K_ENUM {
             format(m, "gweb::_vf_enum(out, prefix, \"", f.name, "\", \"", label, "\", \"", f.help, "\", ");
             names_array(m, f.ty);
@@ -654,8 +705,9 @@ fn gen_view(v: View&) -> bool {
     parsed.clear();
     enum_names.clear();
     enum_vars.clear();
+    enum_labels.clear();
     let lines = split(code, '\n');
-    if parse_struct(v.goose, lines, "Props", true, 0) && parse_inner(v.goose, lines) { apply_ui(v.goose, code); check_item_label(v.goose, code); }
+    if parse_struct(v.goose, lines, "Props", true, 0) && parse_inner(v.goose, lines) { apply_ui(v.goose, code); check_item_label(v.goose, code); apply_enum_labels(v.goose, code); }
     if errors > before { return false; }
     var extra: u8[>..] = [];
     extra.append("\n// gweb: view codec, form and parser (generated)\n");

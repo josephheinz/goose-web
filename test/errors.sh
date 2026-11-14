@@ -11,6 +11,7 @@
 #   - a crashing layout above the error file: attempt 2, the bare error.html
 #   - a crashing error.html: the fixed plain-text 500
 #   - a route.goose crash and a route fail: JSON {"error":..,"id":..}
+#   - gweb::redirect (1.2): a 3 KiB URL whole; over 8 KiB or with CR LF a 500 and a log line, never cut
 #   - --dev-id: gw-dev-error before the dev script, with the request; without it, no detail
 #   - D14: a page POST taking res that writes a 429 and calls gweb::done; a page POST's gweb::fail(429)
 #   - step 7: gweb dev --once writes errors.txt with a marked 5-line excerpt after a build error
@@ -154,6 +155,17 @@ else
   check "$([ "$(status af)" = 429 ] && has_header af 'content-type: application/json' && echo ok)" "/api/fail: 429, JSON"
   check "$(grep -qE '^\{"error":"Slow down\.","id":"[0-9a-f]{16}"\}$' "$WORK/af.b" && echo ok)" "/api/fail: {\"error\":\"Slow down.\",\"id\":\"<id>\"}"
   check "$(! body_has af '<html' && ! body_has af 'root-layout' && echo ok)" "/api/fail: no HTML page"
+
+  # Long redirects (1.2): a 3 KiB presigned URL goes out whole; over 8 KiB, or with CR LF, is a 500 and a log line.
+  req r3 GET '/api/redir?n=3072&cookie=1'
+  loc=$(tr -d '\r' < "$WORK/r3.h.raw" | sed -n 's/^[Ll]ocation: //p')
+  check "$([ "$(status r3)" = 302 ] && [ "${#loc}" = 3072 ] && echo "$loc" | grep -q '^https://bucket\.s3\..*Security-Token=[A-Za-z0-9]*Z$' && has_header r3 'set-cookie: seen=1' && echo ok)" "/api/redir 3 KiB: 302 with the whole Location (${#loc} bytes) and the cookie"
+  req r9 GET '/api/redir?n=9000'
+  check "$([ "$(status r9)" = 500 ] && ! has_header r9 'location:' && echo ok)" "/api/redir 9000 bytes: 500, no Location"
+  id=$(body_id r9)
+  check "$([ -n "$id" ] && logged "$id" 500 GET '/api/redir\?n=9000' && grep -qF 'a URL of 9000 bytes is over 8192' "$LOG" && echo ok)" "/api/redir 9000 bytes: the log line says why"
+  req rc GET '/api/redir?n=100&crlf=1'
+  check "$([ "$(status rc)" = 500 ] && ! has_header rc 'x-evil' && ! has_header rc 'location:' && echo ok)" "/api/redir with CR LF: 500, no header injected"
 
   # D14: a page POST that takes res and ends the reply itself with gweb::done.
   TK=0123456789abcdef0123456789abcdef

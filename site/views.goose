@@ -23,6 +23,10 @@ struct FieldUi { field: const u8[:], label: const u8[:] = "", help: const u8[:] 
 // let RENAMED = [gweb::Renamed { from: "heading", to: "title" }]; a stored key `from` is read as field `to`.
 struct Renamed { from: const u8[:], to: const u8[:] }
 
+// let ENUM_LABELS = [gweb::EnumLabel { ty: "Gap", variant: "Wide", label: "Wide gap" }]; the form shows label for the
+// variant (1.2). A variant with no label shows its name. The stored JSON keeps the variant name.
+struct EnumLabel { ty: const u8[:], variant: const u8[:], label: const u8[:] }
+
 // ---------------------------------------------------------------- metadata (flat, so it can cross threads)
 
 let VIEW_MAX_FIELDS = 32;
@@ -235,6 +239,49 @@ fn _vf_enum(out: u8[>..]&, prefix: const u8[:], field: const u8[:], label: const
     }
     out.append("</select>");
     _vf_tail(out, id, help, errs, rich);
+}
+
+// An enum field with ENUM_LABELS or editor: "radio" (1.2). names and labels are lines; the Kth label is shown for the
+// Kth name, and the value sent is the name.
+struct _EnumUi { field: const u8[:], label: const u8[:], help: const u8[:], radio: bool, required: bool,
+                 names: const u8[:], labels: const u8[:] }
+
+fn _vf_choice(out: u8[>..]&, prefix: const u8[:], ui: const _EnumUi&, current: const u8[:], errs: const FieldErrors&, rich: bool) {
+    var id: u8[>..] = [];
+    _vname(id, prefix, ui.field);
+    let labels = ::split(ui.labels, '\n');
+    if !ui.radio {
+        out.append("<p class=\"gw-field\">");
+        _vf_label(out, id, ui.label);
+        out.append("<select id=\""); escape(out, id); out.append("\" name=\""); escape(out, id); out.push('"');
+        if ui.required { out.append(" required"); }
+        _vf_desc(out, id, ui.help, errs, rich);
+        out.push('>');
+        for n, i in ::split(ui.names, '\n') {
+            out.append("<option value=\""); escape(out, n); out.push('"');
+            if n == current { out.append(" selected"); }
+            out.push('>'); escape(out, if i < labels.len { labels[i] } else { n }); out.append("</option>");
+        }
+        out.append("</select>");
+        _vf_tail(out, id, ui.help, errs, rich);
+        return;
+    }
+    // A radio group: a fieldset whose legend is the label; help and error follow the radios.
+    out.append("<fieldset class=\"gw-field gw-radio\" id=\""); escape(out, id); out.append("\"><legend>"); escape(out, ui.label); out.append("</legend>");
+    for n, i in ::split(ui.names, '\n') {
+        out.append("<label><input type=\"radio\" name=\""); escape(out, id); out.append("\" value=\""); escape(out, n); out.push('"');
+        if n == current { out.append(" checked"); }
+        if ui.required { out.append(" required"); }
+        _vf_desc(out, id, ui.help, errs, rich);
+        out.append("> "); escape(out, if i < labels.len { labels[i] } else { n }); out.append("</label> ");
+    }
+    if ui.help.len > 0 {
+        out.append("<small class=\"gw-help\"");
+        if rich { out.append(" id=\""); escape(out, id); out.append("-help\""); }
+        out.push('>'); escape(out, ui.help); out.append("</small>");
+    }
+    field_error(out, errs, id);
+    out.append("</fieldset>\n");
 }
 
 fn _vf_group_open(out: u8[>..]&, label: const u8[:]) {

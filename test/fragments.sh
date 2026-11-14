@@ -5,7 +5,7 @@
 #
 # 1. test/fragments/site is built and started with --dev-id 5; curl checks the
 #    fragment replies, page POST, the refusals, the script tags, /_gw/gwi.js,
-#    and that a page with no fragment generates what it did before fragments.
+#    gw-trigger's /_gw/gwq.js (1.2), and that a page with no fragment generates what it did before fragments.
 # 2. Every error of DESIGN-ADDENDUM-4 sections 2, 3 and 5, each in a copy of the
 #    site, must fail gweb build with its message at its line.
 # 3. gweb routes shows GET,POST and the frag lines.
@@ -118,6 +118,14 @@ if out=$("$GWEB" -C "$WORK/ok" build 2>&1); then
     check "$([ "$(status rf)" = 200 ] && has_header rf 'content-type: text/javascript' && echo ok)" "a project with fragments serves /_gw/gwf.js"
     check "$([ ! -d "$WORK/ok/components" ] && echo ok)" "the site has no components folder"
     check "$(! body_has whole 'gwn.js' && ! body_has plain 'gwn.js' && echo ok)" "a site without gw-boost: no gwn.js tag"
+    # gw-trigger and gw-url (1.2): /search has gwq.js beside gwf.js; other pages do not.
+    req find GET '/search?q=goose'
+    check "$([ "$(status find)" = 200 ] && body_has find '<script type="module" src="/_gw/gwf.js"></script><script type="module" src="/_gw/gwq.js"></script>' && body_has find '<p>q=goose</p>' && echo ok)" "/search: the gwq.js tag after gwf.js"
+    check "$(! body_has whole 'gwq.js' && ! body_has plain 'gwq.js' && echo ok)" "pages without gw-trigger: no gwq.js tag"
+    req findf GET '/search?q=a%20b' -H 'GW-Fragment: hits'
+    check "$([ "$(cat "$WORK/findf.b")" = '<p>q=a b</p>' ] && echo ok)" "/search: the fragment answers the GET form's query"
+    req rq GET /_gw/gwq.js
+    check "$([ "$(status rq)" = 200 ] && has_header rq 'content-type: text/javascript' && body_has rq 'gw-trigger' && echo ok)" "a project with gw-trigger serves /_gw/gwq.js"
     req nonav GET /_gw/gwn.js
     check "$([ "$(status nonav)" = 404 ] && echo ok)" "a site without gw-boost does not serve /_gw/gwn.js"
 check "$(! body_has whole 'gwt.js' && ! body_has plain 'gwt.js' && echo ok)" "a site without gw-enter or gw-leave: no gwt.js tag"
@@ -339,6 +347,14 @@ expect_fail $P '<a href="/api" gw-target="a">x</a>' 2 "gw-target: /api is a rout
 expect_fail $P '<a href="/plain" gw-target="a">x</a>' 2 "gw-target: app/plain/page.html has no {#fragment a}"
 expect_fail $P '<a href="?x" gw-target="a">x</a>' 2 "gw-target: app/page.html has no {#fragment a}"
 expect_fail $P '<form method="post" action="/other" gw-target="a">x</form>' 2 'gw-target: method="post" needs fn POST( in app/other/page.goose'
+# gw-trigger and gw-url (1.2).
+expect_fail $P '<form method="post" action="/" gw-target="list" gw-trigger="input 250ms">x</form>' 2 'gw-trigger="input Nms" (N from 50 to 2000) goes on a GET <form> with gw-target'
+expect_fail $P '<a href="?x" gw-target="list" gw-trigger="input 250ms">x</a>' 2 'gw-trigger="input Nms" (N from 50 to 2000) goes on a GET <form> with gw-target'
+expect_fail $P '<form action="/" gw-target="list" gw-trigger="input 20ms">x</form>' 2 'gw-trigger="input Nms" (N from 50 to 2000) goes on a GET <form> with gw-target'
+expect_fail $P '<form action="/" gw-target="list" gw-trigger="change">x</form>' 2 'gw-trigger="input Nms" (N from 50 to 2000) goes on a GET <form> with gw-target'
+expect_fail $P '<form method="post" action="/" gw-target="list" gw-url>x</form>' 2 'gw-url goes on a link or a GET <form> with gw-target'
+expect_fail $P '<form action="/" gw-trigger="input 250ms">x</form>' 2 'gw-trigger goes beside gw-target, in the same opening tag'
+expect_fail $P '<a href="/" gw-url>x</a>' 2 'gw-url goes beside gw-target, in the same opening tag'
 # CSRF constant (DESIGN-ADDENDUM-7).
 expect_fail bare:app/api/route.goose 'const CSRF = 0;' 1 "write const CSRF = false; to turn off this route's CSRF check (or const CSRF = true;)"
 expect_fail bare:app/page.goose 'const CSRF = false;' 1 "const CSRF belongs in route.goose; a page's POST always checks the token"

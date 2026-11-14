@@ -21,7 +21,7 @@ The server needs `libsqlite3` at run time when the app uses SQLite.
 
 `gweb new` writes a `Dockerfile` and a `.dockerignore` (also in `deploy/`). The Dockerfile has two stages:
 the build stage installs the toolchain, fetches the Goose compiler, builds `gweb` and the app; the runtime
-stage holds the binary and `libsqlite3-0`.
+stage holds the binary, `libsqlite3-0` and the C libraries of the app's Goose packages.
 
 ```
 docker build --build-arg GOOSE_URL=<Linux goose release tarball> -t mysite .
@@ -30,6 +30,10 @@ docker run -d --name mysite -p 3000:3000 -v mysite-data:/app/data --stop-timeout
 
 - `GOOSE_URL` is required. The build stops with a message when it is empty.
 - `GWEB_REF` picks the gweb tag that builds your app (default `v1.1.0`; keep it equal to the version you develop with).
+- C libraries (1.2). The build stage runs `gweb gen` first. When the generated root imports goose-blob, it installs
+  `libcurl4-openssl-dev`, and the runtime `libcurl4` and `ca-certificates`; for goose-postgres, `libpq-dev` and
+  `libpq5`. Name others with `--build-arg APT_BUILD="libfoo-dev"` (build stage) and `--build-arg APT_RUN="libfoo1"`
+  (runtime). A Dockerfile from an older `gweb new` has none of this: copy `deploy/Dockerfile` again.
 - The container runs as a non-root user (uid 10001). `/app/data` is a volume owned by it. A named volume
   copies that ownership; for a bind mount run `chown 10001 <dir>`.
 - `ENV PORT=3000 TZ=UTC GWEB_LOG_FORMAT=json`. Add flags after the image name or set `GWEB_*` variables.

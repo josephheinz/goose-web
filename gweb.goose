@@ -45,7 +45,7 @@ struct Ctx {
     csrf: u8[..32] = "",      // the page's CSRF token; "" until gweb::csrf_begin
     locale: i64 = 0,          // index into the generated t::TAGS; 0 is the default locale
     redirect_status: i64,
-    location: u8[..1024],
+    location: u8[..8192],     // gweb::redirect's URL (MAX_REDIRECT); a longer one is refused, not cut
     title: u8[..256],
     meta: Meta,
     set_cookies: u8[..2048],  // pending Set-Cookie lines; run_worker moves them to res
@@ -416,18 +416,37 @@ fn set_status(ctx: Ctx&, code: i64) { ctx.status = code; }
 
 fn unprocessable(ctx: Ctx&) { ctx.status = 422; }
 
+let MAX_REDIRECT = 8192;
+
+// A URL over MAX_REDIRECT bytes, or one holding CR, LF or NUL, is refused: the outcome becomes a 500 error (the
+// generated finish logs it with an id), so a signed URL is never sent cut.
 fn redirect(ctx: Ctx&, to: const u8[:], status: i64 = 302) {
+    ctx.location.clear();
+    var bad = to.len > MAX_REDIRECT;
+    for c in to { if c == '\r' || c == '\n' || c == 0 { bad = true; } }
+    if bad {
+        ctx.outcome = Outcome.Error;
+        ctx.error_status = 500;
+        ctx.error_message.clear();
+        if to.len > MAX_REDIRECT { format(ctx.error_message, "gweb::redirect: a URL of ", to.len, " bytes is over ", MAX_REDIRECT); }
+        else { ctx.error_message.append("gweb::redirect: the URL holds CR, LF or NUL"); }
+        return;
+    }
     ctx.outcome = Outcome.Redirect;
     ctx.redirect_status = status;
-    ctx.location.clear();
-    ctx.location.append(to[..min(to.len, 1024)]);
+    ctx.location.append(to);
 }
 
+// A Location line that does not fit beside res.headers makes a bare 500, as for cookies.
 fn _apply_redirect(ctx: const Ctx&, res: http::Response&) {
     res.status = http::status_from_code(ctx.redirect_status);
     res.content_type.clear();
     res.body.clear();
-    http::set_header(res, "Location", ctx.location);
+    if !http::add_header(res, "Location", ctx.location) {
+        print("gweb: redirect: a Location of ", ctx.location.len, " bytes does not fit in the reply's headers");
+        res.headers.clear();
+        http::json_error(res, http::Status.InternalServerError, "response headers too large");
+    }
 }
 
 fn _options(res: http::Response&, allow: const u8[:]) {

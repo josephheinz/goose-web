@@ -166,6 +166,7 @@ gweb::send_file(req, ctx, res, "data/media", rel, opts);
 `send_file` refuses `..`, dotfiles and symlinks out of the root, answers 304 on `If-None-Match`, supports HEAD and
 streams big files. Set `opts.sandbox = true` for a PDF or any type a browser might script (HTML and SVG are sandboxed already).
 `gweb::image_size(bytes)` (`import gweb.site.image;`) gives an upload's width and height. See [Serving files from disk](../../README.md#serving-files-from-disk).
+To keep media on S3 or behind a CDN, use goose-blob: [Media storage](packages.md#media-storage).
 
 ## 9. Test it
 

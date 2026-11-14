@@ -36,6 +36,9 @@ fn POST(req: const http::Request&, ctx: gweb::Ctx&) -> Props {
   `fn POST(` in that page.
 - The request carries `GW-Fragment: NAME`. The reply echoes it. An unknown
   name gives the whole page.
+- `gw-trigger="input 250ms"` on a GET form submits it as you type, after a
+  pause of 50 to 2,000 ms (1.2). `gw-url` on a link or GET form shows the
+  fetched URL in the address bar once the fragment lands (1.2).
 - The request also carries `GW-Auth: 401`. When the session has expired,
   `require_login` then answers `401` with a `GW-Login` header (not a redirect), and the
   runtime fires `gw:unauthorized` on `window` and, unless a listener cancels it,

@@ -9,6 +9,7 @@ const D = document;
 // after 150 ms a link, or a form with gw-loading, fills the box with its loading template, restored on failure.
 // A 401 (require_login, for a request that sends GW-Auth: 401) fires a cancelable gw:unauthorized event on window, with
 // the reply as detail; unless a listener cancels it, the page navigates to the URL, and the server sends it to the login.
+// gw-url (a link, or a GET form): once the fragment lands, the address bar shows the URL fetched (history.replaceState).
 function frag(type, sel, attr, form) {
   D.addEventListener(type, async (e) => {
     const el = e.target.closest?.(sel);
@@ -32,7 +33,7 @@ function frag(type, sel, attr, form) {
       if (!r.ok && !(r.status == 422 && r.headers.get("GW-Fragment") == name)) throw Error("fragment " + name + ": " + r.status + " from " + url.pathname);
       if (r.headers.get("GW-Fragment") != name) return location.assign(r.url);
       const html = await r.text();
-      if (box.gw == n) swap(box, html, 1);
+      if (box.gw == n) swap(box, html, 1), el.hasAttribute("gw-url") && history.replaceState(history.state, "", url);
     } catch (err) {
       if (saved) box.replaceChildren(...saved);
       oops(err);
@@ -45,3 +46,4 @@ function frag(type, sel, attr, form) {
 
 frag("click", "a[gw-target]", "href");
 frag("submit", "form[gw-target]", "action", 1);
+

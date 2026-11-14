@@ -13,7 +13,7 @@ let GLOBAL = ["accesskey", "anchor", "autocapitalize", "autocorrect", "autofocus
               "spellcheck", "style", "tabindex", "title", "translate", "writingsuggestions"];
 
 // gweb's own attributes.
-let GW = ["gw-key", "gw-target", "gw-boost", "gw-enter", "gw-leave", "gw-sse"];
+let GW = ["gw-key", "gw-target", "gw-boost", "gw-enter", "gw-leave", "gw-sse", "gw-loading", "gw-trigger", "gw-url"];
 
 // `tag,tag: attribute attribute ...`. An element that is not listed takes the global attributes only.
 let ELEMENTS = [

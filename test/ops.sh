@@ -19,6 +19,8 @@
 #    child from a start) makes the child exit 1: the old process keeps serving and logs "handoff failed".
 # 5. gweb new: Dockerfile and .dockerignore equal deploy/Dockerfile and deploy/dockerignore; the starter site (no
 #    state, no jobs) builds, serves, labels its routes in the metrics and stops with SIGTERM.
+#    5b. The Dockerfile's package step (sh, apt-get echoed): goose-blob adds libcurl, goose-postgres libpq, and the
+#    APT_BUILD and APT_RUN build arguments add theirs.
 # 6. Build errors: app/jobs.goose without fn run or without Job, and an app/__gweb folder, fail gweb build.
 #
 # Needs curl and python3, and gweb built beside this folder (goose build -o gweb cli/gweb.goose).
@@ -321,6 +323,24 @@ if "$GWEB" -C "$WORK/new" new starter >/dev/null 2>&1; then
 else
   bad "gweb new"
 fi
+
+# 5b. The Dockerfile's C libraries (1.2): its package step, run by sh with apt-get echoed, on generated roots.
+# docker_apt NAME ROOT_LINES [APT_BUILD [APT_RUN]]: $WORK/apt-NAME.out (what it would install) and .run (runtime list).
+docker_apt() {
+  d="$WORK/apt-$1"
+  mkdir -p "$d/.gweb"
+  printf '%s\n' "$2" > "$d/.gweb/main.goose"
+  awk '/^RUN / { buf = ""; inrun = 1 } inrun { buf = buf $0 "\n"; if ($0 !~ /\\$/) { inrun = 0; if (buf ~ /APT_BUILD/) printf "%s", buf } }' "$ROOT/deploy/Dockerfile" \
+    | sed -e 's/\\$//' -e 's/^RUN //' -e 's|GOOSE="$(cat /opt/goose.path)" gweb gen|:|' -e "s|/opt/apt-run|$d.run|" \
+          -e 's|rm -rf /var/lib/apt/lists/\*|:|' -e 's/apt-get /echo apt-get /' > "$d.sh"
+  (cd "$d" && APT_BUILD=${3:-} APT_RUN=${4:-} sh "$d.sh") > "$d.out" 2>&1
+}
+docker_apt none 'import sqlite from "josephheinz/goose-sqlite@v1.1.0";'
+check "$([ ! -s "$WORK/apt-none.out" ] && [ -z "$(tr -d ' ' < "$WORK/apt-none.run")" ] && echo ok)" "Dockerfile: no blob or pg, no extra packages"
+docker_apt blob 'import blob from "josephheinz/goose-blob@v0.1.0";'
+check "$(grep -q 'install -y --no-install-recommends *libcurl4-openssl-dev$' "$WORK/apt-blob.out" && grep -q 'libcurl4 ca-certificates' "$WORK/apt-blob.run" && echo ok)" "Dockerfile: goose-blob adds libcurl4-openssl-dev to the build, libcurl4 and ca-certificates to the runtime"
+docker_apt pg 'import pg from "file:///srv/goose-postgres.git@v0.1.0";' 'libfoo-dev' 'libfoo1'
+check "$(grep -q 'install -y --no-install-recommends libfoo-dev libpq-dev$' "$WORK/apt-pg.out" && grep -q 'libfoo1 libpq5' "$WORK/apt-pg.run" && echo ok)" "Dockerfile: goose-postgres adds libpq; APT_BUILD and APT_RUN add theirs"
 
 # 6. build errors.
 expect_fail() {

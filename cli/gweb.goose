@@ -137,6 +137,7 @@ var locale_count = 0;
 var uses_boost = false;               // a layout or page has <body gw-boost> (serves gwn.js)
 var uses_trans = false;               // markup uses gw-enter or gw-leave (serves gwt.js)
 var uses_sse = false;                 // markup uses gw-sse (serves gwe.js, and gws.js which it imports)
+var uses_query = false;               // markup uses gw-trigger (serves gwq.js)
 var uses_mods = false;                // a component imports gwm.js (on: modifiers)
 var uses_life = false;                // a component calls life() (imports gwl.js)
 var uses_children = false;            // a component calls a child component (imports gwc.js)
@@ -151,6 +152,7 @@ var view_name: u8[..64];
 var tpl_boost = false;
 var tpl_trans = false;
 var tpl_sse = false;
+var tpl_query = false;
 var last_errors: u8[>..];
 var test_files: u8[..80][>..<];        // t_<name>, one per tests/<name>.goose
 var test_fns: TestFn[>..<];
@@ -1772,12 +1774,14 @@ let GW_FRAG = "<script type=\"module\" src=\"/_gw/gwf.js\"></script>";
 let GW_TRANS = "<script type=\"module\" src=\"/_gw/gwt.js\"></script>";
 let GW_SSE = "<script type=\"module\" src=\"/_gw/gwe.js\"></script>";
 let GW_NAV = "<script type=\"module\" src=\"/_gw/gwn.js\"></script>";
+let GW_QUERY = "<script type=\"module\" src=\"/_gw/gwq.js\"></script>";
 
-// The module tags of the template being compiled: gwf.js for gw-target, gwn.js for <body gw-boost>.
+// The module tags of the template being compiled: gwf.js for gw-target (and gwq.js for gw-trigger), gwn.js for <body gw-boost>.
 fn script_tag(out: u8[>..]&) {
     var t: u8[>..] = [];
     t.append(GW_PRELOAD);
     if tpl_script { t.append(GW_FRAG); }
+    if tpl_query { t.append(GW_QUERY); }
     if tpl_boost { t.append(GW_NAV); }
     if tpl_trans { t.append(GW_TRANS); }
     if tpl_sse { t.append(GW_SSE); }
@@ -2207,6 +2211,8 @@ fn compile_template(path: const u8[:], src: const u8[:], header: const u8[:], ki
     let before = errors;
     if (kind == K_LAYOUT || kind == K_VIEW) && find(src, "@slot(") >= 0 { check_slot_context(path, src); }
     tpl_script = find(src, "gw-target=\"") >= 0;
+    tpl_query = tpl_script && find(src, "gw-trigger=\"") >= 0;
+    if tpl_query { uses_query = true; }
     tpl_boost = has_boost(src);
     if tpl_boost { uses_boost = true; }
     tpl_trans = find(src, "gw-enter") >= 0 || find(src, "gw-leave") >= 0;
@@ -2410,7 +2416,65 @@ fn walk_tag(line: const u8[:], lt: i64, want: const u8[:], val: u8[>..]&, found:
     return -1;
 }
 
+// gw-trigger="input Nms" (N 50 to 2000) and gw-url on the gw-target tag at lt; get: a link, or a GET form. False after
+// reporting.
+fn trigger_ok(path: const u8[:], ln: i64, line: const u8[:], lt: i64, get_form: bool) -> bool {
+    var trig: u8[>..] = [];
+    var has_trig = false;
+    walk_tag(line, lt, "gw-trigger", trig, has_trig);
+    if has_trig {
+        let t = trim(trig);
+        var good = get_form && starts_with(t, "input ") && ends_with(t, "ms");
+        if good {
+            let n, ok = parse_int(t[6..t.len - 2]);
+            good = ok && n >= 50 && n <= 2000;
+        }
+        if !good { err(path, ln, "gw-trigger=\"input Nms\" (N from 50 to 2000) goes on a GET <form> with gw-target"); return false; }
+    }
+    var unused: u8[>..] = [];
+    var has_url = false;
+    walk_tag(line, lt, "gw-url", unused, has_url);
+    let is_a = lower_eq(tag_name(line, lt), "a");
+    if has_url && !is_a && !get_form { err(path, ln, "gw-url goes on a link or a GET <form> with gw-target"); return false; }
+    return true;
+}
+
+fn tag_name(line: const u8[:], lt: i64) -> const u8[:] {
+    var e = lt + 1;
+    while e < line.len && !ws(line[e]) && line[e] != '>' && line[e] != '/' { e += 1; }
+    return line[lt + 1..e];
+}
+
+// gw-trigger and gw-url only work beside gw-target, in the same opening tag.
+fn scan_strays(path: const u8[:], src: const u8[:]) {
+    for line, li in split(src, '\n') {
+        for attr in ["gw-trigger", "gw-url"] {
+            var from = 0;
+            while from < line.len {
+                let k = find(line[from..], attr);
+                if k < 0 { break; }
+                let at = from + k;
+                from = at + attr.len;
+                if at > 0 && !ws(line[at - 1]) { continue; }
+                if from < line.len && line[from] != '=' && line[from] != '>' && line[from] != '/' && !ws(line[from]) { continue; }
+                var lt = at;
+                while lt > 0 && line[lt] != '<' { lt -= 1; }
+                var unused: u8[>..] = [];
+                var has_target = false;
+                // Only inside an opening tag on this line: text that names the attribute is not checked.
+                let end = if line[lt] == '<' { walk_tag(line, lt, "gw-target", unused, has_target) } else { -1 };
+                if end > at && !has_target {
+                    var m: u8[>..] = [];
+                    format(m, attr, " goes beside gw-target, in the same opening tag");
+                    err(path, li + 1, m);
+                }
+            }
+        }
+    }
+}
+
 fn scan_targets(path: const u8[:], src: const u8[:], own: i64) {
+    if find(src, "gw-trigger") >= 0 || find(src, "gw-url") >= 0 { scan_strays(path, src); }
     for line, li in split(src, '\n') {
         let ln = li + 1;
         var from = 0;
@@ -2463,6 +2527,7 @@ fn scan_targets(path: const u8[:], src: const u8[:], own: i64) {
                 err(path, ln, "a gw-target URL starts with / (or is empty or starts with ? for the page itself)");
                 continue;
             }
+            if !trigger_ok(path, ln, line, lt, is_form && !post) { continue; }
             var t = Target { path: "", line: ln, url: "", name: "", post: post, own: own };
             if path.len >= 512 || u.len >= 512 { err(path, ln, "gw-target: the path or URL is too long"); continue; }
             t.path.append(path);
@@ -3681,13 +3746,15 @@ let RT_STORE_PRETTY = embed_file("../client/gws.js");
 let RT_STORE_MIN = embed_file("../client/gws.min.js");
 let RT_SSE_PRETTY = embed_file("../client/gwe.js");
 let RT_SSE_MIN = embed_file("../client/gwe.min.js");
+let RT_QUERY_PRETTY = embed_file("../client/gwq.js");
+let RT_QUERY_MIN = embed_file("../client/gwq.min.js");
 
-// which: 0 is gwi.js (the core), 1 is gwf.js (fragments), 2 is gwh.js (typed fetch), 3 is gwl.js (lifecycle), 4 is gwm.js (modifiers), 5 is gwc.js (child components), 6 is gwn.js (client navigation), 7 is gws.js (stores), 8 is gwt.js (transitions), 9 is gwe.js (server push).
+// which: 0 is gwi.js (the core), 1 is gwf.js (fragments), 2 is gwh.js (typed fetch), 3 is gwl.js (lifecycle), 4 is gwm.js (modifiers), 5 is gwc.js (child components), 6 is gwn.js (client navigation), 7 is gws.js (stores), 8 is gwt.js (transitions), 9 is gwe.js (server push), 10 is gwq.js (gw-trigger).
 fn runtime_js(which: i64, min: bool, out: u8[>..]&) {
     let home = gweb_home();
     if home.len > 0 {
         var p: u8[>..] = [];
-        let base = if which == 1 { "/client/gwf" } else if which == 2 { "/client/gwh" } else if which == 3 { "/client/gwl" } else if which == 4 { "/client/gwm" } else if which == 5 { "/client/gwc" } else if which == 6 { "/client/gwn" } else if which == 7 { "/client/gws" } else if which == 8 { "/client/gwt" } else if which == 9 { "/client/gwe" } else { "/client/gwi" };
+        let base = if which == 1 { "/client/gwf" } else if which == 2 { "/client/gwh" } else if which == 3 { "/client/gwl" } else if which == 4 { "/client/gwm" } else if which == 5 { "/client/gwc" } else if which == 6 { "/client/gwn" } else if which == 7 { "/client/gws" } else if which == 8 { "/client/gwt" } else if which == 9 { "/client/gwe" } else if which == 10 { "/client/gwq" } else { "/client/gwi" };
         format(p, home, base, if min { ".min.js" } else { ".js" });
         if read(p, out) { return; }
     }
@@ -3701,6 +3768,7 @@ fn runtime_js(which: i64, min: bool, out: u8[>..]&) {
     else if which == 7 { out.append(if min { RT_STORE_MIN } else { RT_STORE_PRETTY }); }
     else if which == 8 { out.append(if min { RT_TRANS_MIN } else { RT_TRANS_PRETTY }); }
     else if which == 9 { out.append(if min { RT_SSE_MIN } else { RT_SSE_PRETTY }); }
+    else if which == 10 { out.append(if min { RT_QUERY_MIN } else { RT_QUERY_PRETTY }); }
     else { out.append(if min { RT_MIN } else { RT_PRETTY }); }
 }
 
@@ -3967,6 +4035,7 @@ fn gen_runtime(dev: bool) {
     if uses_stores || uses_sse { gen_runtime_file(7, "gws.js", dev, gw_dir); }
     if uses_trans { gen_runtime_file(8, "gwt.js", dev, gw_dir); }
     if uses_sse { gen_runtime_file(9, "gwe.js", dev, gw_dir); }
+    if uses_query { gen_runtime_file(10, "gwq.js", dev, gw_dir); }
 }
 
 // The indices of component_names, each component after the components its markup calls with @Name( (a cycle is cut at
@@ -4157,6 +4226,7 @@ fn gen(dev: bool, root: const u8[:]) -> bool {
     uses_mods = false;
     uses_trans = false;
     uses_sse = false;
+    uses_query = false;
     uses_life = false;
     uses_children = false;
     uses_stores = false;

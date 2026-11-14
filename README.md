@@ -423,7 +423,7 @@ fn validate(p: const Props&, errs: gweb::FieldErrors&) { gweb::check_length(errs
 **Props fields.** `i64`, `bool`, `u8[..N]` (N a number), an enum with no payloads, a struct declared in the same file
 (items hold scalars, enums and foreign types only), a repeater (`T[>..<]`, `T[>..]` or `T[..N]` of such a struct) as the
 **last** field, and a foreign type `ns::T`. No `f64`. Anything else is a build error at the field's line. A field with no
-`= default` is required. `UI`, `LABEL`, `ICON` and `RENAMED` take string literals; each `field:` must name a real field
+`= default` is required. `UI`, `LABEL`, `ICON`, `RENAMED` and `ENUM_LABELS` take string literals; each `field:` must name a real field
 (`"group.field"` reaches into a struct). A missing label comes from the name (`cta_text` is "Cta text", `TwoColumn` is
 "Two column").
 
@@ -474,6 +474,11 @@ for `T[>..<]`).
 **Forms.** `g_form` writes one control per field (`name="PREFIX" + field`; a struct adds `name.`, a repeater item
 `name.K.` and a hidden `name.n`). `g_parse` reads the same names, runs `validate`, and writes the canonical JSON.
 `gweb::form_enum` is the helper for enums. A view is limited to 32 fields and 8 slots.
+
+**Enum labels** (1.2). An enum field is a `<select>` of variant names. `let ENUM_LABELS = [gweb::EnumLabel { ty: "Gap",
+variant: "Wide", label: "Wide gap" }];` shows a label instead (a variant without one keeps its name), and
+`gweb::FieldUi { field: "gap", editor: "radio" }` draws a radio group (a `<fieldset>`). The posted value and the JSON
+keep the variant name.
 
 `validate` names fields plainly (`"title"`); `g_parse` puts the form prefix in front of each error, so the message
 shows under the control (`w.title`). After an error `g_parse` still writes the JSON it read (a field that did not
@@ -841,6 +846,16 @@ page.
 - `gw-target` goes on `<a href>` or `<form>` (`method` get or post). `gweb` checks it at build time:
   the URL (`/path`, `?query` or empty for the page itself; a `{expr}` segment matches a `[name]`
   folder) must reach a page that has `{#fragment NAME}`, and `method="post"` needs `fn POST(` in that page.
+- **As you type** (1.2). `gw-trigger="input 250ms"` on a GET form with `gw-target` submits it once the user stops
+  typing for 250 ms (50 to 2,000); Enter sends at once, and the last request wins. The page also gets `/_gw/gwq.js`.
+  `gw-url` on a link or GET form puts the fetched URL in the address bar (`history.replaceState`) once the
+  fragment lands, so the result can be shared and reloaded. Both are build errors elsewhere.
+
+  ```html
+  <form action="/search" gw-target="results" gw-trigger="input 250ms" gw-url role="search">
+    <input type="search" name="q" value="{props.q}" aria-label="Search">
+  </form>
+  ```
 - A `page.goose` may define `fn POST(req, ctx) -> Props`, which runs in place of `load` for POST
   (it needs `load` beside it). Return `load`'s props with what the form changed. A POST without the
   header renders the whole page with status 200; for post-redirect-get call `gweb::redirect(ctx, "/x", 303)`.
@@ -1339,7 +1354,7 @@ What you can change, and what is fixed. A fixed limit is part of the 1.x contrac
 | Cookie name, value, all `Set-Cookie` lines of a reply | 64, 1,024 encoded, 2,048 bytes | fixed |
 | Session data, a signed cookie | 256, 700 bytes | fixed |
 | A password | 1,024 bytes | fixed |
-| `ctx.title`, a redirect URL | 256, 1,024 bytes | fixed |
+| `ctx.title`, a redirect URL | 256, 8,192 bytes (1.2; a longer URL, or one with CR or LF, is a 500, never cut) | fixed |
 | Meta description, canonical, image, robots | 320, 512, 512, 64 bytes | fixed |
 | Page cache | a reply of 1 MiB, a key of 1,280 bytes, 512 entries and 16 MB per worker | fixed |
 | Sitemap | 50,000 URLs, 2,048 bytes a path | fixed |

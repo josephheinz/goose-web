@@ -102,6 +102,10 @@ expect_fail "a repeater's items hold no repeater" views/widgets/F.goose:1 \
   'printf "struct I { l: I[>..<] }\nstruct Props { l: I[>..<] }\n" > views/widgets/F.goose; echo "<p></p>" > views/widgets/F.html'
 expect_fail "UI: field \"nope\" is not a field of Props" views/widgets/F.goose:1 \
   'printf "let UI = [gweb::FieldUi { field: \"nope\", label: \"x\" }];\nstruct Props { a: i64 = 0 }\n" > views/widgets/F.goose; echo "<p></p>" > views/widgets/F.html'
+expect_fail "ENUM_LABELS: E.C is not a variant of an enum of this view's fields" views/widgets/F.goose:2 \
+  'printf "enum E { A, B }\nlet ENUM_LABELS = [gweb::EnumLabel { ty: \"E\", variant: \"C\", label: \"x\" }];\nstruct Props { a: E = E.A }\n" > views/widgets/F.goose; echo "<p></p>" > views/widgets/F.html'
+expect_fail "each gweb::EnumLabel needs ty, variant and label (string literals only)" views/widgets/F.goose:2 \
+  'printf "enum E { A, B }\nlet ENUM_LABELS = [gweb::EnumLabel { ty: \"E\", variant: \"A\" }];\nstruct Props { a: E = E.A }\n" > views/widgets/F.goose; echo "<p></p>" > views/widgets/F.html'
 expect_fail "fn read is generated for every view; rename yours" views/widgets/F.goose:2 \
   'printf "struct Props { a: i64 = 0 }\nfn read(a: i64) {}\n" > views/widgets/F.goose; echo "<p></p>" > views/widgets/F.html'
 expect_fail "@slot(\"name\") or @slot(\"name\", \"View1 View2\"): string literals, the name [a-z][a-z0-9_-]*" views/widgets/F.html:1 \

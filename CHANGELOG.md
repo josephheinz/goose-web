@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.2.0 (unreleased)
+
+Additions only.
+
+- New: `gweb::redirect` takes URLs up to 8,192 bytes (was 1,024, cut silently), for presigned S3 URLs with a session token. A longer URL, or one holding CR, LF or NUL, is refused: the reply is a 500 with an error id and a log line that says why, never a cut URL. A `Location` that does not fit beside the reply's other headers (goose-net's 4,096 bytes in all) is a bare 500 too. Test: `test/errors.sh` (a 3 KiB URL whole, 9,000 bytes refused, CR LF refused).
+- New: the Dockerfile installs the C libraries of the app's Goose packages. The build stage runs `gweb gen`; when the generated root imports goose-blob it adds `libcurl4-openssl-dev`, and the runtime `libcurl4` and `ca-certificates`; goose-postgres adds `libpq-dev` and `libpq5`. `--build-arg APT_BUILD=...` and `APT_RUN=...` name others. Copy `deploy/Dockerfile` into an existing app to get it. Test: `test/ops.sh` runs the step with `apt-get` echoed.
+- New: `gw-trigger="input 250ms"` on a GET `<form gw-target>` submits it as you type, after a pause of 50 to 2,000 ms; Enter sends at once and the last request wins. It lives in a new module, `/_gw/gwq.js` (290 bytes, ceiling 384), served only to pages that use it. `gw-url` on a link or GET form puts the fetched URL in the address bar with `history.replaceState` once the fragment lands (in `gwf.js`, 1,517 of its 1,536 bytes). Misplaced or malformed attributes are build errors. Tests: `test/frag_test.mjs`, `test/fragments.sh`.
+- New: enum labels in view forms. `let ENUM_LABELS = [gweb::EnumLabel { ty, variant, label }];` shows labels in the `<select>`, and `editor: "radio"` draws a radio group. Values and JSON keep variant names; views without them render as before. Tests: `test/views.sh`.
+- Fix: `gw-loading`, `gw-trigger` and `gw-url` no longer warn `unknown-attribute`.
+- Docs: "Media storage" with goose-blob (`docs/site/packages.md`), the Docker C libraries (`docs/DEPLOY.md`).
+
 ## v1.1.0
 
 A minor release: additions, and fixes that keep documented behaviour.
