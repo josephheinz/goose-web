@@ -10,6 +10,7 @@ A minor release: additions, and fixes that keep documented behaviour.
 - New: a fragment or boosted request whose session expired gets `401` and a `GW-Login` header from `require_login`, not the 303 that morphed the login page into the target. The runtimes (`gwf.js`, `gwn.js`) send `GW-Auth: 401` and fire a cancelable `gw:unauthorized` event on `window`, then navigate to the requested URL (the server redirects to the login). 1.0 documents the redirect, so the change is gated on that header: a request without it, from a browser, a script or an older runtime, still gets the 303. `gwn.js` is re-minified within its ceiling (its link selector and fetch-error path are shorter). Tests: `test/unauth_test.goose`, `test/unauth_test.mjs`.
 - New: `gweb::image_size(data) -> w, h, known` and `gweb::image_size_file(path)` at run time (`import gweb.site.image;`). The build-time reader of `@image()` moved into `site/image.goose`; `cli/image.goose` is a symlink to it, so both read alike. `@image()` output is unchanged. Test: `test/image_test.goose`.
 - New: `FileOptions.sandbox` sends `Content-Security-Policy: sandbox` for any type, streamed files included (HTML and SVG always got it). Test: `test/sandbox_test.goose`.
+- New: `jobs::every_local(s, name, ms, job)`, a schedule that still fires under `--no-schedule`, for work each instance does itself. Test: `test/everylocal.sh`.
 
 ## v1.0.0
 

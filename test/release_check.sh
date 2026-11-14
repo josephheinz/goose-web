@@ -184,6 +184,7 @@ step tutorial env PORT="${PORT:-4002}" sh "$HERE/tutorial.sh"
 step lsp sh "$HERE/lsp.sh"
 step ops env PORT="${PORT:-4003}" sh "$HERE/ops.sh"
 step ops_unit goose_test ops_unit
+step everylocal env PORT="${PORT:-4023}" sh "$HERE/everylocal.sh"
 step config env PORT="${PORT:-4010}" sh "$HERE/config.sh"
 step migrate sh "$HERE/migrate.sh"
 step slotcheck sh "$HERE/slotcheck.sh"

@@ -412,6 +412,7 @@ readable `gwi.js`.
 | `test/cmsready.sh`, `test/cmsready/` | A CMS package from a git source, mounted at `/admin` with a module inside it, and a host app: catch-all pages from SQLite, views by name, markdown, `/media`, two hosts with a keyed cache and `epoch_bump`, sitemap per host, an admin edit, an upload. The worked example in `docs/site/building-a-cms.md`. |
 | `test/views.sh`, `test/views/` | Views: the generated codec, forms and registry (`gweb test` on `test/views/site`), package views, build errors, `reserved_prefixes`, a variable-size state `Msg`. |
 | `test/unauth_test.goose`, `test/unauth_test.mjs` | `require_login` answers 401 with `GW-Login` for a request that sends `GW-Auth: 401` and 303 otherwise; `gwf.js` and `gwn.js` send the header, fire `gw:unauthorized` and navigate unless it is canceled. |
+| `test/everylocal.sh`, `test/everylocal/` | `jobs::every_local` fires under `--no-schedule`, `every` does not; both fire by default; a duplicate name is refused. |
 | `test/sandbox_test.goose` | `FileOptions.sandbox` sends `Content-Security-Policy: sandbox` for any type, and a 304 keeps it. |
 | `test/image_test.goose` | `gweb::image_size` on built-in and fixture images, `image_size_file`. |
 | `test/slotcheck.sh` | `@slot()` inside `<title>`, `<textarea>`, `<script>` or `<style>` is a build error (1.1). |

@@ -23,7 +23,7 @@ extern fn c_cron_next(spec: const u8[:], after_unix: i64) -> i64 = "gweb_cron_ne
 
 // What jobs::schedule registers into. bad counts the schedules that were refused (a duplicate or invalid name,
 // a bad cron spec, or the queue already stopped); the generated main exits with status 1 when it is above 0.
-// enabled is false with --no-schedule: schedules are checked, but none is registered.
+// enabled is false with --no-schedule: schedules are checked, but none is registered (jobs::every_local still is).
 struct Schedules { enabled: bool = true, n: i64 = 0, bad: i64 = 0 }
 
 // Call once, before the runners start: the queue holds cfg.job_queue jobs, a job gets cfg.job_attempts attempts,
@@ -118,8 +118,13 @@ fn _schedule_refused(s: Schedules&, name: const u8[:], what: const u8[:]) -> boo
 // Runs the job every ms milliseconds, the first time one interval after start. name is 1 to 32 bytes and unique.
 // False (and s.bad goes up, with a log line) when it is refused.
 fn _schedule_every(s: Schedules&, name: const u8[:], ms: i64, bytes: const u8[:]) -> bool {
+    return _schedule_every_at(s, name, ms, bytes, false);
+}
+
+// As _schedule_every; always is true for every_local, which registers the schedule even with --no-schedule.
+fn _schedule_every_at(s: Schedules&, name: const u8[:], ms: i64, bytes: const u8[:], always: bool) -> bool {
     if ms <= 0 { return _schedule_refused(s, name, "the interval must be above 0"); }
-    if !s.enabled { return true; }
+    if !s.enabled && !always { return true; }
     if c_jobs_every(name, ms, bytes) == 0 { return _schedule_refused(s, name, "duplicate or invalid name"); }
     s.n += 1;
     return true;

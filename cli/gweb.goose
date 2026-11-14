@@ -3307,6 +3307,14 @@ fn jobs::every(s: gweb::Schedules&, name: const u8[:], ms: i64, job: jobs::Job) 
     return gweb::_schedule_every(s, name, ms, bytes);
 }
 
+fn jobs::every_local(s: gweb::Schedules&, name: const u8[:], ms: i64, job: jobs::Job) -> bool {
+    var one: jobs::Job[>..] = [];
+    one.push(job);
+    var bytes: u8[>..] = [];
+    to_bytes(one, bytes);
+    return gweb::_schedule_every_at(s, name, ms, bytes, true);
+}
+
 fn jobs::cron(s: gweb::Schedules&, name: const u8[:], spec: const u8[:], job: jobs::Job) -> bool {
     var one: jobs::Job[>..] = [];
     one.push(job);

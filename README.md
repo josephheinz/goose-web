@@ -598,6 +598,11 @@ fn schedule(s: gweb::Schedules&) {                              // optional
 }
 ```
 
+  `jobs::every_local(s, name, ms, job)` (1.1) is `every` that still fires under `--no-schedule`. Run many instances with
+  `--no-schedule` on all but one for the shared schedules (a digest, a cleanup), and use `every_local` for the work
+  each instance must do itself, such as bumping its own cache epoch. Names are shared with `every` and `cron`, and a
+  duplicate is refused as before (the server exits 1).
+
   Enqueue from a handler with `jobs::enqueue(ctx, jobs::Job.Welcome { user: id })`. Queued jobs are lost on a restart; for durable work use an outbox table (see the guide).
 
 ## SQLite
