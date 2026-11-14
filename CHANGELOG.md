@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.1.0 (unreleased)
+## v1.1.0
 
 A minor release: additions, and fixes that keep documented behaviour.
 
