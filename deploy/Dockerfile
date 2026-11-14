@@ -8,7 +8,7 @@ FROM debian:bookworm-slim AS build
 ARG GOOSE_URL
 ARG APT_BUILD=""
 ARG APT_RUN=""
-ARG GWEB_REF=v1.1.0
+ARG GWEB_REF=v1.2.0
 ARG GWEB_REPO=https://github.com/josephheinz/gweb
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gcc libc6-dev libsqlite3-dev git ca-certificates curl \

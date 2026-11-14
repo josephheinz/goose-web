@@ -29,7 +29,7 @@ docker run -d --name mysite -p 3000:3000 -v mysite-data:/app/data --stop-timeout
 ```
 
 - `GOOSE_URL` is required. The build stops with a message when it is empty.
-- `GWEB_REF` picks the gweb tag that builds your app (default `v1.1.0`; keep it equal to the version you develop with).
+- `GWEB_REF` picks the gweb tag that builds your app (default `v1.2.0`; keep it equal to the version you develop with).
 - C libraries (1.2). The build stage runs `gweb gen` first. When the generated root imports goose-blob, it installs
   `libcurl4-openssl-dev`, and the runtime `libcurl4` and `ca-certificates`; for goose-postgres, `libpq-dev` and
   `libpq5`. Name others with `--build-arg APT_BUILD="libfoo-dev"` (build stage) and `--build-arg APT_RUN="libfoo1"`
