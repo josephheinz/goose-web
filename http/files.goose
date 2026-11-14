@@ -22,6 +22,7 @@ struct FileOptions {
     filename: u8[..200] = "",        // the name Content-Disposition shows; "" is the file's own name
     content_type: u8[..120] = "",    // "" is chosen from the extension
     stream_over: i64 = 1048576,      // files above this many bytes are streamed in windows, not read into memory
+    sandbox: bool = false,           // Content-Security-Policy: sandbox for any type (HTML and SVG always get it)
 }
 
 // ---------------------------------------------------------------- HTTP dates
@@ -209,7 +210,7 @@ fn send_file(req: const http::Request&, ctx: Ctx&, res: http::Response&, root: c
     _http_date(modified, mtime / 1000000000);
     http::set_header(res, "Last-Modified", modified);
     http::set_header(res, "Cache-Control", if opts.immutable { "public, max-age=31536000, immutable" } else { "public, max-age=0, must-revalidate" });
-    if starts_with(ctype, "text/html") || starts_with(ctype, "image/svg") {
+    if opts.sandbox || starts_with(ctype, "text/html") || starts_with(ctype, "image/svg") {
         http::set_header(res, "Content-Security-Policy", "sandbox");   // an uploaded page or SVG must not run scripts on this origin
     }
     if opts.download || opts.filename.len > 0 {

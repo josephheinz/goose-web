@@ -155,6 +155,7 @@ step testing_test testing_test
 step i18n_test i18n_test
 step files_test goose_test files_test
 step image_test goose_test image_test
+step sandbox_test goose_test sandbox_test
 step sse_test sse_test
 step components sh "$HERE/components.sh"
 step runtime sh "$HERE/runtime.sh"

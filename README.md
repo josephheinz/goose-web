@@ -1143,6 +1143,8 @@ a plain 404.
 - `Content-Type` comes from the extension (`gweb::mime_type(name)`); `opts.content_type` overrides it.
   `X-Content-Type-Options: nosniff` comes from the default headers. HTML and SVG also get
   `Content-Security-Policy: sandbox`, so an uploaded page cannot run scripts on your origin.
+  `opts.sandbox = true` adds it for any type (1.1), such as a PDF, which a browser's viewer may script, whether the
+  file is read whole or streamed.
 - `ETag` is `"SIZE-MTIME"`, so a 304 reads no bytes. `If-None-Match` takes one tag, a list or `*`. `Last-Modified` is
   sent too, and `If-Modified-Since` (an HTTP date) gets a 304 when the file is not newer, but only when the request has
   no `If-None-Match`; a date in another format is ignored.
